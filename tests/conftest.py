@@ -8,9 +8,9 @@ from typing import Any
 import pytest
 import yaml
 
-from symphony.config import parse_settings
-from symphony.issues import Issue
-from symphony.workflow import WorkflowSnapshot, current_stamp, load_workflow
+from code_factory.config import parse_settings
+from code_factory.issues import Issue
+from code_factory.workflow import WorkflowSnapshot, current_stamp, load_workflow
 
 DEFAULT_PROMPT = "You are an agent for this repository."
 
@@ -27,7 +27,7 @@ def default_workflow_config() -> dict[str, Any]:
             "terminal_states": ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
         },
         "polling": {"interval_ms": 30_000},
-        "workspace": {"root": os.path.join("/tmp", "symphony_workspaces")},
+        "workspace": {"root": os.path.join("/tmp", "code-factory-workspaces")},
         "agent": {
             "max_concurrent_agents": 10,
             "max_turns": 20,

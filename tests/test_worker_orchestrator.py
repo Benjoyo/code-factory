@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from symphony.runtime.messages import WorkerExited
-from symphony.runtime.orchestration import OrchestratorActor, RunningEntry
-from symphony.runtime.worker import IssueWorker
-from symphony.trackers.memory import MemoryTracker
+from code_factory.runtime.messages import WorkerExited
+from code_factory.runtime.orchestration import OrchestratorActor, RunningEntry
+from code_factory.runtime.worker import IssueWorker
+from code_factory.trackers.memory import MemoryTracker
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
 

@@ -26,10 +26,10 @@ dev = [
 ]
 
 [project.scripts]
-symphony = "symphony.cli:main"
+code-factory = "code_factory.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/symphony"]
+packages = ["src/code_factory"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

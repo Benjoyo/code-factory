@@ -21,13 +21,13 @@ The easiest starting point for the workflow file is the shipped reference at `..
 Run from the package directory with `uv`:
 
 ```bash
-uv run symphony --i-understand-that-this-will-be-running-without-the-usual-guardrails /path/to/WORKFLOW.md
+uv run code-factory --i-understand-that-this-will-be-running-without-the-usual-guardrails /path/to/WORKFLOW.md
 ```
 
 Or run it directly with `uvx`:
 
 ```bash
-uvx --from /Users/bennet/git/code-factory symphony --i-understand-that-this-will-be-running-without-the-usual-guardrails /path/to/WORKFLOW.md
+uvx --from /Users/bennet/git/code-factory code-factory --i-understand-that-this-will-be-running-without-the-usual-guardrails /path/to/WORKFLOW.md
 ```
 
 If you omit the workflow path, the CLI defaults to `./WORKFLOW.md`.
@@ -37,7 +37,7 @@ If you omit the workflow path, the CLI defaults to `./WORKFLOW.md`.
 Usage:
 
 ```bash
-symphony [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]
+code-factory [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]
 ```
 
 Flags:
@@ -45,7 +45,7 @@ Flags:
 - `--i-understand-that-this-will-be-running-without-the-usual-guardrails`
   Required acknowledgement flag. The service will print a banner and exit without it.
 - `--logs-root <path>`
-  Enables a rotating log file at `<path>/log/symphony.log`.
+  Enables a rotating log file at `<path>/log/code-factory.log`.
 - `--port <port>`
   Enables the observability API on that port and overrides `server.port` from `WORKFLOW.md`.
   `0` is allowed if you want the OS to choose an ephemeral port.
@@ -75,7 +75,7 @@ Available routes:
 Example:
 
 ```bash
-uv run symphony \
+uv run code-factory \
   --i-understand-that-this-will-be-running-without-the-usual-guardrails \
   --port 4000 \
   /path/to/WORKFLOW.md

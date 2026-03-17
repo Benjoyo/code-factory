@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from symphony.coding_agents.codex.tools import DynamicToolExecutor
-from symphony.errors import TrackerClientError
+from code_factory.coding_agents.codex.tools import DynamicToolExecutor
+from code_factory.errors import TrackerClientError
 
 
 @pytest.mark.asyncio

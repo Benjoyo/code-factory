@@ -1,5 +1,5 @@
 QUERY = """
-query SymphonyLinearPoll($projectSlug: String!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
+query CodeFactoryLinearPoll($projectSlug: String!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
   issues(filter: {project: {slugId: {eq: $projectSlug}}, state: {name: {in: $stateNames}}}, first: $first, after: $after) {
     nodes {
       id
@@ -34,7 +34,7 @@ query SymphonyLinearPoll($projectSlug: String!, $stateNames: [String!]!, $first:
 """
 
 QUERY_BY_IDS = """
-query SymphonyLinearIssuesById($ids: [ID!]!, $first: Int!, $relationFirst: Int!) {
+query CodeFactoryLinearIssuesById($ids: [ID!]!, $first: Int!, $relationFirst: Int!) {
   issues(filter: {id: {in: $ids}}, first: $first) {
     nodes {
       id
@@ -65,25 +65,25 @@ query SymphonyLinearIssuesById($ids: [ID!]!, $first: Int!, $relationFirst: Int!)
 """
 
 VIEWER_QUERY = """
-query SymphonyLinearViewer {
+query CodeFactoryLinearViewer {
   viewer { id }
 }
 """
 
 CREATE_COMMENT_MUTATION = """
-mutation SymphonyCreateComment($issueId: String!, $body: String!) {
+mutation CodeFactoryCreateComment($issueId: String!, $body: String!) {
   commentCreate(input: {issueId: $issueId, body: $body}) { success }
 }
 """
 
 UPDATE_STATE_MUTATION = """
-mutation SymphonyUpdateIssueState($issueId: String!, $stateId: String!) {
+mutation CodeFactoryUpdateIssueState($issueId: String!, $stateId: String!) {
   issueUpdate(id: $issueId, input: {stateId: $stateId}) { success }
 }
 """
 
 STATE_LOOKUP_QUERY = """
-query SymphonyResolveStateId($issueId: String!, $stateName: String!) {
+query CodeFactoryResolveStateId($issueId: String!, $stateName: String!) {
   issue(id: $issueId) {
     team {
       states(filter: {name: {eq: $stateName}}, first: 1) {

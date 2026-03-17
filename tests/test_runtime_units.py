@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import pytest
 
-from symphony.runtime.messages import (
+from code_factory.runtime.messages import (
     AgentWorkerUpdate,
     RefreshRequest,
     Shutdown,
@@ -18,9 +18,9 @@ from symphony.runtime.messages import (
     WorkflowReloadError,
     WorkflowUpdated,
 )
-from symphony.runtime.orchestration.actor import OrchestratorActor
-from symphony.runtime.orchestration.models import RetryEntry, RunningEntry
-from symphony.runtime.orchestration.policy import (
+from code_factory.runtime.orchestration.actor import OrchestratorActor
+from code_factory.runtime.orchestration.models import RetryEntry, RunningEntry
+from code_factory.runtime.orchestration.policy import (
     active_issue_state,
     available_slots,
     candidate_issue,
@@ -33,8 +33,8 @@ from symphony.runtime.orchestration.policy import (
     terminal_issue_state,
     todo_issue_blocked_by_non_terminal,
 )
-from symphony.runtime.orchestration.snapshot import snapshot_payload
-from symphony.runtime.orchestration.tokens import (
+from code_factory.runtime.orchestration.snapshot import snapshot_payload
+from code_factory.runtime.orchestration.tokens import (
     apply_token_delta,
     compute_token_delta,
     extract_rate_limits,
@@ -43,11 +43,11 @@ from symphony.runtime.orchestration.tokens import (
     get_token_usage,
     integer_like,
 )
-from symphony.runtime.subprocess.process_tree import ProcessTree
-from symphony.runtime.worker.actor import IssueWorker
-from symphony.runtime.worker.utils import tracker_state_is_active
-from symphony.trackers.memory import MemoryTracker
-from symphony.workspace.manager import WorkspaceManager
+from code_factory.runtime.subprocess.process_tree import ProcessTree
+from code_factory.runtime.worker.actor import IssueWorker
+from code_factory.runtime.worker.utils import tracker_state_is_active
+from code_factory.trackers.memory import MemoryTracker
+from code_factory.workspace.manager import WorkspaceManager
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
 
@@ -217,7 +217,7 @@ async def test_process_tree_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
 
     terminating = TerminatingProcess()
     tree = ProcessTree(process=cast(Any, terminating), command="cmd", cwd="/tmp")
-    monkeypatch.setattr("symphony.runtime.subprocess.process_tree.os.name", "nt")
+    monkeypatch.setattr("code_factory.runtime.subprocess.process_tree.os.name", "nt")
     await tree.terminate()
     assert terminating.terminated is True
 
@@ -327,13 +327,13 @@ async def test_orchestrator_dispatch_and_reconciliation_paths(
         return task
 
     monkeypatch.setattr(
-        "symphony.runtime.orchestration.dispatching.IssueWorker", FakeWorker
+        "code_factory.runtime.orchestration.dispatching.IssueWorker", FakeWorker
     )
     monkeypatch.setattr(
-        "symphony.runtime.orchestration.dispatching.asyncio.create_task", spawn
+        "code_factory.runtime.orchestration.dispatching.asyncio.create_task", spawn
     )
     monkeypatch.setattr(
-        "symphony.runtime.orchestration.reconciliation.asyncio.create_task", spawn
+        "code_factory.runtime.orchestration.reconciliation.asyncio.create_task", spawn
     )
 
     actor.tracker = MemoryTracker([issue])

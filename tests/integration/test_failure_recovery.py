@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from symphony.runtime.messages import AgentWorkerUpdate, WorkerExited
+from code_factory.runtime.messages import AgentWorkerUpdate, WorkerExited
 
 from ..conftest import make_issue, make_snapshot, write_workflow_file
 from .helpers import issue_state, request_refresh_and_settle, wait_for_snapshot

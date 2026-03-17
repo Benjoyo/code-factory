@@ -191,7 +191,7 @@ def tool_error_payload(reason: Exception) -> dict[str, Any]:
     if normalized == "missing_linear_api_token":
         return {
             "error": {
-                "message": "Symphony is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`."
+                "message": "Code Factory is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`."
             }
         }
     if (

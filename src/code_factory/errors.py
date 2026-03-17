@@ -4,12 +4,12 @@ from dataclasses import dataclass
 from typing import Any
 
 
-class SymphonyError(Exception):
-    """Base error for Symphony runtime failures."""
+class CodeFactoryError(Exception):
+    """Base error for Code Factory runtime failures."""
 
 
 @dataclass(slots=True)
-class WorkflowLoadError(SymphonyError):
+class WorkflowLoadError(CodeFactoryError):
     reason: Any
 
     def __str__(self) -> str:
@@ -17,7 +17,7 @@ class WorkflowLoadError(SymphonyError):
 
 
 @dataclass(slots=True)
-class ConfigValidationError(SymphonyError):
+class ConfigValidationError(CodeFactoryError):
     message: str
     code: str = "invalid_workflow_config"
 
@@ -26,7 +26,7 @@ class ConfigValidationError(SymphonyError):
 
 
 @dataclass(slots=True)
-class TrackerClientError(SymphonyError):
+class TrackerClientError(CodeFactoryError):
     reason: Any
 
     def __str__(self) -> str:
@@ -34,7 +34,7 @@ class TrackerClientError(SymphonyError):
 
 
 @dataclass(slots=True)
-class WorkspaceError(SymphonyError):
+class WorkspaceError(CodeFactoryError):
     reason: Any
 
     def __str__(self) -> str:
@@ -42,7 +42,7 @@ class WorkspaceError(SymphonyError):
 
 
 @dataclass(slots=True)
-class AppServerError(SymphonyError):
+class AppServerError(CodeFactoryError):
     reason: Any
 
     def __str__(self) -> str:

@@ -5,7 +5,7 @@ import os
 import sys
 from dataclasses import dataclass
 
-from .application import SymphonyService
+from .application import CodeFactoryService
 
 ACK_FLAG = "--i-understand-that-this-will-be-running-without-the-usual-guardrails"
 
@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         asyncio.run(
-            SymphonyService(
+            CodeFactoryService(
                 result.workflow_path,
                 logs_root=result.logs_root,
                 port_override=result.port,
@@ -93,14 +93,16 @@ def evaluate(args: list[str]) -> CLIConfig | str:
 
 
 def usage_message() -> str:
-    return "Usage: symphony [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
+    return (
+        "Usage: code-factory [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
+    )
 
 
 def acknowledgement_banner() -> str:
     lines = [
-        "This Symphony implementation is a low key engineering preview.",
+        "This Code Factory implementation is a low key engineering preview.",
         "The coding agent will run without any guardrails.",
-        "SymphonyElixir is not a supported product and is presented as-is.",
+        "Code Factory is not a supported product and is presented as-is.",
         f"To proceed, start with `{ACK_FLAG}` CLI argument",
     ]
     width = max(len(line) for line in lines)

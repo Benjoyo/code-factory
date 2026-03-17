@@ -29,8 +29,8 @@ async def send_initialize(
             "params": {
                 "capabilities": {"experimentalApi": True},
                 "clientInfo": {
-                    "name": "symphony-orchestrator",
-                    "title": "Symphony Orchestrator",
+                    "name": "code-factory-orchestrator",
+                    "title": "Code Factory Orchestrator",
                     "version": "0.1.0",
                 },
             },

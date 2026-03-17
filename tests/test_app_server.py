@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from symphony.coding_agents.codex.app_server import AppServerClient
-from symphony.errors import AppServerError
+from code_factory.coding_agents.codex.app_server import AppServerClient
+from code_factory.errors import AppServerError
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
 

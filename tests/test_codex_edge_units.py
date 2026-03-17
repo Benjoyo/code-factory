@@ -9,8 +9,8 @@ from typing import Any, cast
 
 import pytest
 
-from symphony.coding_agents.codex.app_server.client import AppServerClient
-from symphony.coding_agents.codex.app_server.messages import (
+from code_factory.coding_agents.codex.app_server.client import AppServerClient
+from code_factory.coding_agents.codex.app_server.messages import (
     approval_option_label,
     message_summary,
     metadata_from_message,
@@ -18,24 +18,24 @@ from symphony.coding_agents.codex.app_server.messages import (
     tool_request_user_input_approval_answers,
     tool_request_user_input_unavailable_answers,
 )
-from symphony.coding_agents.codex.app_server.protocol import (
+from code_factory.coding_agents.codex.app_server.protocol import (
     await_response,
     start_thread,
     start_turn,
 )
-from symphony.coding_agents.codex.app_server.session import AppServerSession
-from symphony.coding_agents.codex.app_server.turns import (
+from code_factory.coding_agents.codex.app_server.session import AppServerSession
+from code_factory.coding_agents.codex.app_server.turns import (
     await_turn_completion,
     handle_tool_call,
     handle_tool_request_user_input,
     handle_turn_message,
 )
-from symphony.coding_agents.codex.config import (
+from code_factory.coding_agents.codex.config import (
     parse_coding_agent_settings,
     validate_coding_agent_settings,
 )
-from symphony.coding_agents.codex.runtime import CodexRuntime
-from symphony.coding_agents.codex.tools.executor import (
+from code_factory.coding_agents.codex.runtime import CodexRuntime
+from code_factory.coding_agents.codex.tools.executor import (
     SYNC_WORKPAD_CREATE,
     SYNC_WORKPAD_UPDATE,
     encode_payload,
@@ -45,9 +45,9 @@ from symphony.coding_agents.codex.tools.executor import (
     sync_workpad_request,
     tool_error_payload,
 )
-from symphony.errors import AppServerError, TrackerClientError, WorkflowLoadError
-from symphony.prompts import build_prompt
-from symphony.workflow.loader import load_workflow
+from code_factory.errors import AppServerError, TrackerClientError, WorkflowLoadError
+from code_factory.prompts import build_prompt
+from code_factory.workflow.loader import load_workflow
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
 
@@ -180,7 +180,7 @@ async def test_dynamic_tool_executor_validation_and_error_paths(
         read_workpad_file(str(missing), (str(workspace),))
 
     monkeypatch.setattr(
-        "symphony.coding_agents.codex.tools.executor.canonicalize",
+        "code_factory.coding_agents.codex.tools.executor.canonicalize",
         lambda _path: (_ for _ in ()).throw(OSError("boom")),
     )
     with pytest.raises(ValueError, match="cannot read"):
@@ -204,7 +204,7 @@ async def test_dynamic_tool_executor_validation_and_error_paths(
     }
     assert tool_error_payload(TrackerClientError("missing_linear_api_token")) == {
         "error": {
-            "message": "Symphony is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`."
+            "message": "Code Factory is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`."
         }
     }
     assert tool_error_payload(ValueError(("other", "x"))) == {
@@ -239,7 +239,7 @@ async def test_turn_handlers_cover_stream_and_input_edge_paths(
 
     sent_messages: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        "symphony.coding_agents.codex.app_server.turns.send_message",
+        "code_factory.coding_agents.codex.app_server.turns.send_message",
         lambda _process_tree, payload: sent_messages.append(payload) or _async_noop(),
     )
 
@@ -454,15 +454,15 @@ async def test_protocol_and_client_bootstrap_edge_paths(
         await asyncio.sleep(10)
 
     monkeypatch.setattr(
-        "symphony.coding_agents.codex.app_server.client.stdout_reader",
+        "code_factory.coding_agents.codex.app_server.client.stdout_reader",
         sleeping_reader,
     )
     monkeypatch.setattr(
-        "symphony.coding_agents.codex.app_server.client.stderr_reader",
+        "code_factory.coding_agents.codex.app_server.client.stderr_reader",
         sleeping_reader,
     )
     monkeypatch.setattr(
-        "symphony.coding_agents.codex.app_server.client.wait_for_exit",
+        "code_factory.coding_agents.codex.app_server.client.wait_for_exit",
         sleeping_reader,
     )
 
@@ -470,7 +470,7 @@ async def test_protocol_and_client_bootstrap_edge_paths(
         raise AppServerError("boom")
 
     monkeypatch.setattr(
-        "symphony.coding_agents.codex.app_server.client.send_initialize",
+        "code_factory.coding_agents.codex.app_server.client.send_initialize",
         fail_initialize,
     )
 
@@ -597,7 +597,9 @@ async def test_codex_runtime_dynamic_tool_executor_supports_sync_and_async_graph
     )
     assert broken_result["success"] is False
     payload = json.loads(broken_result["contentItems"][0]["text"])
-    assert payload["error"]["message"].startswith("Symphony is missing Linear auth.")
+    assert payload["error"]["message"].startswith(
+        "Code Factory is missing Linear auth."
+    )
 
     class MissingGraphqlTracker:
         graphql = None

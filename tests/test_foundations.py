@@ -12,14 +12,14 @@ from typing import Any, cast
 
 import pytest
 
-from symphony.application import SymphonyService
-from symphony.application.logging import configure_logging
-from symphony.cli import ACK_FLAG, CLIConfig, acknowledgement_banner, evaluate, main
-from symphony.config import (
+from code_factory.application import CodeFactoryService
+from code_factory.application.logging import configure_logging
+from code_factory.cli import ACK_FLAG, CLIConfig, acknowledgement_banner, evaluate, main
+from code_factory.config import (
     max_concurrent_agents_for_state,
     validate_dispatch_settings,
 )
-from symphony.config.utils import (
+from code_factory.config.utils import (
     boolean,
     coerce_int,
     env_reference_name,
@@ -39,29 +39,29 @@ from symphony.config.utils import (
     string_list,
     string_with_default,
 )
-from symphony.errors import ConfigValidationError, WorkflowLoadError, WorkspaceError
-from symphony.issues import Issue, normalize_issue_state
-from symphony.prompts.builder import continuation_prompt
-from symphony.prompts.values import to_liquid_value
-from symphony.runtime.support import maybe_aclose
-from symphony.workflow.loader import (
+from code_factory.errors import ConfigValidationError, WorkflowLoadError, WorkspaceError
+from code_factory.issues import Issue, normalize_issue_state
+from code_factory.prompts.builder import continuation_prompt
+from code_factory.prompts.values import to_liquid_value
+from code_factory.runtime.support import maybe_aclose
+from code_factory.workflow.loader import (
     DEFAULT_WORKFLOW_FILENAME,
     current_stamp,
     front_matter_yaml_to_map,
     split_front_matter,
     workflow_file_path,
 )
-from symphony.workflow.store import WorkflowStoreActor
-from symphony.workspace.hooks import run_hook
-from symphony.workspace.manager import WorkspaceManager
-from symphony.workspace.paths import (
+from code_factory.workflow.store import WorkflowStoreActor
+from code_factory.workspace.hooks import run_hook
+from code_factory.workspace.manager import WorkspaceManager
+from code_factory.workspace.paths import (
     canonicalize,
     is_within,
     safe_identifier,
     validate_workspace_path,
     workspace_path_for_issue,
 )
-from symphony.workspace.utils import (
+from code_factory.workspace.utils import (
     clean_tmp_artifacts,
     ensure_workspace,
     issue_context,
@@ -111,7 +111,7 @@ def test_evaluate_parses_ack_logs_root_port_and_default_path(
 )
 def test_evaluate_rejects_invalid_arguments(args: list[str]) -> None:
     assert evaluate(args) == (
-        "Usage: symphony [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
+        "Usage: code-factory [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
     )
 
 
@@ -161,9 +161,9 @@ def test_main_runs_service_and_handles_keyboard_interrupt(tmp_path: Path) -> Non
             return None
 
     try:
-        import symphony.cli as cli_module
+        import code_factory.cli as cli_module
 
-        cli_module.SymphonyService = FakeService  # type: ignore[assignment]
+        cli_module.CodeFactoryService = FakeService  # type: ignore[assignment]
         assert main([ACK_FLAG, "--port", "4567", str(workflow)]) == 0
         assert calls == [(str(workflow.resolve()), None, 4567)]
 
@@ -171,18 +171,18 @@ def test_main_runs_service_and_handles_keyboard_interrupt(tmp_path: Path) -> Non
             async def run_forever(self) -> None:
                 raise KeyboardInterrupt
 
-        cli_module.SymphonyService = InterruptingService  # type: ignore[assignment]
+        cli_module.CodeFactoryService = InterruptingService  # type: ignore[assignment]
         assert main([ACK_FLAG, str(workflow)]) == 130
     finally:
-        import symphony.cli as cli_module
+        import code_factory.cli as cli_module
 
-        cli_module.SymphonyService = SymphonyService  # type: ignore[assignment]
+        cli_module.CodeFactoryService = CodeFactoryService  # type: ignore[assignment]
 
 
 def test___main___raises_system_exit(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("symphony.cli.main", lambda: 7)
+    monkeypatch.setattr("code_factory.cli.main", lambda: 7)
     with pytest.raises(SystemExit) as excinfo:
-        runpy.run_module("symphony.__main__", run_name="__main__")
+        runpy.run_module("code_factory.__main__", run_name="__main__")
     assert excinfo.value.code == 7
 
 
@@ -203,7 +203,7 @@ def test_configure_logging_adds_stream_and_file_handlers(
             self.formatter = formatter
 
     monkeypatch.setattr(
-        "symphony.application.logging.RotatingFileHandler", FakeFileHandler
+        "code_factory.application.logging.RotatingFileHandler", FakeFileHandler
     )
 
     root_logger = logging.getLogger()
@@ -214,7 +214,7 @@ def test_configure_logging_adds_stream_and_file_handlers(
             root_logger.removeHandler(handler)
         log_path = configure_logging(str(tmp_path))
 
-        assert log_path == tmp_path / "log" / "symphony.log"
+        assert log_path == tmp_path / "log" / "code-factory.log"
         assert root_logger.level == logging.INFO
         assert len(root_logger.handlers) == 2
         assert created_handlers[0].path == log_path
@@ -239,7 +239,7 @@ def test_configure_logging_reuses_existing_handlers(
             root_logger.removeHandler(handler)
         root_logger.addHandler(logging.NullHandler())
         log_path = configure_logging(str(tmp_path))
-        assert log_path == tmp_path / "log" / "symphony.log"
+        assert log_path == tmp_path / "log" / "code-factory.log"
         assert configure_logging(None) is None
     finally:
         for handler in list(root_logger.handlers):
@@ -279,7 +279,7 @@ def test_configure_logging_without_console_and_with_logs_root(
             return None
 
     monkeypatch.setattr(
-        "symphony.application.logging.RotatingFileHandler", FakeFileHandler
+        "code_factory.application.logging.RotatingFileHandler", FakeFileHandler
     )
     root_logger = logging.getLogger()
     original_handlers = list(root_logger.handlers)
@@ -287,7 +287,7 @@ def test_configure_logging_without_console_and_with_logs_root(
         for handler in list(root_logger.handlers):
             root_logger.removeHandler(handler)
         log_path = configure_logging(str(tmp_path), console=False)
-        assert log_path == tmp_path / "log" / "symphony.log"
+        assert log_path == tmp_path / "log" / "code-factory.log"
         assert len(root_logger.handlers) == 1
         assert created_handlers[0].path == log_path
     finally:
@@ -320,17 +320,17 @@ def test_service_dashboard_helpers_and_logging_fallbacks(
 ) -> None:
     workflow = write_workflow_file(tmp_path / "WORKFLOW.md", server={"port": 4321})
     snapshot = make_snapshot(workflow)
-    service = SymphonyService(str(workflow))
+    service = CodeFactoryService(str(workflow))
 
     monkeypatch.setattr(
-        "symphony.application.service.LiveStatusDashboard.enabled",
+        "code_factory.application.service.LiveStatusDashboard.enabled",
         lambda settings, stream: True,
     )
     dashboard = service._build_status_dashboard(snapshot, cast(Any, object()))
     assert dashboard is not None
 
     monkeypatch.setattr(
-        "symphony.application.service.LiveStatusDashboard.enabled",
+        "code_factory.application.service.LiveStatusDashboard.enabled",
         lambda settings, stream: False,
     )
     assert service._build_status_dashboard(snapshot, cast(Any, object())) is None
@@ -345,7 +345,7 @@ def test_service_dashboard_helpers_and_logging_fallbacks(
         return None
 
     monkeypatch.setattr(
-        "symphony.application.service.configure_logging", fake_configure_logging
+        "code_factory.application.service.configure_logging", fake_configure_logging
     )
     assert service._configure_logging(True) is None
     assert calls == [(None, False)]
@@ -354,18 +354,20 @@ def test_service_dashboard_helpers_and_logging_fallbacks(
         return Path("/tmp/fallback.log")
 
     monkeypatch.setattr(
-        "symphony.application.service.configure_logging", old_configure_logging
+        "code_factory.application.service.configure_logging", old_configure_logging
     )
     assert service._configure_logging(False) == Path("/tmp/fallback.log")
 
     def bad_typeerror(logs_root: str | None, *, console: bool = True) -> Path | None:
         raise TypeError("different")
 
-    monkeypatch.setattr("symphony.application.service.configure_logging", bad_typeerror)
+    monkeypatch.setattr(
+        "code_factory.application.service.configure_logging", bad_typeerror
+    )
     with pytest.raises(TypeError, match="different"):
         service._configure_logging(False)
 
-    monkeypatch.setattr("symphony.application.service.sys.stdin", object())
+    monkeypatch.setattr("code_factory.application.service.sys.stdin", object())
     assert service._dashboard_input_supported() is False
 
 
@@ -374,14 +376,14 @@ async def test_service_monitor_dashboard_input_and_signal_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workflow = write_workflow_file(tmp_path / "WORKFLOW.md")
-    service = SymphonyService(str(workflow))
+    service = CodeFactoryService(str(workflow))
     stop_event = asyncio.Event()
 
     class NoFileno:
         def isatty(self) -> bool:
             return True
 
-    monkeypatch.setattr("symphony.application.service.sys.stdin", NoFileno())
+    monkeypatch.setattr("code_factory.application.service.sys.stdin", NoFileno())
     await service._monitor_dashboard_input(stop_event)
     assert stop_event.is_set() is False
 
@@ -406,7 +408,7 @@ async def test_service_monitor_dashboard_input_and_signal_paths(
             return self._text
 
     monkeypatch.setattr("asyncio.get_running_loop", lambda: FakeLoop())
-    monkeypatch.setattr("symphony.application.service.sys.stdin", FakeStdin("q\n"))
+    monkeypatch.setattr("code_factory.application.service.sys.stdin", FakeStdin("q\n"))
     task = asyncio.create_task(service._monitor_dashboard_input(stop_event))
     await asyncio.sleep(0)
     callbacks[0]()
@@ -420,14 +422,14 @@ async def test_service_monitor_dashboard_input_and_signal_paths(
 
     stop_event = asyncio.Event()
     monkeypatch.setattr("asyncio.get_running_loop", lambda: NoReaderLoop())
-    monkeypatch.setattr("symphony.application.service.sys.stdin", FakeStdin(""))
+    monkeypatch.setattr("code_factory.application.service.sys.stdin", FakeStdin(""))
     await service._monitor_dashboard_input(stop_event)
 
     callbacks.clear()
     removed.clear()
     stop_event = asyncio.Event()
     monkeypatch.setattr("asyncio.get_running_loop", lambda: FakeLoop())
-    monkeypatch.setattr("symphony.application.service.sys.stdin", FakeStdin(""))
+    monkeypatch.setattr("code_factory.application.service.sys.stdin", FakeStdin(""))
     task = asyncio.create_task(service._monitor_dashboard_input(stop_event))
     await asyncio.sleep(0)
     callbacks[0]()
@@ -438,7 +440,9 @@ async def test_service_monitor_dashboard_input_and_signal_paths(
     removed.clear()
     stop_event = asyncio.Event()
     monkeypatch.setattr("asyncio.get_running_loop", lambda: FakeLoop())
-    monkeypatch.setattr("symphony.application.service.sys.stdin", FakeStdin("nope\n"))
+    monkeypatch.setattr(
+        "code_factory.application.service.sys.stdin", FakeStdin("nope\n")
+    )
     task = asyncio.create_task(service._monitor_dashboard_input(stop_event))
     await asyncio.sleep(0)
     callbacks[0]()
@@ -462,7 +466,7 @@ def test_service_build_http_server_and_signal_handlers(
 ) -> None:
     workflow = write_workflow_file(tmp_path / "WORKFLOW.md")
     snapshot = make_snapshot(workflow)
-    service = SymphonyService(str(workflow), port_override=4567)
+    service = CodeFactoryService(str(workflow), port_override=4567)
 
     calls: list[tuple[str, int]] = []
 
@@ -471,7 +475,7 @@ def test_service_build_http_server_and_signal_handlers(
             calls.append((host, port))
 
     monkeypatch.setattr(
-        "symphony.application.service.ObservabilityHTTPServer", FakeServer
+        "code_factory.application.service.ObservabilityHTTPServer", FakeServer
     )
     server = service._build_http_server(snapshot, cast(Any, object()))
     assert isinstance(server, FakeServer)
@@ -480,7 +484,7 @@ def test_service_build_http_server_and_signal_handlers(
     disabled_snapshot = make_snapshot(
         write_workflow_file(tmp_path / "NO_SERVER.md", server={"port": None})
     )
-    disabled_service = SymphonyService(str(workflow))
+    disabled_service = CodeFactoryService(str(workflow))
     assert (
         disabled_service._build_http_server(disabled_snapshot, cast(Any, object()))
         is None
@@ -610,11 +614,11 @@ def test_validate_dispatch_settings_and_state_limit_selection(
     agent_calls: list[Any] = []
 
     monkeypatch.setattr(
-        "symphony.config.validation.validate_tracker_settings",
+        "code_factory.config.validation.validate_tracker_settings",
         lambda s: tracker_calls.append(s),
     )
     monkeypatch.setattr(
-        "symphony.config.validation.validate_coding_agent_settings",
+        "code_factory.config.validation.validate_coding_agent_settings",
         lambda s: agent_calls.append(s),
     )
 
@@ -702,7 +706,7 @@ async def test_workflow_store_reload_run_and_error_paths(
     assert snapshots[-1].version == 2
 
     monkeypatch.setattr(
-        "symphony.workflow.store.current_stamp",
+        "code_factory.workflow.store.current_stamp",
         lambda _path: (_ for _ in ()).throw(OSError("boom")),
     )
     await actor._reload_if_changed()
@@ -729,7 +733,7 @@ async def test_service_run_forever_wires_runtime_components(
 ) -> None:
     workflow = write_workflow_file(tmp_path / "WORKFLOW.md", server={"port": 4321})
     snapshot = make_snapshot(workflow)
-    service = SymphonyService(str(workflow), logs_root=str(tmp_path / "logs"))
+    service = CodeFactoryService(str(workflow), logs_root=str(tmp_path / "logs"))
     calls: list[str] = []
 
     class FakeOrchestrator:
@@ -778,20 +782,20 @@ async def test_service_run_forever_wires_runtime_components(
             await stop_event.wait()
 
     monkeypatch.setattr(
-        "symphony.application.service.WorkflowStoreActor", FakeWorkflowStoreActor
+        "code_factory.application.service.WorkflowStoreActor", FakeWorkflowStoreActor
     )
     monkeypatch.setattr(
-        "symphony.application.service.OrchestratorActor", FakeOrchestrator
+        "code_factory.application.service.OrchestratorActor", FakeOrchestrator
     )
     monkeypatch.setattr(
-        "symphony.application.service.ObservabilityHTTPServer", FakeHTTPServer
+        "code_factory.application.service.ObservabilityHTTPServer", FakeHTTPServer
     )
     monkeypatch.setattr(
-        "symphony.application.service.configure_logging",
-        lambda logs_root: Path(logs_root) / "log" / "symphony.log",
+        "code_factory.application.service.configure_logging",
+        lambda logs_root: Path(logs_root) / "log" / "code-factory.log",
     )
     monkeypatch.setattr(
-        "symphony.application.service.validate_dispatch_settings",
+        "code_factory.application.service.validate_dispatch_settings",
         lambda settings: calls.append("validate"),
     )
     monkeypatch.setattr(
@@ -820,7 +824,7 @@ async def test_service_run_forever_starts_dashboard_and_input_monitor(
 ) -> None:
     workflow = write_workflow_file(tmp_path / "WORKFLOW.md")
     snapshot = make_snapshot(workflow)
-    service = SymphonyService(str(workflow))
+    service = CodeFactoryService(str(workflow))
     calls: list[str] = []
 
     class FakeOrchestrator:
@@ -860,13 +864,13 @@ async def test_service_run_forever_starts_dashboard_and_input_monitor(
             await stop_event.wait()
 
     monkeypatch.setattr(
-        "symphony.application.service.WorkflowStoreActor", FakeWorkflowStoreActor
+        "code_factory.application.service.WorkflowStoreActor", FakeWorkflowStoreActor
     )
     monkeypatch.setattr(
-        "symphony.application.service.OrchestratorActor", FakeOrchestrator
+        "code_factory.application.service.OrchestratorActor", FakeOrchestrator
     )
     monkeypatch.setattr(
-        "symphony.application.service.validate_dispatch_settings",
+        "code_factory.application.service.validate_dispatch_settings",
         lambda settings: None,
     )
     monkeypatch.setattr(service, "_install_signal_handlers", lambda stop_event: None)
@@ -954,7 +958,7 @@ async def test_run_hook_handles_success_timeout_and_failure(
         return FakeProcess()
 
     monkeypatch.setattr(
-        "symphony.workspace.hooks.ProcessTree.spawn_shell", spawn_success
+        "code_factory.workspace.hooks.ProcessTree.spawn_shell", spawn_success
     )
     await run_hook(
         settings,
@@ -973,7 +977,7 @@ async def test_run_hook_handles_success_timeout_and_failure(
         return TimeoutProcess()
 
     monkeypatch.setattr(
-        "symphony.workspace.hooks.ProcessTree.spawn_shell", spawn_timeout
+        "code_factory.workspace.hooks.ProcessTree.spawn_shell", spawn_timeout
     )
     with pytest.raises(WorkspaceError, match="workspace_hook_timeout"):
         await run_hook(
@@ -993,7 +997,7 @@ async def test_run_hook_handles_success_timeout_and_failure(
         return FailureProcess()
 
     monkeypatch.setattr(
-        "symphony.workspace.hooks.ProcessTree.spawn_shell", spawn_failure
+        "code_factory.workspace.hooks.ProcessTree.spawn_shell", spawn_failure
     )
     with pytest.raises(WorkspaceError, match="workspace_hook_failed"):
         await run_hook(
@@ -1038,7 +1042,7 @@ async def test_workspace_manager_runs_hooks_and_cleanup(
         if hook_name in {"after_run", "before_remove"} and not fatal:
             raise WorkspaceError(("workspace_hook_failed", hook_name, 1, "boom"))
 
-    monkeypatch.setattr("symphony.workspace.manager.run_hook", fake_run_hook)
+    monkeypatch.setattr("code_factory.workspace.manager.run_hook", fake_run_hook)
     workspace = await manager.create_for_issue("MT/42")
     assert workspace.created_now is True
     assert workspace.workspace_key == "MT_42"

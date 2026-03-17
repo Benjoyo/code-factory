@@ -17,4 +17,4 @@ No description provided.
 {% endif %}
 """.strip()
 
-DEFAULT_WORKSPACE_ROOT = os.path.join(tempfile.gettempdir(), "symphony_workspaces")
+DEFAULT_WORKSPACE_ROOT = os.path.join(tempfile.gettempdir(), "code-factory-workspaces")

@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from symphony.application import SymphonyService
-from symphony.config import parse_settings
-from symphony.errors import ConfigValidationError, WorkflowLoadError, WorkspaceError
-from symphony.prompts import build_prompt
-from symphony.workflow import load_workflow
-from symphony.workspace import WorkspaceManager
+from code_factory.application import CodeFactoryService
+from code_factory.config import parse_settings
+from code_factory.errors import ConfigValidationError, WorkflowLoadError, WorkspaceError
+from code_factory.prompts import build_prompt
+from code_factory.workflow import load_workflow
+from code_factory.workspace import WorkspaceManager
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
 
@@ -105,4 +105,4 @@ async def test_service_fails_startup_preflight_for_invalid_dispatch_config(
     )
 
     with pytest.raises(ConfigValidationError, match="tracker.kind is required"):
-        await SymphonyService(str(workflow)).run_forever()
+        await CodeFactoryService(str(workflow)).run_forever()

@@ -6,7 +6,7 @@ import pytest
 from pytestarch import Rule, get_evaluable_architecture
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC_ROOT = ROOT / "src" / "symphony"
+SRC_ROOT = ROOT / "src" / "code_factory"
 ALLOWED_TOP_LEVEL_ENTRIES = {
     "__init__.py",
     "__main__.py",
@@ -35,7 +35,7 @@ def module_prefix(evaluable_architecture) -> str:
     return next(
         module
         for module in evaluable_architecture.modules
-        if module.endswith(".src.symphony")
+        if module.endswith(".src.code_factory")
     )
 
 

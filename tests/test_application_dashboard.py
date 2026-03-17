@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 from rich.console import Console
 
-from symphony.application.dashboard import (
+from code_factory.application.dashboard import (
     LiveStatusDashboard,
     StatusDashboardContext,
     _rolling_tps,
@@ -17,7 +17,7 @@ from symphony.application.dashboard import (
     project_url,
     render_status_dashboard,
 )
-from symphony.application.dashboard_format import (
+from code_factory.application.dashboard_format import (
     clean_inline,
     int_value,
     mapping_list,
@@ -27,7 +27,7 @@ from symphony.application.dashboard_format import (
     rate_limit_credits,
     rate_limits_text,
 )
-from symphony.application.dashboard_render import _event_style
+from code_factory.application.dashboard_render import _event_style
 
 
 def test_dashboard_urls_match_elixir_style_host_rules() -> None:
@@ -263,7 +263,7 @@ async def test_live_status_dashboard_run_and_snapshot_paths(
             }
 
     monkeypatch.setattr(
-        "symphony.application.dashboard.Live", lambda *a, **k: fake_live
+        "code_factory.application.dashboard.Live", lambda *a, **k: fake_live
     )
     dashboard = LiveStatusDashboard(
         cast(Any, SnapshotNowOrchestrator()),

@@ -10,7 +10,7 @@ def tool_specs() -> list[dict[str, Any]]:
     return [
         {
             "name": LINEAR_GRAPHQL_TOOL,
-            "description": "Execute a raw GraphQL query or mutation against Linear using Symphony's configured auth.",
+            "description": "Execute a raw GraphQL query or mutation against Linear using Code Factory's configured auth.",
             "inputSchema": {
                 "type": "object",
                 "additionalProperties": False,

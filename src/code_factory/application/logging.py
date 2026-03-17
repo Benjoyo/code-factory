@@ -19,7 +19,9 @@ def configure_logging(logs_root: str | None, *, console: bool = True) -> Path | 
         elif logs_root is None:
             root_logger.addHandler(NullHandler())
         if logs_root is not None:
-            log_path = Path(logs_root).expanduser().resolve() / "log" / "symphony.log"
+            log_path = (
+                Path(logs_root).expanduser().resolve() / "log" / "code-factory.log"
+            )
             log_path.parent.mkdir(parents=True, exist_ok=True)
             file_handler = RotatingFileHandler(
                 log_path, maxBytes=10 * 1024 * 1024, backupCount=5
@@ -27,7 +29,7 @@ def configure_logging(logs_root: str | None, *, console: bool = True) -> Path | 
             file_handler.setFormatter(formatter)
             root_logger.addHandler(file_handler)
     elif logs_root is not None:
-        log_path = Path(logs_root).expanduser().resolve() / "log" / "symphony.log"
+        log_path = Path(logs_root).expanduser().resolve() / "log" / "code-factory.log"
     configure_library_loggers()
     return log_path
 

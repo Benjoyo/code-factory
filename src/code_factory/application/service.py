@@ -22,7 +22,7 @@ from .logging import configure_logging
 LOGGER = logging.getLogger(__name__)
 
 
-class SymphonyService:
+class CodeFactoryService:
     def __init__(
         self,
         workflow_path: str,
@@ -120,7 +120,7 @@ class SymphonyService:
 
     def _log_startup(self, snapshot, *, log_path: Path | None) -> None:
         LOGGER.info(
-            "Symphony starting workflow=%s tracker=%s project=%s polling_interval_ms=%s max_concurrent_agents=%s workspace_root=%s",
+            "Code Factory starting workflow=%s tracker=%s project=%s polling_interval_ms=%s max_concurrent_agents=%s workspace_root=%s",
             snapshot.path,
             snapshot.settings.tracker.kind,
             snapshot.settings.tracker.project_slug,

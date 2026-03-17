@@ -10,13 +10,13 @@ from typing import Any, cast
 
 import pytest
 
-from symphony.coding_agents.base import (
+from code_factory.coding_agents.base import (
     build_coding_agent_runtime,
     parse_coding_agent_settings,
     validate_coding_agent_settings,
 )
-from symphony.coding_agents.codex.app_server.client import AppServerClient
-from symphony.coding_agents.codex.app_server.messages import (
+from code_factory.coding_agents.codex.app_server.client import AppServerClient
+from code_factory.coding_agents.codex.app_server.messages import (
     NON_INTERACTIVE_TOOL_INPUT_ANSWER,
     approval_option_label,
     default_on_message,
@@ -35,7 +35,7 @@ from symphony.coding_agents.codex.app_server.messages import (
     tool_request_user_input_approval_answers,
     tool_request_user_input_unavailable_answers,
 )
-from symphony.coding_agents.codex.app_server.protocol import (
+from code_factory.coding_agents.codex.app_server.protocol import (
     INITIALIZE_ID,
     THREAD_START_ID,
     TURN_START_ID,
@@ -44,26 +44,30 @@ from symphony.coding_agents.codex.app_server.protocol import (
     start_thread,
     start_turn,
 )
-from symphony.coding_agents.codex.app_server.session import AppServerSession
-from symphony.coding_agents.codex.app_server.streams import (
+from code_factory.coding_agents.codex.app_server.session import AppServerSession
+from code_factory.coding_agents.codex.app_server.streams import (
     log_non_json_stream_line,
     send_message,
     stderr_reader,
     stdout_reader,
     wait_for_exit,
 )
-from symphony.coding_agents.codex.app_server.turns import (
+from code_factory.coding_agents.codex.app_server.turns import (
     approve_or_require,
     await_turn_completion,
     handle_tool_call,
     handle_tool_request_user_input,
     handle_turn_message,
 )
-from symphony.coding_agents.codex.config import normalize_approval_policy
-from symphony.coding_agents.codex.runtime import CodexRuntime
-from symphony.coding_agents.codex.tools import DynamicToolExecutor
-from symphony.errors import AppServerError, ConfigValidationError, TrackerClientError
-from symphony.observability.api.payloads import (
+from code_factory.coding_agents.codex.config import normalize_approval_policy
+from code_factory.coding_agents.codex.runtime import CodexRuntime
+from code_factory.coding_agents.codex.tools import DynamicToolExecutor
+from code_factory.errors import (
+    AppServerError,
+    ConfigValidationError,
+    TrackerClientError,
+)
+from code_factory.observability.api.payloads import (
     due_at_iso8601,
     humanize_agent_message,
     iso8601,
@@ -75,9 +79,12 @@ from symphony.observability.api.payloads import (
     running_issue_payload,
     state_payload,
 )
-from symphony.observability.api.server import ObservabilityHTTPServer, site_bound_port
-from symphony.runtime.subprocess.process_tree import ProcessTree
-from symphony.trackers.memory import MemoryTracker
+from code_factory.observability.api.server import (
+    ObservabilityHTTPServer,
+    site_bound_port,
+)
+from code_factory.runtime.subprocess.process_tree import ProcessTree
+from code_factory.trackers.memory import MemoryTracker
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
 
@@ -147,15 +154,15 @@ async def test_coding_agent_base_wrappers_and_codex_config(
     settings = make_settings(tmp_path)
     tracker = MemoryTracker([])
     monkeypatch.setattr(
-        "symphony.coding_agents.codex.runtime.build_coding_agent_runtime",
+        "code_factory.coding_agents.codex.runtime.build_coding_agent_runtime",
         lambda settings, tracker: ("runtime", settings, tracker),
     )
     monkeypatch.setattr(
-        "symphony.coding_agents.codex.config.validate_coding_agent_settings",
+        "code_factory.coding_agents.codex.config.validate_coding_agent_settings",
         lambda settings: (_ for _ in ()).throw(ConfigValidationError("bad")),
     )
     monkeypatch.setattr(
-        "symphony.coding_agents.codex.config.parse_coding_agent_settings",
+        "code_factory.coding_agents.codex.config.parse_coding_agent_settings",
         lambda config: {"parsed": config},
     )
 
@@ -348,11 +355,11 @@ async def test_protocol_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
         return {}
 
     monkeypatch.setattr(
-        "symphony.coding_agents.codex.app_server.protocol.send_message",
+        "code_factory.coding_agents.codex.app_server.protocol.send_message",
         fake_send_message,
     )
     monkeypatch.setattr(
-        "symphony.coding_agents.codex.app_server.protocol.await_response",
+        "code_factory.coding_agents.codex.app_server.protocol.await_response",
         fake_await_response,
     )
     process_tree = ProcessTree(
@@ -415,7 +422,7 @@ async def test_turn_helpers() -> None:
     )
     original_send = send_message
     try:
-        import symphony.coding_agents.codex.app_server.turns as turns_module
+        import code_factory.coding_agents.codex.app_server.turns as turns_module
 
         turns_module.send_message = fake_send_message  # type: ignore[assignment]
         executor = DynamicToolExecutor(
@@ -544,7 +551,7 @@ async def test_turn_helpers() -> None:
             == "turn_completed"
         )
     finally:
-        import symphony.coding_agents.codex.app_server.turns as turns_module
+        import code_factory.coding_agents.codex.app_server.turns as turns_module
 
         turns_module.send_message = original_send  # type: ignore[assignment]
 
@@ -591,11 +598,11 @@ async def test_client_runtime_and_observability_behaviors(
 
     session = make_session()
     monkeypatch.setattr(
-        "symphony.coding_agents.codex.app_server.client.start_turn",
+        "code_factory.coding_agents.codex.app_server.client.start_turn",
         lambda session, prompt, issue: asyncio.sleep(0, result="turn-1"),
     )
     monkeypatch.setattr(
-        "symphony.coding_agents.codex.app_server.client.await_turn_completion",
+        "code_factory.coding_agents.codex.app_server.client.await_turn_completion",
         lambda session, handler, executor: asyncio.sleep(0, result="turn_completed"),
     )
     result = await client.run_turn(session, "prompt", issue, on_message=on_message)
@@ -603,7 +610,7 @@ async def test_client_runtime_and_observability_behaviors(
     assert emitted[0] == "session_started"
 
     monkeypatch.setattr(
-        "symphony.coding_agents.codex.app_server.client.await_turn_completion",
+        "code_factory.coding_agents.codex.app_server.client.await_turn_completion",
         lambda session, handler, executor: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     with pytest.raises(RuntimeError, match="boom"):
@@ -762,7 +769,7 @@ async def test_observability_server_run_retries_and_cleans_up(
 
     monkeypatch.setattr(server, "_start_runner", fake_start_runner)
     monkeypatch.setattr(
-        "symphony.observability.api.server.asyncio.wait_for", fake_wait_for
+        "code_factory.observability.api.server.asyncio.wait_for", fake_wait_for
     )
     await server.run(stop_event)
     assert events == ["started", "cleanup"]

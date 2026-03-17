@@ -4,7 +4,7 @@
 This package is a long-running automation service that reads tracker work, creates isolated per-issue workspaces, and runs coding-agent sessions inside them. It exists to keep workflow policy in-repo, make issue execution repeatable, and provide enough observability to operate concurrent agent runs; when behavior is unclear, check `SPEC.md`.
 
 ## 2. Folder Structure
-- `src/symphony`: Python package entrypoints, shared models, and package roots.
+- `src/code_factory`: Python package entrypoints, shared models, and package roots.
   - `application`: service bootstrap, logging setup, and top-level runtime wiring.
   - `runtime`: orchestrator, worker, runtime messages, and subprocess/process lifecycle code.
   - `trackers`: generic tracker boundary plus concrete tracker implementations.

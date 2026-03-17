@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from aiohttp import ClientSession
 
-from symphony.application import SymphonyService
+from code_factory.application import CodeFactoryService
 
 from ..conftest import make_issue, write_workflow_file
 from .helpers import wait_for_snapshot
@@ -74,14 +74,14 @@ async def test_integration_service_run_forever_starts_and_stops_with_memory_trac
         codex={"command": "dummy-agent"},
     )
     shared_tracker = RecordingMemoryTracker([])
-    service = SymphonyService(str(workflow))
+    service = CodeFactoryService(str(workflow))
 
     monkeypatch.setattr(
-        "symphony.runtime.orchestration.actor.build_tracker",
+        "code_factory.runtime.orchestration.actor.build_tracker",
         lambda settings: shared_tracker,
     )
     monkeypatch.setattr(
-        "symphony.application.service.configure_logging", lambda logs_root: None
+        "code_factory.application.service.configure_logging", lambda logs_root: None
     )
 
     def install_stop(stop_event: asyncio.Event) -> None:

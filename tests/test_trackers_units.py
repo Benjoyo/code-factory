@@ -8,23 +8,23 @@ from typing import Any, cast
 import httpx
 import pytest
 
-from symphony.errors import ConfigValidationError, TrackerClientError
-from symphony.trackers.base import (
+from code_factory.errors import ConfigValidationError, TrackerClientError
+from code_factory.trackers.base import (
     build_tracker,
     parse_tracker_settings,
     validate_tracker_settings,
 )
-from symphony.trackers.linear.client import LinearClient
-from symphony.trackers.linear.config import (
+from code_factory.trackers.linear.client import LinearClient
+from code_factory.trackers.linear.config import (
     parse_tracker_settings as parse_linear_tracker_settings,
 )
-from symphony.trackers.linear.config import (
+from code_factory.trackers.linear.config import (
     supports_tracker_kind,
 )
-from symphony.trackers.linear.config import (
+from code_factory.trackers.linear.config import (
     validate_tracker_settings as validate_linear_tracker_settings,
 )
-from symphony.trackers.linear.decoding import (
+from code_factory.trackers.linear.decoding import (
     assigned_to_worker,
     assignee_id,
     decode_linear_page_response,
@@ -37,8 +37,11 @@ from symphony.trackers.linear.decoding import (
     parse_datetime,
     string_or_none,
 )
-from symphony.trackers.linear.graphql import LinearGraphQLClient, summarize_error_body
-from symphony.trackers.linear.queries import (
+from code_factory.trackers.linear.graphql import (
+    LinearGraphQLClient,
+    summarize_error_body,
+)
+from code_factory.trackers.linear.queries import (
     CREATE_COMMENT_MUTATION,
     QUERY,
     QUERY_BY_IDS,
@@ -46,8 +49,8 @@ from symphony.trackers.linear.queries import (
     UPDATE_STATE_MUTATION,
     VIEWER_QUERY,
 )
-from symphony.trackers.memory import MemoryTracker
-from symphony.trackers.memory.tracker import build_tracker as build_memory_tracker
+from code_factory.trackers.memory import MemoryTracker
+from code_factory.trackers.memory.tracker import build_tracker as build_memory_tracker
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
 
@@ -66,11 +69,11 @@ def test_tracker_base_build_validate_and_parse(
     linear_settings = make_settings(tmp_path)
 
     monkeypatch.setattr(
-        "symphony.trackers.memory.tracker.build_tracker",
+        "code_factory.trackers.memory.tracker.build_tracker",
         lambda settings, **kwargs: ("memory", settings, kwargs),
     )
     monkeypatch.setattr(
-        "symphony.trackers.linear.client.build_tracker",
+        "code_factory.trackers.linear.client.build_tracker",
         lambda settings, **kwargs: ("linear", settings, kwargs),
     )
     assert cast(Any, build_tracker(memory_settings, sample=True))[0] == "memory"
@@ -93,7 +96,7 @@ def test_tracker_base_build_validate_and_parse(
     parse_calls: list[Any] = []
     validate_calls: list[Any] = []
     monkeypatch.setattr(
-        "symphony.trackers.linear.config.validate_tracker_settings",
+        "code_factory.trackers.linear.config.validate_tracker_settings",
         lambda settings: validate_calls.append(settings),
     )
     validate_tracker_settings(linear_settings)
@@ -104,7 +107,7 @@ def test_tracker_base_build_validate_and_parse(
     parsed_linear_tracker = linear_settings.tracker
 
     monkeypatch.setattr(
-        "symphony.trackers.linear.config.parse_tracker_settings",
+        "code_factory.trackers.linear.config.parse_tracker_settings",
         lambda config: parse_calls.append(config) or parsed_linear_tracker,
     )
     parse_tracker_settings({"tracker": {"kind": "linear"}})

@@ -10,47 +10,54 @@ from typing import Any, cast
 import httpx
 import pytest
 
-from symphony.coding_agents.codex.app_server.streams import log_non_json_stream_line
-from symphony.config.utils import (
+from code_factory.coding_agents.codex.app_server.streams import log_non_json_stream_line
+from code_factory.config.utils import (
     coerce_int,
     normalize_state_limits,
     resolve_env_value,
     string_list,
 )
-from symphony.errors import ConfigValidationError, TrackerClientError, WorkspaceError
-from symphony.observability.api.payloads import (
+from code_factory.errors import (
+    ConfigValidationError,
+    TrackerClientError,
+    WorkspaceError,
+)
+from code_factory.observability.api.payloads import (
     due_at_iso8601,
     humanize_agent_message,
     iso8601,
     recent_events_payload,
 )
-from symphony.observability.api.server import ObservabilityHTTPServer
-from symphony.runtime.messages import Shutdown
-from symphony.runtime.orchestration.actor import OrchestratorActor
-from symphony.runtime.orchestration.models import RetryEntry, RunningEntry
-from symphony.runtime.subprocess.process_tree import ProcessTree
-from symphony.runtime.worker.actor import IssueWorker
-from symphony.trackers.linear.client import (
+from code_factory.observability.api.server import ObservabilityHTTPServer
+from code_factory.runtime.messages import Shutdown
+from code_factory.runtime.orchestration.actor import OrchestratorActor
+from code_factory.runtime.orchestration.models import RetryEntry, RunningEntry
+from code_factory.runtime.subprocess.process_tree import ProcessTree
+from code_factory.runtime.worker.actor import IssueWorker
+from code_factory.trackers.linear.client import (
     LinearClient,
 )
-from symphony.trackers.linear.client import (
+from code_factory.trackers.linear.client import (
     build_tracker as build_linear_tracker,
 )
-from symphony.trackers.linear.config import (
+from code_factory.trackers.linear.config import (
     validate_tracker_settings as validate_linear_tracker_settings,
 )
-from symphony.trackers.linear.decoding import (
+from code_factory.trackers.linear.decoding import (
     decode_linear_page_response,
     decode_linear_response,
     extract_blockers,
     next_page_cursor,
 )
-from symphony.trackers.linear.graphql import LinearGraphQLClient
-from symphony.trackers.linear.queries import STATE_LOOKUP_QUERY, UPDATE_STATE_MUTATION
-from symphony.workflow.store import WorkflowStoreActor
-from symphony.workspace.hooks import run_hook
-from symphony.workspace.manager import WorkspaceManager
-from symphony.workspace.paths import validate_workspace_path
+from code_factory.trackers.linear.graphql import LinearGraphQLClient
+from code_factory.trackers.linear.queries import (
+    STATE_LOOKUP_QUERY,
+    UPDATE_STATE_MUTATION,
+)
+from code_factory.workflow.store import WorkflowStoreActor
+from code_factory.workspace.hooks import run_hook
+from code_factory.workspace.manager import WorkspaceManager
+from code_factory.workspace.paths import validate_workspace_path
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
 
@@ -109,7 +116,7 @@ async def test_observability_workspace_and_hook_edge_paths(
         raise WorkspaceError("boom")
 
     with caplog.at_level(logging.WARNING):
-        monkeypatch.setattr("symphony.workspace.manager.run_hook", fail_run_hook)
+        monkeypatch.setattr("code_factory.workspace.manager.run_hook", fail_run_hook)
         await manager._run_before_remove_hook("/tmp/workspace")
     assert any(
         "Ignoring before_remove hook failure" in record.message
@@ -127,7 +134,7 @@ async def test_observability_workspace_and_hook_edge_paths(
         return FailingHookProcess()
 
     monkeypatch.setattr(
-        "symphony.workspace.hooks.ProcessTree.spawn_shell",
+        "code_factory.workspace.hooks.ProcessTree.spawn_shell",
         spawn_failing_process,
     )
     with pytest.raises(WorkspaceError, match="workspace_hook_failed"):
@@ -150,7 +157,7 @@ async def test_observability_workspace_and_hook_edge_paths(
         )
 
     monkeypatch.setattr(
-        "symphony.workspace.paths.canonicalize",
+        "code_factory.workspace.paths.canonicalize",
         lambda _path: (_ for _ in ()).throw(OSError("boom")),
     )
     with pytest.raises(WorkspaceError, match="workspace_path_unreadable"):
@@ -418,11 +425,11 @@ async def test_process_tree_and_orchestration_edge_paths(
         return await awaitable
 
     monkeypatch.setattr(
-        "symphony.runtime.subprocess.process_tree.asyncio.wait_for",
+        "code_factory.runtime.subprocess.process_tree.asyncio.wait_for",
         fake_wait_for,
     )
     monkeypatch.setattr(
-        "symphony.runtime.subprocess.process_tree.os.killpg",
+        "code_factory.runtime.subprocess.process_tree.os.killpg",
         lambda pid, sig: signals.append((pid, sig)),
     )
     tree = ProcessTree(process=cast(Any, FakeProcess()), command="cmd", cwd="/tmp")
@@ -459,7 +466,7 @@ async def test_process_tree_and_orchestration_edge_paths(
 
     actor.tracker = cast(Any, CleanupTracker())
     monkeypatch.setattr(
-        "symphony.runtime.orchestration.actor.WorkspaceManager",
+        "code_factory.runtime.orchestration.actor.WorkspaceManager",
         FailingManager,
     )
     await actor.startup_terminal_workspace_cleanup()

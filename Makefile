@@ -1,7 +1,7 @@
 .PHONY: setup lint format-check typecheck test test-coverage coverage-gate coverage-packages fix repair verify-static verify clean
 
 UV := uv run --project . --extra dev --group dev
-SOURCE_DIR := src/symphony
+SOURCE_DIR := src/code_factory
 COVERAGE_JSON := coverage.json
 LINE_COVERAGE_MIN := 100
 BRANCH_COVERAGE_MIN := 100
@@ -65,7 +65,7 @@ coverage-packages: test-coverage
 	'acc = defaultdict(lambda: {"covered_lines": 0, "num_statements": 0, "covered_branches": 0, "num_branches": 0})' \
 	'for path, meta in data["files"].items():' \
 	'    parts = Path(path).parts' \
-	'    idx = parts.index("symphony")' \
+	'    idx = parts.index("code_factory")' \
 	'    package = parts[idx + 1] if len(parts) > idx + 2 else "(root)"' \
 	'    summary = meta["summary"]' \
 	'    acc[package]["covered_lines"] += summary["covered_lines"]' \

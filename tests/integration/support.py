@@ -7,11 +7,14 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from symphony.issues import Issue
-from symphony.observability.api.server import ObservabilityHTTPServer, site_bound_port
-from symphony.runtime.orchestration import OrchestratorActor
-from symphony.trackers.memory import MemoryTracker
-from symphony.workflow.store import WorkflowStoreActor
+from code_factory.issues import Issue
+from code_factory.observability.api.server import (
+    ObservabilityHTTPServer,
+    site_bound_port,
+)
+from code_factory.runtime.orchestration import OrchestratorActor
+from code_factory.trackers.memory import MemoryTracker
+from code_factory.workflow.store import WorkflowStoreActor
 
 from ..conftest import deep_merge, make_snapshot, write_workflow_file
 
@@ -262,7 +265,7 @@ class IntegrationHarness:
             OrchestratorActor, "POLL_TRANSITION_RENDER_DELAY_MS", 5
         )
         self.monkeypatch.setattr(
-            "symphony.runtime.worker.actor.build_coding_agent_runtime",
+            "code_factory.runtime.worker.actor.build_coding_agent_runtime",
             lambda settings, tracker: DummyRuntime(self.controller, self.tracker),
         )
         workflow_config = deep_merge(

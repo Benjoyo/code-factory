@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from symphony.issues import BlockerRef
+from code_factory.issues import BlockerRef
 
 from ..conftest import make_issue, write_workflow_file
 from .helpers import hook_script, issue_state, read_lines, wait_for_snapshot
