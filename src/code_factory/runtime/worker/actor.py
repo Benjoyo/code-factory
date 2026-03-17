@@ -1,3 +1,5 @@
+"""Issue worker that orchestrates agent sessions inside per-issue workspaces."""
+
 from __future__ import annotations
 
 import asyncio
@@ -19,6 +21,8 @@ from .utils import tracker_state_is_active
 
 
 class IssueWorker:
+    """Wraps the agent session loop and hooks for a single issue."""
+
     def __init__(
         self,
         *,
@@ -28,6 +32,7 @@ class IssueWorker:
         attempt: int | None = None,
         tracker: Tracker | None = None,
     ) -> None:
+        """Bind dependencies and prepare the workspace/runtime stack for the issue."""
         self.issue = issue
         self.workflow_snapshot = workflow_snapshot
         self.attempt = attempt
@@ -42,11 +47,13 @@ class IssueWorker:
         )
 
     async def stop(self, _reason: str | None = None) -> None:
+        """Request the worker to halt and stop the active agent session if running."""
         self.stop_event.set()
         if self._session is not None:
             await asyncio.shield(self._session.stop())
 
     async def run(self) -> None:
+        """Drive workspace setup, agent execution, hooks, and exit reporting."""
         normal = False
         reason: str | None = None
         try:
@@ -85,6 +92,7 @@ class IssueWorker:
             )
 
     async def _run_turns(self, session: CodingAgentSession) -> None:
+        """Loop through agent turns while checking for stop events and refreshed state."""
         max_turns = self.workflow_snapshot.settings.agent.max_turns
         current_issue = self.issue
         for turn_number in range(1, max_turns + 1):
@@ -101,6 +109,7 @@ class IssueWorker:
                 self.workflow_snapshot.settings, refreshed_issue.state
             ):
                 return
+            # Always base the next turn on the tracker-reported issue rather than the previous copy.
             current_issue = refreshed_issue
 
     def _turn_prompt(self, issue: Issue, turn_number: int, max_turns: int) -> str:
@@ -115,5 +124,6 @@ class IssueWorker:
         return issues[0] if issues else None
 
     async def _on_agent_message(self, message: dict[str, Any]) -> None:
+        """Forward agent messages back to the orchestrator queue for metrics."""
         if self.issue.id:
             await self.queue.put(AgentWorkerUpdate(self.issue.id, message))

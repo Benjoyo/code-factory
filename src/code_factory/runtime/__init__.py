@@ -1,3 +1,5 @@
+"""Runtime messaging exports consumed by orchestrator entrypoints."""
+
 from .messages import (
     AgentWorkerUpdate,
     RefreshRequest,

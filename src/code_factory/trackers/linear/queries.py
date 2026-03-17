@@ -1,3 +1,5 @@
+"""Hardcoded GraphQL documents used by the Linear tracker client."""
+
 QUERY = """
 query CodeFactoryLinearPoll($projectSlug: String!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
   issues(filter: {project: {slugId: {eq: $projectSlug}}, state: {name: {in: $stateNames}}}, first: $first, after: $after) {

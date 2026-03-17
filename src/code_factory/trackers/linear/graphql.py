@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Low-level HTTP support for Linear, including optional request injection for tests."""
+
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -18,6 +20,8 @@ RequestFunction = Callable[
 
 
 class LinearGraphQLClient:
+    """Performs authenticated GraphQL calls against Linear's API."""
+
     MAX_ERROR_BODY_LOG_BYTES = 1000
 
     def __init__(
@@ -82,6 +86,8 @@ class LinearGraphQLClient:
 
 
 def summarize_error_body(response: httpx.Response) -> str:
+    """Return a compact representation of the response for structured logging."""
+
     try:
         body = response.json()
     except Exception:

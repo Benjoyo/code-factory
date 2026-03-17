@@ -1,3 +1,5 @@
+"""Config parsing helpers that coerce the workflow document into typed models."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -28,6 +30,8 @@ from .utils import (
 
 
 def parse_settings(config: Mapping[str, Any]) -> Settings:
+    """Turn the flattened mapping into a validated `Settings` graph used everywhere else."""
+
     tracker = parse_tracker_settings(config)
     polling_raw = require_mapping(config.get("polling"), "polling")
     workspace_raw = require_mapping(config.get("workspace"), "workspace")
@@ -104,4 +108,6 @@ def parse_settings(config: Mapping[str, Any]) -> Settings:
 
 
 def workflow_prompt(prompt_template: str) -> str:
+    """Apply sensible defaults when workflows omit a prompt template string."""
+
     return prompt_template.strip() or DEFAULT_PROMPT_TEMPLATE

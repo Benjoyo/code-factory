@@ -1,3 +1,5 @@
+"""Protocol definition that ties dispatch and reconciliation mixins to the actor state."""
+
 from __future__ import annotations
 
 import asyncio
@@ -14,6 +16,8 @@ from .models import RetryEntry, RunningEntry
 
 
 class OrchestratorContext(Protocol):
+    """Describes the runtime state and helpers expected by orchestration mixins."""
+
     CONTINUATION_RETRY_DELAY_MS: ClassVar[int]
     FAILURE_RETRY_BASE_MS: ClassVar[int]
     _logger: logging.Logger

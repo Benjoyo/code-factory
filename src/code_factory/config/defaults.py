@@ -1,3 +1,5 @@
+"""Workflow defaults shared across CLI, service, and tests."""
+
 from __future__ import annotations
 
 import os

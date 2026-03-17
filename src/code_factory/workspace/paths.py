@@ -1,3 +1,5 @@
+"""Path safety helpers that prevent workspaces from escaping the configured root."""
+
 from __future__ import annotations
 
 import os
@@ -10,11 +12,15 @@ SAFE_IDENTIFIER_RE = re.compile(r"[^A-Za-z0-9._-]")
 
 
 def canonicalize(path: str) -> str:
+    """Resolve `~`, normalize segments, and follow symlinks segment-by-segment."""
+
     expanded = os.path.abspath(os.path.expanduser(path))
     return os.path.normpath(_resolve_segments(expanded))
 
 
 def is_within(root: str, candidate: str) -> bool:
+    """Return whether `candidate` is inside `root` after pathlib normalization."""
+
     root_path = Path(root)
     candidate_path = Path(candidate)
     try:
@@ -25,14 +31,20 @@ def is_within(root: str, candidate: str) -> bool:
 
 
 def safe_identifier(identifier: str | None) -> str:
+    """Collapse arbitrary issue identifiers into a directory-safe token."""
+
     return SAFE_IDENTIFIER_RE.sub("_", identifier or "issue")
 
 
 def workspace_path_for_issue(root: str, identifier: str | None) -> str:
+    """Build the canonical workspace path for an issue beneath the workspace root."""
+
     return canonicalize(os.path.join(root, safe_identifier(identifier)))
 
 
 def validate_workspace_path(root: str, workspace: str) -> str:
+    """Reject paths that resolve to the root itself or escape it via symlinks."""
+
     expanded_workspace = os.path.abspath(os.path.expanduser(workspace))
     expanded_root = os.path.abspath(os.path.expanduser(root))
 
@@ -48,6 +60,7 @@ def validate_workspace_path(root: str, workspace: str) -> str:
         raise WorkspaceError(
             ("workspace_equals_root", canonical_workspace, canonical_root)
         )
+    # Compare both canonical and raw paths so symlink escapes are reported distinctly.
     if (canonical_workspace + os.sep).startswith(canonical_root + os.sep):
         return canonical_workspace
     if (expanded_workspace + os.sep).startswith(expanded_root + os.sep):
@@ -60,6 +73,8 @@ def validate_workspace_path(root: str, workspace: str) -> str:
 
 
 def _resolve_segments(path: str) -> str:
+    """Walk a path a segment at a time so symlink jumps can be handled safely."""
+
     drive, tail = os.path.splitdrive(path)
     if os.name == "nt":  # pragma: no cover - Windows-only drive handling
         resolved_root = drive + os.sep if tail.startswith(os.sep) else drive
@@ -76,6 +91,7 @@ def _resolve_segments(path: str) -> str:
         try:
             os.lstat(candidate)
         except FileNotFoundError:
+            # Stop resolving once we hit a missing tail; the existing prefix is canonical.
             return _join_path(
                 resolved_root or os.sep, resolved_segments + raw_segments[index:]
             )
@@ -101,6 +117,8 @@ def _resolve_symlink(
     raw_segments: list[str],
     index: int,
 ) -> tuple[str, list[str]]:
+    """Replace the current segment with the symlink target and continue resolution."""
+
     target = os.readlink(candidate)
     base_dir = _join_path(resolved_root or os.sep, resolved_segments)
     resolved_target = os.path.abspath(os.path.join(base_dir, target))
@@ -117,6 +135,8 @@ def _resolve_symlink(
 
 
 def _join_path(root: str, segments: list[str]) -> str:
+    """Small helper to rebuild a path from a resolved root plus remaining segments."""
+
     path = root
     for segment in segments:
         path = os.path.join(path, segment)

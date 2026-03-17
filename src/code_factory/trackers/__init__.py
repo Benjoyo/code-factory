@@ -1,3 +1,5 @@
+"""Thin re-export layer so callers see a single tracker API surface."""
+
 from .base import (
     Tracker,
     build_tracker,

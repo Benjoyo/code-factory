@@ -10,6 +10,8 @@ class CodeFactoryError(Exception):
 
 @dataclass(slots=True)
 class WorkflowLoadError(CodeFactoryError):
+    """Wraps arbitrary loader failures so callers can preserve the root cause."""
+
     reason: Any
 
     def __str__(self) -> str:
@@ -18,6 +20,8 @@ class WorkflowLoadError(CodeFactoryError):
 
 @dataclass(slots=True)
 class ConfigValidationError(CodeFactoryError):
+    """Validation error formatted for operator-facing workflow feedback."""
+
     message: str
     code: str = "invalid_workflow_config"
 
@@ -27,6 +31,8 @@ class ConfigValidationError(CodeFactoryError):
 
 @dataclass(slots=True)
 class TrackerClientError(CodeFactoryError):
+    """Tracker integration failure that should not leak backend-specific types."""
+
     reason: Any
 
     def __str__(self) -> str:
@@ -35,6 +41,8 @@ class TrackerClientError(CodeFactoryError):
 
 @dataclass(slots=True)
 class WorkspaceError(CodeFactoryError):
+    """Workspace lifecycle failure raised by path, hook, or filesystem guards."""
+
     reason: Any
 
     def __str__(self) -> str:
@@ -43,6 +51,8 @@ class WorkspaceError(CodeFactoryError):
 
 @dataclass(slots=True)
 class AppServerError(CodeFactoryError):
+    """Codex app-server protocol or transport failure."""
+
     reason: Any
 
     def __str__(self) -> str:

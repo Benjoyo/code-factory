@@ -5,11 +5,15 @@ from datetime import datetime
 
 
 def normalize_issue_state(state_name: str | None) -> str:
+    """Normalizes tracker state names for policy checks and comparisons."""
+
     return state_name.strip().lower() if isinstance(state_name, str) else ""
 
 
 @dataclass(frozen=True, slots=True)
 class BlockerRef:
+    """Minimal blocker record kept on issues without importing tracker models."""
+
     id: str | None = None
     identifier: str | None = None
     state: str | None = None
@@ -17,6 +21,8 @@ class BlockerRef:
 
 @dataclass(frozen=True, slots=True)
 class Issue:
+    """Tracker-agnostic issue snapshot used throughout orchestration code."""
+
     id: str | None = None
     identifier: str | None = None
     title: str | None = None
@@ -33,4 +39,6 @@ class Issue:
     updated_at: datetime | None = None
 
     def label_names(self) -> list[str]:
+        """Returns a mutable label list for APIs that expect sequence editing."""
+
         return list(self.labels)

@@ -1,3 +1,5 @@
+"""Turn-loop helpers that translate app-server traffic into runtime outcomes."""
+
 from __future__ import annotations
 
 import asyncio
@@ -21,6 +23,8 @@ from .streams import log_non_json_stream_line, send_message
 async def await_turn_completion(
     session: AppServerSession, on_message, tool_executor: DynamicToolExecutor
 ) -> str:
+    """Read app-server events until the current turn completes or fails."""
+
     timeout = session.turn_timeout_ms / 1000
     while True:
         kind, payload = await asyncio.wait_for(session.stdout_queue.get(), timeout)
@@ -53,6 +57,8 @@ async def handle_turn_message(
     message: dict,
     raw: str,
 ) -> str:
+    """Handle one decoded app-server message and return the next turn state."""
+
     method = message.get("method")
     metadata = metadata_from_message(session, message)
     if method == "turn/completed":
@@ -97,6 +103,8 @@ async def handle_turn_method(
     raw: str,
     metadata: dict,
 ) -> str:
+    """Route non-terminal methods to approval, tool, or notification handlers."""
+
     method = payload["method"]
     if method in {
         "item/commandExecution/requestApproval",
@@ -139,6 +147,8 @@ async def handle_tool_call(
     metadata: dict,
     tool_executor: DynamicToolExecutor,
 ) -> str:
+    """Execute a dynamic tool request and send the result back to the app server."""
+
     params = message_params(payload)
     result, event = await tool_executor.execute(
         tool_call_name(params), params.get("arguments", {})
@@ -160,6 +170,8 @@ async def approve_or_require(
     metadata: dict,
     decision: str,
 ) -> str:
+    """Auto-approve a guarded action or surface that human approval is required."""
+
     if not session.auto_approve_requests:
         await emit_message(
             on_message, "approval_required", {"payload": payload, "raw": raw}, metadata
@@ -181,6 +193,8 @@ async def approve_or_require(
 async def handle_tool_request_user_input(
     session: AppServerSession, on_message, payload: dict, raw: str, metadata: dict
 ) -> str:
+    """Answer request-user-input calls when policy allows a non-interactive default."""
+
     params = message_params(payload)
     if session.auto_approve_requests:
         answers = tool_request_user_input_approval_answers(params)

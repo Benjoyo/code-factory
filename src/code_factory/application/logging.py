@@ -1,3 +1,5 @@
+"""Logging bootstrap helpers shared by the Code Factory service entrypoints."""
+
 from __future__ import annotations
 
 import logging
@@ -7,6 +9,8 @@ from pathlib import Path
 
 
 def configure_logging(logs_root: str | None, *, console: bool = True) -> Path | None:
+    """Set up shared handlers once and return the persistent log file path if enabled."""
+
     root_logger = logging.getLogger()
     log_path: Path | None = None
     if not root_logger.handlers:
@@ -29,12 +33,15 @@ def configure_logging(logs_root: str | None, *, console: bool = True) -> Path | 
             file_handler.setFormatter(formatter)
             root_logger.addHandler(file_handler)
     elif logs_root is not None:
+        # Preserve a reference to the configured log file even when handlers already exist.
         log_path = Path(logs_root).expanduser().resolve() / "log" / "code-factory.log"
     configure_library_loggers()
     return log_path
 
 
 def configure_library_loggers() -> None:
+    """Quiet noisy third-party loggers so they do not overwhelm runtime logs."""
+
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)

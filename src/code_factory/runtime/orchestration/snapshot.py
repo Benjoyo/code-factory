@@ -1,3 +1,5 @@
+"""Helpers that build the orchestrator snapshot payload consumed by dashboards."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -17,6 +19,7 @@ def snapshot_payload(
     poll_interval_ms: int,
     now_ms: int,
 ) -> dict[str, Any]:
+    """Compose the full payload that surfaces orchestrator state for clients."""
     now = datetime.now(UTC)
     return {
         "running": [
@@ -42,6 +45,7 @@ def snapshot_payload(
 def running_entry_payload(
     issue_id: str, entry: RunningEntry, now: datetime
 ) -> dict[str, Any]:
+    """Render a single running issue row for the orchestrator summary."""
     return {
         "issue_id": issue_id,
         "identifier": entry.identifier,
@@ -65,6 +69,7 @@ def running_entry_payload(
 def retry_entry_payload(
     issue_id: str, entry: RetryEntry, now_ms: int
 ) -> dict[str, Any]:
+    """Serialize pending retry metadata for the orchestrator view."""
     return {
         "issue_id": issue_id,
         "attempt": entry.attempt,

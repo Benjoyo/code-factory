@@ -1,3 +1,5 @@
+"""Declarative tool specifications advertised to the Codex app-server."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -7,6 +9,8 @@ SYNC_WORKPAD_TOOL = "sync_workpad"
 
 
 def tool_specs() -> list[dict[str, Any]]:
+    """Return the supported tool definitions in app-server schema format."""
+
     return [
         {
             "name": LINEAR_GRAPHQL_TOOL,
@@ -55,4 +59,6 @@ def tool_specs() -> list[dict[str, Any]]:
 
 
 def supported_tool_names() -> list[str]:
+    """Convenience accessor used when reporting unsupported tool calls."""
+
     return [spec["name"] for spec in tool_specs()]

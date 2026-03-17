@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Helpers that massage Linear’s GraphQL payloads into Issue models."""
+
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
@@ -127,6 +129,7 @@ def extract_blockers(issue: Mapping[str, Any]) -> list[BlockerRef]:
 
     blockers: list[BlockerRef] = []
     for relation in nodes:
+        # Only treat the inverse relations as blockers when they are typed 'blocks'.
         if (
             not isinstance(relation, Mapping)
             or str(relation.get("type", "")).strip().lower() != "blocks"
@@ -155,6 +158,7 @@ def next_page_cursor(page_info: Mapping[str, Any]) -> str | None:
         return None
     cursor = page_info.get("end_cursor")
     if not isinstance(cursor, str) or not cursor:
+        # Missing cursor indicates an unexpected Linear response shape.
         raise TrackerClientError("linear_missing_end_cursor")
     return cursor
 

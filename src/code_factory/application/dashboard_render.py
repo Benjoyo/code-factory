@@ -1,3 +1,5 @@
+"""Rich-based rendering helpers for the live status dashboard layout."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -28,6 +30,8 @@ from .dashboard_format import (
 
 @dataclass(frozen=True, slots=True)
 class StatusDashboardContext:
+    """Trivial holder for dashboard URLs and the current concurrency limit."""
+
     max_agents: int
     project_url: str | None
     dashboard_url: str | None
@@ -86,6 +90,8 @@ def render_status_dashboard(
 
 
 def project_url(project_slug: str | None) -> str | None:
+    """Provide a tracker-specific URL linking to the configured Linear project."""
+
     return (
         f"https://linear.app/project/{project_slug}/issues"
         if isinstance(project_slug, str) and project_slug.strip()
@@ -94,6 +100,8 @@ def project_url(project_slug: str | None) -> str | None:
 
 
 def dashboard_url(host: str, port: int | None) -> str | None:
+    """Build the observability dashboard URL, defaulting to localhost for wildcards."""
+
     if not isinstance(port, int) or port <= 0:
         return None
     cleaned = host.strip() if isinstance(host, str) else ""
@@ -121,6 +129,8 @@ def _unavailable_panel(detail: str | None) -> RenderableType:
 
 
 def _running_renderable(running: list[dict[str, Any]]) -> RenderableType:
+    """Render the currently running agents table, keeping IDs and events aligned."""
+
     if not running:
         return Padding(Text("No active agents", style="dim"), (0, 1))
     table = Table(
@@ -159,6 +169,8 @@ def _running_renderable(running: list[dict[str, Any]]) -> RenderableType:
 
 
 def _retry_renderable(retrying: list[dict[str, Any]]) -> RenderableType:
+    """List queued retries along with their due time and any latest errors."""
+
     if not retrying:
         return Padding(Text("No queued retries", style="dim"), (0, 1))
     lines = Table.grid(expand=True)
@@ -183,17 +195,23 @@ def _retry_renderable(retrying: list[dict[str, Any]]) -> RenderableType:
 
 
 def _runtime_and_turns(entry: dict[str, Any]) -> str:
+    """Show runtime + turn information with a compact fallback when no turns have happened."""
+
     turns = int_value(entry.get("turn_count"))
     runtime = format_runtime(int_value(entry.get("runtime_seconds")))
     return f"{runtime} / {turns}" if turns > 0 else runtime
 
 
 def _compact_session_id(session_id: Any) -> str:
+    """Shorten a long session identifier for display without losing uniqueness."""
+
     text = clean_inline(session_id, 64) or "n/a"
     return text if len(text) <= 10 else f"{text[:4]}...{text[-6:]}"
 
 
 def _event_summary(entry: dict[str, Any]) -> str:
+    """Pick the most recent agent event message for human-readable display."""
+
     message = pick(entry.get("last_agent_message"), "message")
     return (
         clean_inline(message or entry.get("last_agent_event") or "none", 64) or "none"
@@ -201,6 +219,8 @@ def _event_summary(entry: dict[str, Any]) -> str:
 
 
 def _event_style(event: Any, *, stopping: bool) -> str:
+    """Choose a color that reflects the last agent event and whether it's stopping."""
+
     text = str(event or "").lower()
     if stopping or "error" in text or "fail" in text:
         return "red"
@@ -214,5 +234,7 @@ def _event_style(event: Any, *, stopping: bool) -> str:
 
 
 def _retry_due_text(due_in_ms: Any) -> str:
+    """Express the retry delay in a fixed second.millisecond string for clarity."""
+
     ms = int_value(due_in_ms)
     return f"{ms // 1000}.{ms % 1000:03d}s"

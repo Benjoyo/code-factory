@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Manages App Server processes and shields the rest of the codebase from IPC details."""
+
 import asyncio
 import os
 from typing import Any
@@ -18,6 +20,8 @@ from .turns import await_turn_completion
 
 
 class AppServerClient:
+    """Low-level client orchestrating the Codex app-server subprocess lifecycle."""
+
     def __init__(self, settings: Settings, *, dynamic_tool_factory=None) -> None:
         self._settings = settings
         self._dynamic_tool_factory = dynamic_tool_factory
@@ -44,6 +48,7 @@ class AppServerClient:
             await session.stop()
 
     async def start_session(self, workspace: str) -> AppServerSession:
+        """Spin up the Codex runtime and bootstrap a messaging thread before use."""
         validated_workspace = self._validate_workspace_cwd(workspace)
         process_tree = await ProcessTree.spawn_shell(
             self._settings.coding_agent.command,
@@ -98,6 +103,7 @@ class AppServerClient:
     async def _bootstrap_session(
         self, process_tree: ProcessTree, workspace: str
     ) -> AppServerSession:
+        """Wire stdout/stderr readers and register the new thread with Codex."""
         stdout_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         assert process_tree.process.stdout is not None
         assert process_tree.process.stderr is not None
@@ -146,6 +152,7 @@ class AppServerClient:
         )
 
     def _build_tool_executor(self, workspace: str) -> DynamicToolExecutor:
+        """Provide a DynamicToolExecutor bound to the workspace and tracker tools."""
         if self._dynamic_tool_factory is None:
 
             async def missing_tool_backend(
@@ -157,6 +164,7 @@ class AppServerClient:
         return self._dynamic_tool_factory(workspace)
 
     def _validate_workspace_cwd(self, workspace: str) -> str:
+        """Check the workspace path is inside the configured workspace root."""
         expanded_workspace = os.path.abspath(os.path.expanduser(workspace))
         expanded_root = os.path.abspath(
             os.path.expanduser(self._settings.workspace.root)
@@ -170,6 +178,7 @@ class AppServerClient:
             raise AppServerError(("invalid_workspace_cwd", *reason)) from exc
 
     def _resolve_turn_sandbox_policy(self, workspace: str) -> dict[str, Any]:
+        # Default sandbox gives the agent write access only to the running workspace.
         if self._settings.coding_agent.turn_sandbox_policy is not None:
             return self._settings.coding_agent.turn_sandbox_policy
         writable_root = canonicalize(workspace or self._settings.workspace.root)

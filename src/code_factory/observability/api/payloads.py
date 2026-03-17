@@ -1,3 +1,5 @@
+"""Payload shapers for the small observability HTTP API."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -5,6 +7,8 @@ from typing import Any
 
 
 def state_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Convert the orchestrator snapshot into the top-level API response shape."""
+
     return {
         "generated_at": iso8601(datetime.now(UTC)),
         "counts": {
@@ -21,6 +25,8 @@ def state_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
 def issue_payload(
     issue_identifier: str, snapshot: dict[str, Any]
 ) -> dict[str, Any] | None:
+    """Return the detail payload for one issue if it is running or retrying."""
+
     running = next(
         (
             entry
@@ -60,6 +66,8 @@ def issue_payload(
 
 
 def running_entry_payload(entry: dict[str, Any]) -> dict[str, Any]:
+    """Shape a running entry into the compact list representation used by the API."""
+
     return {
         "issue_id": entry["issue_id"],
         "issue_identifier": entry["identifier"],
@@ -82,6 +90,8 @@ def running_entry_payload(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def retry_entry_payload(entry: dict[str, Any]) -> dict[str, Any]:
+    """Shape a retry entry into the list representation used by the API."""
+
     return {
         "issue_id": entry["issue_id"],
         "issue_identifier": entry["identifier"],
@@ -93,6 +103,8 @@ def retry_entry_payload(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def running_issue_payload(entry: dict[str, Any]) -> dict[str, Any]:
+    """Return the nested running section for the per-issue endpoint."""
+
     return {
         "session_id": entry["session_id"],
         "turn_count": entry["turn_count"],
@@ -110,6 +122,8 @@ def running_issue_payload(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def retry_issue_payload(entry: dict[str, Any]) -> dict[str, Any]:
+    """Return the nested retry section for the per-issue endpoint."""
+
     return {
         "attempt": entry["attempt"],
         "due_at": due_at_iso8601(entry["due_in_ms"]),
@@ -118,6 +132,8 @@ def retry_issue_payload(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def recent_events_payload(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expose the latest event as a single-item timeline for now."""
+
     at = iso8601(entry["last_agent_timestamp"])
     if at is None:
         return []
@@ -131,6 +147,8 @@ def recent_events_payload(entry: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def humanize_agent_message(message: Any) -> Any:
+    """Flatten nested agent message payloads into the user-facing text value."""
+
     if isinstance(message, dict):
         nested = message.get("message")
         return nested if not isinstance(nested, str) else nested
@@ -138,6 +156,8 @@ def humanize_agent_message(message: Any) -> Any:
 
 
 def iso8601(value: Any) -> str | None:
+    """Serialize datetimes in a stable UTC `Z` form for API consumers."""
+
     if isinstance(value, datetime):
         return (
             value.astimezone(UTC)
@@ -149,6 +169,8 @@ def iso8601(value: Any) -> str | None:
 
 
 def due_at_iso8601(due_in_ms: Any) -> str | None:
+    """Translate a relative retry delay into an absolute due timestamp."""
+
     if isinstance(due_in_ms, int):
         return iso8601(datetime.now(UTC) + timedelta(milliseconds=due_in_ms))
     return None

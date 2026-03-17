@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Configuration helpers tailored to the Linear tracker integration."""
+
 import os
 from collections.abc import Mapping
 from typing import Any
@@ -16,6 +18,7 @@ from ...errors import ConfigValidationError
 
 
 def supports_tracker_kind(kind: str | None) -> bool:
+    """Linear is the only kind this module understands."""
     return kind == "linear"
 
 
@@ -31,6 +34,7 @@ def validate_tracker_settings(settings: Settings) -> None:
 
 
 def parse_tracker_settings(config: Mapping[str, Any] | Any) -> TrackerSettings:
+    # Keep parsing tautologically simple so we can trust defaults.
     tracker_raw = (
         require_mapping(config.get("tracker"), "tracker")
         if isinstance(config, Mapping)

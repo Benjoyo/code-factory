@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Codex runtime configuration with stringent defaults for safe execution."""
+
 from collections.abc import Mapping
 from typing import Any
 
@@ -53,6 +55,7 @@ def parse_coding_agent_settings(config: Mapping[str, Any]) -> CodingAgentSetting
 
 
 def normalize_approval_policy(approval_policy: Any) -> str | dict[str, Any]:
+    """Make rejection by policy the safe default unless the user configures otherwise."""
     if approval_policy is None:
         return {
             "reject": {

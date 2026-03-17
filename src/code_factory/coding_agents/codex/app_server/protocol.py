@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Protocol helpers for driving the Codex app-server JSON-RPC stream."""
+
 import asyncio
 import json
 from typing import Any
@@ -114,6 +116,7 @@ async def await_response(
     timeout_ms: int | None,
     default_timeout_ms: int,
 ) -> dict[str, Any]:
+    """Wait for the request with `request_id` to complete, raising on errors."""
     timeout = (timeout_ms or default_timeout_ms) / 1000
     while True:
         kind, payload = await asyncio.wait_for(stdout_queue.get(), timeout)

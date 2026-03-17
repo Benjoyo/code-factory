@@ -1,3 +1,5 @@
+"""Typed configuration models representing the workflow settings tree."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -6,6 +8,8 @@ from typing import Any
 
 @dataclass(frozen=True, slots=True)
 class TrackerSettings:
+    """Tracker integration metadata such as the endpoint, API key, and active states."""
+
     kind: str | None = None
     endpoint: str = ""
     api_key: str | None = None
@@ -23,16 +27,22 @@ class TrackerSettings:
 
 @dataclass(frozen=True, slots=True)
 class PollingSettings:
+    """Polling interval metadata used by the workflow store."""
+
     interval_ms: int = 30_000
 
 
 @dataclass(frozen=True, slots=True)
 class WorkspaceSettings:
+    """Workspace root override for per-issue workspace creation."""
+
     root: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class AgentSettings:
+    """Limits for concurrent agents, retries, and per-state throttles."""
+
     max_concurrent_agents: int = 10
     max_turns: int = 20
     max_retry_backoff_ms: int = 300_000
@@ -41,6 +51,8 @@ class AgentSettings:
 
 @dataclass(frozen=True, slots=True)
 class CodingAgentSettings:
+    """Controls how the coding agent process is started and sandboxed."""
+
     command: str = ""
     approval_policy: str | dict[str, Any] = field(
         default_factory=lambda: {
@@ -60,6 +72,8 @@ class CodingAgentSettings:
 
 @dataclass(frozen=True, slots=True)
 class HooksSettings:
+    """Paths for hooks invoked before and after workspace lifecycle events."""
+
     after_create: str | None = None
     before_run: str | None = None
     after_run: str | None = None
@@ -69,6 +83,8 @@ class HooksSettings:
 
 @dataclass(frozen=True, slots=True)
 class ObservabilitySettings:
+    """Settings that keep the dashboard and refresh cadence configurable."""
+
     dashboard_enabled: bool = True
     refresh_ms: int = 1_000
     render_interval_ms: int = 16
@@ -76,12 +92,16 @@ class ObservabilitySettings:
 
 @dataclass(frozen=True, slots=True)
 class ServerSettings:
+    """HTTP settings for exposing the observability API."""
+
     port: int | None = None
     host: str = "127.0.0.1"
 
 
 @dataclass(frozen=True, slots=True)
 class Settings:
+    """Root settings model consumed by the orchestrator snapshots."""
+
     tracker: TrackerSettings
     polling: PollingSettings
     workspace: WorkspaceSettings

@@ -1,3 +1,5 @@
+"""Entrypoint that wires together the runtime pieces of the long-lived service."""
+
 from __future__ import annotations
 
 import asyncio
@@ -23,6 +25,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 class CodeFactoryService:
+    """Facilitates startup, graceful shutdown, and dashboard plumbing for the service."""
+
     def __init__(
         self,
         workflow_path: str,
@@ -37,6 +41,8 @@ class CodeFactoryService:
         self.workflow_store: WorkflowStoreActor | None = None
 
     async def run_forever(self) -> None:
+        """Boots the orchestrator, workflow store, dashboard, and optional HTTP server."""
+
         stop_event = asyncio.Event()
         self._install_signal_handlers(stop_event)
         initial_snapshot = await WorkflowStoreActor(
@@ -74,11 +80,14 @@ class CodeFactoryService:
             await orchestrator.shutdown()
 
     async def _ignore_snapshot(self, _snapshot) -> None:
+        """Placeholder callback used before the orchestrator is wired into the workflow store."""
         return None
 
     def _build_http_server(
         self, initial_snapshot, orchestrator: OrchestratorActor
     ) -> ObservabilityHTTPServer | None:
+        """Conditionally install the observability API once a valid port is configured."""
+
         effective_port = (
             self.port_override
             if self.port_override is not None
@@ -103,6 +112,8 @@ class CodeFactoryService:
     def _build_status_dashboard(
         self, initial_snapshot, orchestrator: OrchestratorActor
     ) -> LiveStatusDashboard | None:
+        """Create the live TUI dashboard if the workflow declares it."""
+
         if not LiveStatusDashboard.enabled(initial_snapshot.settings, sys.stderr):
             return None
         return LiveStatusDashboard(
@@ -119,6 +130,8 @@ class CodeFactoryService:
         )
 
     def _log_startup(self, snapshot, *, log_path: Path | None) -> None:
+        """Emit startup metadata so operators know which workflow and tracker are active."""
+
         LOGGER.info(
             "Code Factory starting workflow=%s tracker=%s project=%s polling_interval_ms=%s max_concurrent_agents=%s workspace_root=%s",
             snapshot.path,
@@ -132,6 +145,8 @@ class CodeFactoryService:
             LOGGER.info("Rotating log file enabled path=%s", log_path)
 
     def _configure_logging(self, dashboard_enabled: bool) -> Path | None:
+        """Call the shared logging helper, falling back for dashboards that rewire handlers."""
+
         try:
             return configure_logging(self.logs_root, console=not dashboard_enabled)
         except TypeError as exc:
@@ -140,6 +155,8 @@ class CodeFactoryService:
             return configure_logging(self.logs_root)
 
     def _effective_port(self, initial_snapshot) -> int | None:
+        """Compute the port used by dashboards or API, preferring the CLI override."""
+
         return (
             self.port_override
             if self.port_override is not None
@@ -147,10 +164,14 @@ class CodeFactoryService:
         )
 
     def _dashboard_input_supported(self) -> bool:
+        """Return True when stdin behaves like a tty so we can read dashboard commands."""
+
         is_tty = getattr(sys.stdin, "isatty", None)
         return bool(callable(is_tty) and is_tty())
 
     async def _monitor_dashboard_input(self, stop_event: asyncio.Event) -> None:
+        """Watch stdin so typing 'quit' also triggers service shutdown for the dashboard."""
+
         loop = asyncio.get_running_loop()
         try:
             stdin_fd = sys.stdin.fileno()
@@ -176,6 +197,8 @@ class CodeFactoryService:
                 loop.remove_reader(stdin_fd)
 
     def _install_signal_handlers(self, stop_event: asyncio.Event) -> None:
+        """Add SIGTERM handling when the event loop supports it."""
+
         loop = asyncio.get_running_loop()
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(signal.SIGTERM, stop_event.set)

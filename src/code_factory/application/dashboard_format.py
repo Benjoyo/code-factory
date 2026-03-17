@@ -1,3 +1,5 @@
+"""Small formatting helpers that shape dashboard strings for Rich renderables."""
+
 from __future__ import annotations
 
 from math import ceil
@@ -25,6 +27,8 @@ def tokens_text(totals: dict[str, Any]) -> Text:
 
 
 def next_refresh_text(polling: Any) -> Text:
+    """Render the status of the next poll, falling back to dimmed text when unknown."""
+
     if isinstance(polling, dict) and polling.get("checking?") is True:
         return Text("checking now...", style="cyan")
     if isinstance(polling, dict) and isinstance(polling.get("next_poll_in_ms"), int):
@@ -33,6 +37,8 @@ def next_refresh_text(polling: Any) -> Text:
 
 
 def rate_limits_text(rate_limits: Any) -> Text:
+    """Summarize rate limit buckets and credits when the observability API reports them."""
+
     if rate_limits is None:
         return Text("unavailable", style="dim")
     if not isinstance(rate_limits, dict):
@@ -49,6 +55,8 @@ def rate_limits_text(rate_limits: Any) -> Text:
 
 
 def rate_limit_bucket(bucket: Any) -> str:
+    """Describe a single rate limit bucket using remaining/limit plus reset info."""
+
     if not isinstance(bucket, dict):
         return "n/a"
     remaining = pick(bucket, "remaining")
@@ -75,6 +83,8 @@ def rate_limit_bucket(bucket: Any) -> str:
 
 
 def rate_limit_credits(credits: Any) -> str:
+    """Explain how many credits remain, handling total/unlimited dictionaries."""
+
     if credits is None:
         return "credits n/a"
     if isinstance(credits, dict):
@@ -88,6 +98,8 @@ def rate_limit_credits(credits: Any) -> str:
 
 
 def mapping_list(value: Any) -> list[dict[str, Any]]:
+    """Return a safe list of dict entries to avoid crashing on malformed API payloads."""
+
     return (
         [entry for entry in value if isinstance(entry, dict)]
         if isinstance(value, list)
@@ -96,15 +108,21 @@ def mapping_list(value: Any) -> list[dict[str, Any]]:
 
 
 def format_runtime(seconds: Any) -> str:
+    """Normalize runtime seconds into `Xm Ys` so dashboards stay consistent."""
+
     total = int_value(seconds)
     return f"{total // 60}m {total % 60}s"
 
 
 def format_count(value: Any) -> str:
+    """Convert an integer into a comma-separated string."""
+
     return f"{int_value(value):,}"
 
 
 def pick(mapping: Any, *keys: str) -> Any:
+    """Return the first present key from a mapping without raising."""
+
     if not isinstance(mapping, dict):
         return None
     for key in keys:
@@ -114,6 +132,8 @@ def pick(mapping: Any, *keys: str) -> Any:
 
 
 def int_value(value: Any) -> int:
+    """Safely coerce to a non-negative integer for all dashboard counters."""
+
     if isinstance(value, int):
         return max(0, value)
     if isinstance(value, float):
@@ -124,11 +144,15 @@ def int_value(value: Any) -> int:
 
 
 def int_like(value: Any) -> bool:
+    """Test whether a value looks numeric without raising on typos."""
+
     return isinstance(value, int | float) or (
         isinstance(value, str) and value.strip().isdigit()
     )
 
 
 def clean_inline(value: Any, max_length: int) -> str:
+    """Trim whitespace and truncate long tokens while keeping readability."""
+
     text = " ".join(str(value or "").split())
     return text if len(text) <= max_length else f"{text[: max_length - 3]}..."

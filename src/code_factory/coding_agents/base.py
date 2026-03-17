@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""High-level protocols that keep runtimes interchangeable for the orchestrator."""
+
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Protocol
 
@@ -30,12 +32,14 @@ class CodingAgentRuntime(Protocol):
 def build_coding_agent_runtime(
     settings: Settings, tracker: Tracker
 ) -> CodingAgentRuntime:
+    # Codex is the default runtime. Swap this import if another agent is added.
     from .codex.runtime import build_coding_agent_runtime as build_runtime
 
     return build_runtime(settings, tracker)
 
 
 def validate_coding_agent_settings(settings: Settings) -> None:
+    # Keep validation in sync with the Codex runtime for now.
     from .codex.config import (
         validate_coding_agent_settings as validate_runtime_settings,
     )

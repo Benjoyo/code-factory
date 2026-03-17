@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Ephemeral tracker that makes it easy to drive unit tests without external APIs."""
+
 import asyncio
 from dataclasses import replace
 from typing import Any
@@ -8,6 +10,8 @@ from ...issues import Issue, normalize_issue_state
 
 
 class MemoryTracker:
+    """In-memory tracker used when we want deterministic behavior without Linear."""
+
     def __init__(
         self,
         issues: list[Issue] | None = None,
@@ -18,12 +22,15 @@ class MemoryTracker:
         self._recipient = recipient
 
     def replace_issues(self, issues: list[Issue]) -> None:
+        """Replace the full issue snapshot, primarily for tests that mutate inputs."""
+
         self._issues = list(issues)
 
     async def fetch_candidate_issues(self) -> list[Issue]:
         return list(self._issues)
 
     async def fetch_issues_by_states(self, state_names: list[str]) -> list[Issue]:
+        # Normalize to compare states in a case-insensitive, stable way.
         normalized = {normalize_issue_state(state_name) for state_name in state_names}
         return [
             issue
@@ -44,6 +51,7 @@ class MemoryTracker:
             await self._recipient.put(
                 ("memory_tracker_state_update", issue_id, state_name)
             )
+        # Maintain the snapshot so future reads reflect the latest state.
         self._issues = [
             replace(issue, state=state_name) if issue.id == issue_id else issue
             for issue in self._issues
@@ -51,4 +59,6 @@ class MemoryTracker:
 
 
 def build_tracker(_settings, **kwargs: Any) -> MemoryTracker:
+    """Keep the constructor signature compatible with the real tracker entrypoints."""
+
     return MemoryTracker(**kwargs)

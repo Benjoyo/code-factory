@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Utility functions for interpreting Codex App Server events and responses."""
+
 from datetime import UTC, datetime
 from typing import Any
 
@@ -29,6 +31,7 @@ async def default_on_message(_message: dict[str, Any]) -> None:
 def metadata_from_message(
     session: AppServerSession, payload: dict[str, Any]
 ) -> dict[str, Any]:
+    """Summarize payload details for observability consumers."""
     metadata: dict[str, Any] = {}
     if session.runtime_pid is not None:
         metadata["runtime_pid"] = session.runtime_pid
@@ -55,6 +58,7 @@ def tool_call_name(params: dict[str, Any]) -> str | None:
 
 
 def needs_input(method: str, payload: dict[str, Any]) -> bool:
+    """Detect whether the runtime has asked an operator for additional input."""
     if method in {
         "turn/input_required",
         "turn/needs_input",
@@ -84,6 +88,7 @@ def needs_input(method: str, payload: dict[str, Any]) -> bool:
 def tool_request_user_input_approval_answers(
     params: dict[str, Any],
 ) -> dict[str, Any] | None:
+    """Build the default approval answers when the agent requests operator confirmation."""
     questions = params.get("questions")
     if not isinstance(questions, list):
         return None
@@ -105,6 +110,7 @@ def tool_request_user_input_approval_answers(
 def tool_request_user_input_unavailable_answers(
     params: dict[str, Any],
 ) -> dict[str, Any] | None:
+    """Return canned responses for non-interactive sessions so turns can continue."""
     questions = params.get("questions")
     if not isinstance(questions, list):
         return None
@@ -117,6 +123,7 @@ def tool_request_user_input_unavailable_answers(
 
 
 def approval_option_label(options: list[Any]) -> str | None:
+    """Pick the most permissive approval option available."""
     labels = [
         option["label"]
         for option in options
@@ -133,6 +140,7 @@ def approval_option_label(options: list[Any]) -> str | None:
 
 
 def extract_token_usage(payload: dict[str, Any]) -> dict[str, Any]:
+    """Pull token counts from whichever nesting level Codex chose for this turn."""
     usage = absolute_token_usage_from_payload(payload)
     if usage is not None:
         return usage
@@ -192,6 +200,7 @@ def rate_limits_map(payload: Any) -> bool:
 
 
 def map_at_path(payload: Any, path: tuple[str, ...]) -> Any:
+    """Safely walk a nested payload dictionary along `path`."""
     current = payload
     for key in path:
         if not isinstance(current, dict) or key not in current:

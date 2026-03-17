@@ -1,3 +1,5 @@
+"""Exports for upper layers that only need to know how to talk to Linear."""
+
 from .client import LinearClient, build_tracker
 from .config import (
     parse_tracker_settings,

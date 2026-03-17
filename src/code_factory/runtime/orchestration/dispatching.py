@@ -1,3 +1,5 @@
+"""Dispatch helpers that decide which issues spawn workers and when retries run."""
+
 from __future__ import annotations
 
 import asyncio
@@ -24,7 +26,10 @@ from .policy import (
 
 
 class DispatchingMixin:
+    """Mixin that drives polling, dispatching, and retry scheduling for the orchestrator."""
+
     async def _run_poll_cycle(self: OrchestratorContext) -> None:
+        """Execute a poll pass, reset poll flags, and schedule the next run."""
         try:
             await self._maybe_dispatch()
         finally:
@@ -35,6 +40,7 @@ class DispatchingMixin:
             )
 
     async def _maybe_dispatch(self: OrchestratorContext) -> None:
+        """Reconcile running issues, validate config, and dispatch eligible candidates."""
         await self._reconcile_running_issues()
         try:
             validate_dispatch_settings(self.settings)
@@ -53,6 +59,7 @@ class DispatchingMixin:
                 await self._dispatch_issue(issue)
 
     def _should_dispatch_issue(self: OrchestratorContext, issue: Issue) -> bool:
+        """Return True only when the issue satisfies all dispatch policy guards."""
         return (
             (
                 candidate_issue(self.settings, issue)
@@ -72,6 +79,7 @@ class DispatchingMixin:
         attempt: int | None = None,
         workspace_path: str | None = None,
     ) -> None:
+        """Create an IssueWorker, track it as running, and start its asynchronous loop."""
         refreshed_issue = await self._revalidate_issue_for_dispatch(issue)
         if refreshed_issue is None:
             return
@@ -103,6 +111,7 @@ class DispatchingMixin:
     async def _revalidate_issue_for_dispatch(
         self: OrchestratorContext, issue: Issue
     ) -> Issue | None:
+        """Re-fetch an issue to make sure it still meets dispatch conditions."""
         if not issue.id:
             return issue
         try:
@@ -119,6 +128,7 @@ class DispatchingMixin:
         return None
 
     async def _run_due_retries(self: OrchestratorContext, now_ms: int) -> None:
+        """Handle retry entries whose deadlines have arrived."""
         due_retries = sorted(
             (
                 entry
@@ -135,6 +145,7 @@ class DispatchingMixin:
             await self._handle_retry_entry(entry)
 
     async def _handle_retry_entry(self: OrchestratorContext, entry: RetryEntry) -> None:
+        """Refresh the entry and either dispatch the issue or reschedule cleanup/retries."""
         try:
             issues = await self.tracker.fetch_candidate_issues()
         except Exception as exc:
@@ -182,6 +193,7 @@ class DispatchingMixin:
     async def _refresh_retry_issue(
         self: OrchestratorContext, issue_id: str
     ) -> Issue | None:
+        """Query the tracker for the latest state of a retrying issue."""
         try:
             issues = await self.tracker.fetch_issue_states_by_ids([issue_id])
         except Exception:
@@ -193,6 +205,7 @@ class DispatchingMixin:
         issue: Issue,
         workspace_path: str | None,
     ) -> None:
+        """Tear down the workspace that belonged to a terminal or evicted issue."""
         manager = (
             self._workspace_manager_for_path(workspace_path)
             if workspace_path
@@ -216,12 +229,14 @@ class DispatchingMixin:
         workspace_path: str | None = None,
         continuation: bool = False,
     ) -> None:
+        """Queue the issue for another dispatch attempt, respecting backoff rules."""
         previous = self.retry_entries.get(issue_id)
         next_attempt = (
             attempt
             if isinstance(attempt, int)
             else ((previous.attempt + 1) if previous else 1)
         )
+        # New continuations get faster retries than failure backoff to keep agents live.
         delay_ms = (
             self.CONTINUATION_RETRY_DELAY_MS
             if continuation and next_attempt == 1
@@ -244,5 +259,6 @@ class DispatchingMixin:
         self.claimed.add(issue_id)
 
     def _release_issue_claim(self: OrchestratorContext, issue_id: str) -> None:
+        """Remove in-flight tracking for an issue that will no longer run."""
         self.claimed.discard(issue_id)
         self.retry_entries.pop(issue_id, None)

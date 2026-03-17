@@ -1,3 +1,5 @@
+"""Dynamic tool execution layer exposed to Codex turns."""
+
 from __future__ import annotations
 
 import json
@@ -20,6 +22,8 @@ SYNC_WORKPAD_UPDATE = (
 
 
 class DynamicToolExecutor:
+    """Executes the workspace-aware tools that Code Factory injects into Codex."""
+
     def __init__(
         self,
         linear_client: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]],
@@ -32,6 +36,8 @@ class DynamicToolExecutor:
     async def execute(
         self, tool: str | None, arguments: Any
     ) -> tuple[dict[str, Any], str]:
+        """Dispatch a tool call and return both the tool payload and event label."""
+
         if tool == LINEAR_GRAPHQL_TOOL:
             return await self._execute_linear_graphql(arguments), "tool_call_completed"
         if tool == SYNC_WORKPAD_TOOL:
@@ -63,6 +69,8 @@ class DynamicToolExecutor:
 
 
 def normalize_linear_graphql_arguments(arguments: Any) -> tuple[str, dict[str, Any]]:
+    """Accept either a raw GraphQL string or a `{query, variables}` object."""
+
     if isinstance(arguments, str):
         query = arguments.strip()
         if not query:
@@ -80,6 +88,8 @@ def normalize_linear_graphql_arguments(arguments: Any) -> tuple[str, dict[str, A
 
 
 def normalize_sync_workpad_args(arguments: Any) -> tuple[str, str, str | None]:
+    """Validate the required arguments for syncing a workpad comment."""
+
     if not isinstance(arguments, dict):
         raise ValueError(("sync_workpad", "`issue_id` and `file_path` are required"))
     issue_id = arguments.get("issue_id")
@@ -99,12 +109,16 @@ def normalize_sync_workpad_args(arguments: Any) -> tuple[str, str, str | None]:
 def sync_workpad_request(
     issue_id: str, comment_id: str | None, body: str
 ) -> tuple[str, dict[str, Any]]:
+    """Choose the correct mutation shape for create vs. update."""
+
     if comment_id:
         return SYNC_WORKPAD_UPDATE, {"id": comment_id, "body": body}
     return SYNC_WORKPAD_CREATE, {"issueId": issue_id, "body": body}
 
 
 def read_workpad_file(path: str, allowed_roots: tuple[str, ...]) -> str:
+    """Read a workpad file while enforcing the configured workspace boundaries."""
+
     file_path = Path(path)
     if not file_path.is_absolute() and allowed_roots:
         file_path = Path(allowed_roots[0]) / file_path
@@ -128,6 +142,8 @@ def read_workpad_file(path: str, allowed_roots: tuple[str, ...]) -> str:
 
 
 def graphql_response(response: Any) -> dict[str, Any]:
+    """Wrap a GraphQL response in the app-server tool result envelope."""
+
     success = not (
         isinstance(response, dict)
         and isinstance(response.get("errors"), list)
@@ -140,6 +156,8 @@ def graphql_response(response: Any) -> dict[str, Any]:
 
 
 def failure_response(payload: Any) -> dict[str, Any]:
+    """Wrap an error payload in the app-server tool result envelope."""
+
     return {
         "success": False,
         "contentItems": [{"type": "inputText", "text": encode_payload(payload)}],
@@ -147,6 +165,8 @@ def failure_response(payload: Any) -> dict[str, Any]:
 
 
 def encode_payload(payload: Any) -> str:
+    """Serialize result payloads in a predictable format for Codex consumption."""
+
     return (
         json.dumps(payload, indent=2, sort_keys=True)
         if isinstance(payload, dict | list)
@@ -155,6 +175,8 @@ def encode_payload(payload: Any) -> str:
 
 
 def tool_error_payload(reason: Exception) -> dict[str, Any]:
+    """Convert internal exceptions into user-facing tool error payloads."""
+
     normalized = (
         reason.reason if isinstance(reason, TrackerClientError) else str(reason)
     )

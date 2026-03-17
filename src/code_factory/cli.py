@@ -12,12 +12,16 @@ ACK_FLAG = "--i-understand-that-this-will-be-running-without-the-usual-guardrail
 
 @dataclass(frozen=True, slots=True)
 class CLIConfig:
+    """Parsed CLI inputs needed to construct the long-running service."""
+
     workflow_path: str
     logs_root: str | None
     port: int | None
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Validates CLI arguments and hands control to the async service loop."""
+
     argv = list(sys.argv[1:] if argv is None else argv)
     result = evaluate(argv)
     if isinstance(result, str):
@@ -42,6 +46,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def evaluate(args: list[str]) -> CLIConfig | str:
+    """Parses the minimal CLI surface without introducing an argparse dependency."""
+
     workflow_path: str | None = None
     logs_root: str | None = None
     port: int | None = None
@@ -93,12 +99,16 @@ def evaluate(args: list[str]) -> CLIConfig | str:
 
 
 def usage_message() -> str:
+    """Returns the compact usage text shared by all validation failures."""
+
     return (
         "Usage: code-factory [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
     )
 
 
 def acknowledgement_banner() -> str:
+    """Builds the explicit opt-in banner for preview-mode execution."""
+
     lines = [
         "This Code Factory implementation is a low key engineering preview.",
         "The coding agent will run without any guardrails.",

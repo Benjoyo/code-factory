@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Thin bridge that keeps the orchestrator decoupled from Linear's GraphQL schema."""
+
 from collections.abc import Callable
 from typing import Any
 
@@ -28,6 +30,8 @@ def build_tracker(settings: Settings, **kwargs: Any) -> LinearClient:
 
 
 class LinearClient:
+    """GraphQL wrapper that enforces the expected tracker behaviors."""
+
     ISSUE_PAGE_SIZE = 50
 
     def __init__(
@@ -48,6 +52,7 @@ class LinearClient:
         await self._graphql_client.close()
 
     async def fetch_candidate_issues(self) -> list[Issue]:
+        """Return a snapshot of the active states that match the configured assignee."""
         self._require_credentials()
         assignee_filter = await self._routing_assignee_filter()
         return await self._fetch_by_states(
@@ -90,6 +95,7 @@ class LinearClient:
         variables: dict[str, Any] | None = None,
         operation_name: str | None = None,
     ) -> dict[str, Any]:
+        """Wrap every GraphQL call with credential validation upstream of the client."""
         self._require_credentials()
         return await self._graphql_client.request(query, variables, operation_name)
 
@@ -104,6 +110,7 @@ class LinearClient:
         state_names: list[str],
         assignee_filter: dict[str, Any] | None,
     ) -> list[Issue]:
+        # Query in pages so the response can scale with large issue sets.
         after_cursor: str | None = None
         issues: list[Issue] = []
         while True:
@@ -141,6 +148,7 @@ class LinearClient:
                 },
             )
             issues.extend(decode_linear_response(body, assignee_filter))
+        # Return issues in the same order as the caller-supplied IDs.
         return sorted(
             issues, key=lambda issue: order_index.get(issue.id or "", len(order_index))
         )
@@ -156,9 +164,11 @@ class LinearClient:
         viewer_id = assignee_id(body.get("data", {}).get("viewer") or {})
         if viewer_id is None:
             raise TrackerClientError("missing_linear_viewer_identity")
+        # Resolving `me` to the viewer id ensures downstream filters compare ids.
         return {"configured_assignee": "me", "match_values": {viewer_id}}
 
     async def _resolve_state_id(self, issue_id: str, state_name: str) -> str:
+        # Confirm the state exists in the issue's workspace before hitting Linear.
         body = await self.graphql(
             STATE_LOOKUP_QUERY, {"issueId": issue_id, "stateName": state_name}
         )

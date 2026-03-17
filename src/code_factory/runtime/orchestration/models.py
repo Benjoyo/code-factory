@@ -1,3 +1,5 @@
+"""State holders for retries and running issues managed by the orchestrator."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,6 +11,8 @@ from ...issues import Issue
 
 @dataclass(slots=True)
 class RetryEntry:
+    """Records when the orchestrator should attempt to recreate work for an issue."""
+
     issue_id: str
     identifier: str | None
     attempt: int
@@ -20,6 +24,8 @@ class RetryEntry:
 
 @dataclass(slots=True)
 class RunningEntry:
+    """Tracks metadata for a currently running issue worker session."""
+
     issue_id: str
     identifier: str | None
     issue: Issue

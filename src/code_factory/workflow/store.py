@@ -1,3 +1,5 @@
+"""Actor that reloads `WORKFLOW.md` and preserves the last good snapshot on errors."""
+
 from __future__ import annotations
 
 import asyncio
@@ -13,6 +15,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 class WorkflowStoreActor:
+    """Polls the workflow file and publishes validated snapshots to the service."""
+
     def __init__(
         self,
         path: str,
@@ -28,6 +32,8 @@ class WorkflowStoreActor:
         self._state: WorkflowStoreState | None = None
 
     async def load_initial_snapshot(self) -> WorkflowSnapshot:
+        """Load the first snapshot and initialize internal actor state."""
+
         definition = load_workflow(self.path)
         settings = parse_settings(definition.config)
         stamp = current_stamp(self.path)
@@ -46,6 +52,8 @@ class WorkflowStoreActor:
         )
 
     async def run(self, stop_event: asyncio.Event) -> None:
+        """Poll for workflow changes until the service signals shutdown."""
+
         if self._state is None:
             await self.load_initial_snapshot()
 
@@ -56,6 +64,8 @@ class WorkflowStoreActor:
                 await self._reload_if_changed()
 
     async def _reload_if_changed(self) -> None:
+        """Reload only when the file stamp changes and keep state untouched on failure."""
+
         state = self._require_state()
         try:
             stamp = current_stamp(self.path)
@@ -92,6 +102,8 @@ class WorkflowStoreActor:
         )
 
     async def _handle_reload_error(self, error: Any) -> None:
+        """Record the reload error while keeping the previous workflow version active."""
+
         state = self._require_state()
         state.last_reload_error = error
         LOGGER.error(
@@ -103,5 +115,7 @@ class WorkflowStoreActor:
             await self._on_error(error)
 
     def _require_state(self) -> WorkflowStoreState:
+        """Internal assertion helper because the actor bootstraps lazily."""
+
         assert self._state is not None
         return self._state

@@ -1,3 +1,5 @@
+"""Dashboard orchestration that keeps a live Rich view of the orchestrator snapshot."""
+
 from __future__ import annotations
 
 import asyncio
@@ -25,6 +27,8 @@ __all__ = [
 
 
 class LiveStatusDashboard:
+    """Wraps Rich Live to periodically render the orchestrator snapshot for operators."""
+
     THROUGHPUT_WINDOW_MS = 5_000
 
     def __init__(
@@ -44,12 +48,16 @@ class LiveStatusDashboard:
 
     @staticmethod
     def enabled(settings: Settings, stream: object) -> bool:
+        """Positive when the stream appears attached to a tty and dashboards are enabled."""
+
         is_tty = getattr(stream, "isatty", None)
         return bool(
             settings.observability.dashboard_enabled and callable(is_tty) and is_tty()
         )
 
     async def run(self, stop_event: asyncio.Event) -> None:
+        """Refresh the live renderable at `refresh_ms` until the stop event fires."""
+
         with Live(
             self._render_unavailable(),
             auto_refresh=False,
@@ -69,6 +77,8 @@ class LiveStatusDashboard:
                     pass
 
     async def _snapshot_renderable(self) -> RenderableType:
+        """Grab the latest snapshot, then paint the dashboard or a failure notice."""
+
         try:
             snapshot_now = getattr(self._orchestrator, "snapshot_now", None)
             if callable(snapshot_now):
@@ -86,6 +96,7 @@ class LiveStatusDashboard:
         now_ms = monotonic_ms()
         self._last_snapshot_error = None
         total_tokens = _total_tokens(snapshot)
+        # Keep only the samples in the configured lookback so TPS reflects the last few seconds.
         self._samples = [
             sample
             for sample in [*self._samples, (now_ms, total_tokens)]
@@ -99,6 +110,8 @@ class LiveStatusDashboard:
         )
 
     def _render_unavailable(self) -> RenderableType:
+        """Render the dashboard in its offline state while showing the last error."""
+
         return render_status_dashboard(
             {},
             self._context,
@@ -109,6 +122,7 @@ class LiveStatusDashboard:
 
 
 def _total_tokens(snapshot: dict[str, object]) -> int:
+    """Safely extract the total tokens field from the dashboard snapshot."""
     totals = snapshot.get("agent_totals")
     if not isinstance(totals, dict):
         return 0
@@ -125,6 +139,7 @@ def _total_tokens(snapshot: dict[str, object]) -> int:
 def _rolling_tps(
     samples: list[tuple[int, int]], now_ms: int, current_tokens: int
 ) -> float:
+    """Compute a rolling TPS average over the window while avoiding divide-by-zero."""
     if len(samples) < 2:
         return 0.0
     start_ms, start_tokens = samples[0]

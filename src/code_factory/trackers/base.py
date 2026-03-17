@@ -1,3 +1,5 @@
+"""Shared tracker boundary helpers used by every coding-agent run."""
+
 from __future__ import annotations
 
 from typing import Any, Protocol
@@ -8,6 +10,8 @@ from ..issues import Issue
 
 
 class Tracker(Protocol):
+    """API that orchestrators depend on when interacting with trackers."""
+
     async def fetch_candidate_issues(self) -> list[Issue]: ...
 
     async def fetch_issues_by_states(self, state_names: list[str]) -> list[Issue]: ...
@@ -20,6 +24,7 @@ class Tracker(Protocol):
 
 
 def build_tracker(settings: Settings, **kwargs: Any) -> Tracker:
+    # Concrete trackers register themselves as build helpers so we can stay decoupled.
     if settings.tracker.kind == "memory":
         from .memory.tracker import build_tracker as build_memory_tracker
 

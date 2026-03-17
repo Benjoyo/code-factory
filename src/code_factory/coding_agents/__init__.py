@@ -1,3 +1,5 @@
+"""Re-export the coding-agent protocols for callers that want runtime independence."""
+
 from .base import (
     AgentMessageHandler,
     CodingAgentRuntime,

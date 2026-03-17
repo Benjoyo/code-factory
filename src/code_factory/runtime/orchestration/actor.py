@@ -1,3 +1,5 @@
+"""Orchestrator actor that polls trackers, manages workers, and surfaces runtime snapshots."""
+
 from __future__ import annotations
 
 import asyncio
@@ -30,6 +32,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
+    """Actor responsible for synchronizing tracker data, dispatching workers, and replying to clients."""
+
     CONTINUATION_RETRY_DELAY_MS: ClassVar[int] = 1_000
     FAILURE_RETRY_BASE_MS: ClassVar[int] = 10_000
     POLL_TRANSITION_RENDER_DELAY_MS: ClassVar[int] = 20
@@ -68,24 +72,31 @@ class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
 
     @property
     def settings(self) -> Settings:
+        """Convenience access to the current workflow settings."""
         return self.workflow_snapshot.settings
 
     async def snapshot(self) -> dict[str, Any]:
+        """Build an updated snapshot by queueing a SnapshotRequest."""
         return await self._request_reply(SnapshotRequest)
 
     def snapshot_now(self) -> dict[str, Any]:
+        """Immediately return the most recent orchestrator snapshot without queuing."""
         return self._snapshot_payload()
 
     async def request_refresh(self) -> dict[str, Any]:
+        """Ask the orchestrator to coalesce a new poll/reconcile cycle."""
         return await self._request_reply(RefreshRequest)
 
     async def notify_workflow_updated(self, snapshot: WorkflowSnapshot) -> None:
+        """Publish a workflow update event so the actor can swap snapshots."""
         await self.queue.put(WorkflowUpdated(snapshot))
 
     async def notify_workflow_reload_error(self, error: Any) -> None:
+        """Record reload failures so callers can see the message via SnapshotRequest."""
         await self.queue.put(WorkflowReloadError(error))
 
     async def startup_terminal_workspace_cleanup(self) -> None:
+        """Clean up any leftover workspaces for issues in terminal states at startup."""
         try:
             issues = await self.tracker.fetch_issues_by_states(
                 list(self.settings.tracker.terminal_states)
@@ -103,9 +114,11 @@ class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
                     await manager.remove_issue_workspaces(issue.identifier)
 
     async def shutdown(self) -> None:
+        """Request the orchestrator loop to stop processing and drain the queue."""
         await self._request_reply(Shutdown)
 
     async def run(self, stop_event: asyncio.Event) -> None:
+        """Drive the orchestrator event loop until a shutdown or external stop request."""
         try:
             while not self._shutdown and not stop_event.is_set():
                 await self._run_once()
@@ -113,6 +126,7 @@ class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
             await self._shutdown_runtime()
 
     async def _run_once(self) -> None:
+        """Wait for the next queue message (or time out) and handle it."""
         timeout = self._next_timeout_seconds()
         try:
             message = await asyncio.wait_for(self.queue.get(), timeout)
@@ -122,11 +136,13 @@ class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
         await self._handle_message(message)
 
     async def _request_reply(self, message_type):
+        """Enqueue a message that expects the orchestrator to fulfill the future."""
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         await self.queue.put(message_type(future))
         return await future
 
     async def _handle_message(self, message: Any) -> None:
+        """Route the incoming queue message to the appropriate handler."""
         if isinstance(message, WorkflowUpdated):
             await self._replace_workflow(message.snapshot)
         elif isinstance(message, WorkflowReloadError):
@@ -155,11 +171,13 @@ class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
         await maybe_aclose(old_tracker)
 
     def _queue_refresh(self) -> dict[str, Any]:
+        """Produce a refresh response indicating whether the run was coalesced."""
         now_ms = monotonic_ms()
         already_due = (
             isinstance(self.next_poll_due_at_ms, int)
             and self.next_poll_due_at_ms <= now_ms
         )
+        # Coalesce requests already in progress so we do not duplicate work.
         coalesced = self.poll_check_in_progress or already_due
         if not coalesced:
             self.next_poll_due_at_ms = now_ms
@@ -171,6 +189,7 @@ class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
         }
 
     async def _handle_due_deadlines(self) -> None:
+        """Run polls or retries when their deadlines have become due."""
         now_ms = monotonic_ms()
         if (
             self.poll_check_in_progress
@@ -191,6 +210,7 @@ class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
         await self._run_due_retries(now_ms)
 
     def _next_timeout_seconds(self) -> float | None:
+        """Choose how long to wait for the next queue message based on upcoming deadlines."""
         deadlines = [
             deadline
             for deadline in (self.next_poll_due_at_ms, self.poll_run_due_at_ms)

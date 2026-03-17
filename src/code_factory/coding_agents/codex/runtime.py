@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Codex runtime wiring that keeps the orchestrator agnostic of the App Server protocol."""
+
 import inspect
 from typing import Any
 
@@ -13,6 +15,8 @@ from .tools import DynamicToolExecutor
 
 
 class CodexRuntime:
+    """Real runtime implementation that proxies work through App Server sessions."""
+
     def __init__(self, settings: Settings, tracker: Tracker) -> None:
         self._tracker = tracker
         self._client = AppServerClient(
@@ -38,6 +42,7 @@ class CodexRuntime:
         )
 
     def _build_dynamic_tool_executor(self, workspace: str) -> DynamicToolExecutor:
+        """Expose tracker-level GraphQL calls to tools that need them."""
         graphql = getattr(self._tracker, "graphql", None)
 
         async def graphql_call(query: str, variables: dict[str, Any]) -> dict[str, Any]:
