@@ -1,0 +1,1086 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import runpy
+import signal
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, time
+from logging import NullHandler
+from pathlib import Path
+from typing import Any, cast
+
+import pytest
+
+from symphony.application import SymphonyService
+from symphony.application.logging import configure_logging
+from symphony.cli import ACK_FLAG, CLIConfig, acknowledgement_banner, evaluate, main
+from symphony.config import (
+    max_concurrent_agents_for_state,
+    validate_dispatch_settings,
+)
+from symphony.config.utils import (
+    boolean,
+    coerce_int,
+    env_reference_name,
+    non_negative_int,
+    normalize_keys,
+    normalize_path_token,
+    normalize_secret_value,
+    normalize_state_limits,
+    optional_non_negative_int,
+    optional_string,
+    positive_int,
+    require_mapping,
+    required_command,
+    resolve_env_value,
+    resolve_path_value,
+    resolve_secret_setting,
+    string_list,
+    string_with_default,
+)
+from symphony.errors import ConfigValidationError, WorkflowLoadError, WorkspaceError
+from symphony.issues import Issue, normalize_issue_state
+from symphony.prompts.builder import continuation_prompt
+from symphony.prompts.values import to_liquid_value
+from symphony.runtime.support import maybe_aclose
+from symphony.workflow.loader import (
+    DEFAULT_WORKFLOW_FILENAME,
+    current_stamp,
+    front_matter_yaml_to_map,
+    split_front_matter,
+    workflow_file_path,
+)
+from symphony.workflow.store import WorkflowStoreActor
+from symphony.workspace.hooks import run_hook
+from symphony.workspace.manager import WorkspaceManager
+from symphony.workspace.paths import (
+    canonicalize,
+    is_within,
+    safe_identifier,
+    validate_workspace_path,
+    workspace_path_for_issue,
+)
+from symphony.workspace.utils import (
+    clean_tmp_artifacts,
+    ensure_workspace,
+    issue_context,
+)
+
+from .conftest import make_issue, make_snapshot, write_workflow_file
+
+
+def test_evaluate_parses_ack_logs_root_port_and_default_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = evaluate(
+        [
+            ACK_FLAG,
+            "--logs-root",
+            "~/logs",
+            "--port",
+            "9000",
+            "workflow.md",
+        ]
+    )
+
+    assert result == CLIConfig(
+        workflow_path=str((tmp_path / "workflow.md").resolve()),
+        logs_root=str(Path("~/logs").expanduser().resolve()),
+        port=9000,
+    )
+    defaulted = evaluate([ACK_FLAG])
+    assert isinstance(defaulted, CLIConfig)
+    assert defaulted.workflow_path == str(
+        (tmp_path / DEFAULT_WORKFLOW_FILENAME).resolve()
+    )
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--logs-root"],
+        ["--logs-root", " "],
+        ["--port"],
+        ["--port", "abc"],
+        ["--port", "-1"],
+        ["--unknown"],
+        ["one.md", "two.md"],
+    ],
+)
+def test_evaluate_rejects_invalid_arguments(args: list[str]) -> None:
+    assert evaluate(args) == (
+        "Usage: symphony [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
+    )
+
+
+def test_evaluate_requires_acknowledgement() -> None:
+    banner = evaluate([])
+    assert isinstance(banner, str)
+    assert ACK_FLAG in banner
+    assert "low key engineering preview" in banner
+
+
+def test_acknowledgement_banner_has_consistent_frame() -> None:
+    banner = acknowledgement_banner()
+    lines = banner.splitlines()
+    assert lines[0].startswith("╭")
+    assert lines[-1].startswith("╰")
+    assert len({len(line) for line in lines}) == 1
+
+
+def test_main_returns_usage_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main([]) == 1
+    assert ACK_FLAG in capsys.readouterr().err
+
+
+def test_main_rejects_missing_workflow(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main([ACK_FLAG, str(tmp_path / "missing.md")]) == 1
+    assert "Workflow file not found" in capsys.readouterr().err
+
+
+def test_main_runs_service_and_handles_keyboard_interrupt(tmp_path: Path) -> None:
+    workflow = tmp_path / "WORKFLOW.md"
+    workflow.write_text("prompt\n", encoding="utf-8")
+    calls: list[tuple[str, str | None, int | None]] = []
+
+    class FakeService:
+        def __init__(
+            self,
+            workflow_path: str,
+            *,
+            logs_root: str | None = None,
+            port_override: int | None = None,
+        ) -> None:
+            calls.append((workflow_path, logs_root, port_override))
+
+        async def run_forever(self) -> None:
+            return None
+
+    try:
+        import symphony.cli as cli_module
+
+        cli_module.SymphonyService = FakeService  # type: ignore[assignment]
+        assert main([ACK_FLAG, "--port", "4567", str(workflow)]) == 0
+        assert calls == [(str(workflow.resolve()), None, 4567)]
+
+        class InterruptingService(FakeService):
+            async def run_forever(self) -> None:
+                raise KeyboardInterrupt
+
+        cli_module.SymphonyService = InterruptingService  # type: ignore[assignment]
+        assert main([ACK_FLAG, str(workflow)]) == 130
+    finally:
+        import symphony.cli as cli_module
+
+        cli_module.SymphonyService = SymphonyService  # type: ignore[assignment]
+
+
+def test___main___raises_system_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("symphony.cli.main", lambda: 7)
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_module("symphony.__main__", run_name="__main__")
+    assert excinfo.value.code == 7
+
+
+def test_configure_logging_adds_stream_and_file_handlers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    created_handlers: list[Any] = []
+
+    class FakeFileHandler:
+        def __init__(self, path: Path, maxBytes: int, backupCount: int) -> None:
+            self.path = Path(path)
+            self.maxBytes = maxBytes
+            self.backupCount = backupCount
+            self.formatter = None
+            created_handlers.append(self)
+
+        def setFormatter(self, formatter: Any) -> None:
+            self.formatter = formatter
+
+    monkeypatch.setattr(
+        "symphony.application.logging.RotatingFileHandler", FakeFileHandler
+    )
+
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    original_level = root_logger.level
+    try:
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        log_path = configure_logging(str(tmp_path))
+
+        assert log_path == tmp_path / "log" / "symphony.log"
+        assert root_logger.level == logging.INFO
+        assert len(root_logger.handlers) == 2
+        assert created_handlers[0].path == log_path
+        assert logging.getLogger("httpx").level == logging.WARNING
+        assert logging.getLogger("httpcore").level == logging.WARNING
+        assert logging.getLogger("aiohttp.access").level == logging.WARNING
+    finally:
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        for handler in original_handlers:
+            root_logger.addHandler(handler)
+        root_logger.setLevel(original_level)
+
+
+def test_configure_logging_reuses_existing_handlers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    try:
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        root_logger.addHandler(logging.NullHandler())
+        log_path = configure_logging(str(tmp_path))
+        assert log_path == tmp_path / "log" / "symphony.log"
+        assert configure_logging(None) is None
+    finally:
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        for handler in original_handlers:
+            root_logger.addHandler(handler)
+
+
+def test_configure_logging_without_logs_root_uses_stream_only() -> None:
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    original_level = root_logger.level
+    try:
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        assert configure_logging(None) is None
+        assert len(root_logger.handlers) == 1
+    finally:
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        for handler in original_handlers:
+            root_logger.addHandler(handler)
+        root_logger.setLevel(original_level)
+
+
+def test_configure_logging_without_console_and_with_logs_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    created_handlers: list[Any] = []
+
+    class FakeFileHandler:
+        def __init__(self, path: Path, maxBytes: int, backupCount: int) -> None:
+            self.path = Path(path)
+            created_handlers.append(self)
+
+        def setFormatter(self, formatter: Any) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "symphony.application.logging.RotatingFileHandler", FakeFileHandler
+    )
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    try:
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        log_path = configure_logging(str(tmp_path), console=False)
+        assert log_path == tmp_path / "log" / "symphony.log"
+        assert len(root_logger.handlers) == 1
+        assert created_handlers[0].path == log_path
+    finally:
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        for handler in original_handlers:
+            root_logger.addHandler(handler)
+
+
+def test_configure_logging_supports_dashboard_mode_without_console() -> None:
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    original_level = root_logger.level
+    try:
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        assert configure_logging(None, console=False) is None
+        assert len(root_logger.handlers) == 1
+        assert isinstance(root_logger.handlers[0], NullHandler)
+    finally:
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        for handler in original_handlers:
+            root_logger.addHandler(handler)
+        root_logger.setLevel(original_level)
+
+
+def test_service_dashboard_helpers_and_logging_fallbacks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workflow = write_workflow_file(tmp_path / "WORKFLOW.md", server={"port": 4321})
+    snapshot = make_snapshot(workflow)
+    service = SymphonyService(str(workflow))
+
+    monkeypatch.setattr(
+        "symphony.application.service.LiveStatusDashboard.enabled",
+        lambda settings, stream: True,
+    )
+    dashboard = service._build_status_dashboard(snapshot, cast(Any, object()))
+    assert dashboard is not None
+
+    monkeypatch.setattr(
+        "symphony.application.service.LiveStatusDashboard.enabled",
+        lambda settings, stream: False,
+    )
+    assert service._build_status_dashboard(snapshot, cast(Any, object())) is None
+    assert service._effective_port(snapshot) == 4321
+
+    calls: list[tuple[str | None, bool | None]] = []
+
+    def fake_configure_logging(
+        logs_root: str | None, *, console: bool = True
+    ) -> Path | None:
+        calls.append((logs_root, console))
+        return None
+
+    monkeypatch.setattr(
+        "symphony.application.service.configure_logging", fake_configure_logging
+    )
+    assert service._configure_logging(True) is None
+    assert calls == [(None, False)]
+
+    def old_configure_logging(logs_root: str | None) -> Path | None:
+        return Path("/tmp/fallback.log")
+
+    monkeypatch.setattr(
+        "symphony.application.service.configure_logging", old_configure_logging
+    )
+    assert service._configure_logging(False) == Path("/tmp/fallback.log")
+
+    def bad_typeerror(logs_root: str | None, *, console: bool = True) -> Path | None:
+        raise TypeError("different")
+
+    monkeypatch.setattr("symphony.application.service.configure_logging", bad_typeerror)
+    with pytest.raises(TypeError, match="different"):
+        service._configure_logging(False)
+
+    monkeypatch.setattr("symphony.application.service.sys.stdin", object())
+    assert service._dashboard_input_supported() is False
+
+
+@pytest.mark.asyncio
+async def test_service_monitor_dashboard_input_and_signal_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workflow = write_workflow_file(tmp_path / "WORKFLOW.md")
+    service = SymphonyService(str(workflow))
+    stop_event = asyncio.Event()
+
+    class NoFileno:
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setattr("symphony.application.service.sys.stdin", NoFileno())
+    await service._monitor_dashboard_input(stop_event)
+    assert stop_event.is_set() is False
+
+    callbacks: list[Any] = []
+    removed: list[int] = []
+
+    class FakeLoop:
+        def add_reader(self, fd: int, callback: Any) -> None:
+            callbacks.append(callback)
+
+        def remove_reader(self, fd: int) -> None:
+            removed.append(fd)
+
+    class FakeStdin:
+        def __init__(self, text: str) -> None:
+            self._text = text
+
+        def fileno(self) -> int:
+            return 4
+
+        def readline(self) -> str:
+            return self._text
+
+    monkeypatch.setattr("asyncio.get_running_loop", lambda: FakeLoop())
+    monkeypatch.setattr("symphony.application.service.sys.stdin", FakeStdin("q\n"))
+    task = asyncio.create_task(service._monitor_dashboard_input(stop_event))
+    await asyncio.sleep(0)
+    callbacks[0]()
+    await task
+    assert stop_event.is_set() is True
+    assert removed == [4]
+
+    class NoReaderLoop:
+        def add_reader(self, fd: int, callback: Any) -> None:
+            raise NotImplementedError
+
+    stop_event = asyncio.Event()
+    monkeypatch.setattr("asyncio.get_running_loop", lambda: NoReaderLoop())
+    monkeypatch.setattr("symphony.application.service.sys.stdin", FakeStdin(""))
+    await service._monitor_dashboard_input(stop_event)
+
+    callbacks.clear()
+    removed.clear()
+    stop_event = asyncio.Event()
+    monkeypatch.setattr("asyncio.get_running_loop", lambda: FakeLoop())
+    monkeypatch.setattr("symphony.application.service.sys.stdin", FakeStdin(""))
+    task = asyncio.create_task(service._monitor_dashboard_input(stop_event))
+    await asyncio.sleep(0)
+    callbacks[0]()
+    await task
+    assert stop_event.is_set() is True
+
+    callbacks.clear()
+    removed.clear()
+    stop_event = asyncio.Event()
+    monkeypatch.setattr("asyncio.get_running_loop", lambda: FakeLoop())
+    monkeypatch.setattr("symphony.application.service.sys.stdin", FakeStdin("nope\n"))
+    task = asyncio.create_task(service._monitor_dashboard_input(stop_event))
+    await asyncio.sleep(0)
+    callbacks[0]()
+    assert stop_event.is_set() is False
+    stop_event.set()
+    await task
+
+    recorded: list[Any] = []
+
+    class SignalLoop:
+        def add_signal_handler(self, sig: Any, callback: Any) -> None:
+            recorded.append(sig)
+
+    monkeypatch.setattr("asyncio.get_running_loop", lambda: SignalLoop())
+    service._install_signal_handlers(asyncio.Event())
+    assert recorded == [signal.SIGTERM]
+
+
+def test_service_build_http_server_and_signal_handlers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workflow = write_workflow_file(tmp_path / "WORKFLOW.md")
+    snapshot = make_snapshot(workflow)
+    service = SymphonyService(str(workflow), port_override=4567)
+
+    calls: list[tuple[str, int]] = []
+
+    class FakeServer:
+        def __init__(self, _orchestrator: Any, *, host: str, port: int) -> None:
+            calls.append((host, port))
+
+    monkeypatch.setattr(
+        "symphony.application.service.ObservabilityHTTPServer", FakeServer
+    )
+    server = service._build_http_server(snapshot, cast(Any, object()))
+    assert isinstance(server, FakeServer)
+    assert calls == [("127.0.0.1", 4567)]
+
+    disabled_snapshot = make_snapshot(
+        write_workflow_file(tmp_path / "NO_SERVER.md", server={"port": None})
+    )
+    disabled_service = SymphonyService(str(workflow))
+    assert (
+        disabled_service._build_http_server(disabled_snapshot, cast(Any, object()))
+        is None
+    )
+
+    recorded: list[Any] = []
+
+    class FakeLoop:
+        def add_signal_handler(self, sig: Any, callback: Any) -> None:
+            recorded.append(sig)
+            raise NotImplementedError
+
+    monkeypatch.setattr("asyncio.get_running_loop", lambda: FakeLoop())
+    service._install_signal_handlers(asyncio.Event())
+    assert recorded == [signal.SIGTERM]
+
+
+@pytest.mark.parametrize(
+    ("func", "value", "field", "expected"),
+    [
+        (require_mapping, None, "field", {}),
+        (coerce_int, " 7 ", "field", 7),
+        (positive_int, None, "field", 9),
+        (non_negative_int, None, "field", 3),
+        (optional_non_negative_int, None, "field", None),
+        (optional_string, "value", "field", "value"),
+        (string_with_default, None, "field", "fallback"),
+        (required_command, "cmd", "field", "cmd"),
+        (string_list, ["a", "b"], "field", ("x",)),
+        (boolean, None, "field", True),
+    ],
+)
+def test_config_utils_success_cases(
+    func: Any, value: Any, field: str, expected: Any
+) -> None:
+    if func is positive_int:
+        assert func(value, field, 9) == expected
+    elif func is non_negative_int:
+        assert func(value, field, 3) == expected
+    elif func is string_with_default:
+        assert func(value, field, "fallback") == expected
+    elif func is required_command:
+        assert func(value, field, "fallback") == expected
+    elif func is string_list:
+        assert func(value, field, ("x",)) == ("a", "b")
+    elif func is boolean:
+        assert func(value, field, True) is expected
+    else:
+        assert func(value, field) == expected
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (lambda: require_mapping([], "field"), "field must be an object"),
+        (lambda: coerce_int(True, "field"), "field must be an integer"),
+        (lambda: coerce_int(" ", "field"), "field must be an integer"),
+        (lambda: positive_int(0, "field", 1), "field must be greater than 0"),
+        (
+            lambda: non_negative_int(-1, "field", 1),
+            "field must be greater than or equal to 0",
+        ),
+        (lambda: optional_string(1, "field"), "field must be a string"),
+        (lambda: string_with_default(1, "field", "x"), "field must be a string"),
+        (lambda: required_command("", "field", "x"), "field can't be blank"),
+        (
+            lambda: string_list(["ok", 1], "field", ()),
+            "field must be a list of strings",
+        ),
+        (
+            lambda: normalize_state_limits({"": 1}, "field"),
+            "field state names must not be blank",
+        ),
+        (
+            lambda: normalize_state_limits({"Todo": 0}, "field"),
+            "field limits must be positive integers",
+        ),
+        (lambda: boolean("yes", "field", False), "field must be a boolean"),
+        (
+            lambda: resolve_path_value(7, "/tmp/default", "field"),
+            "field must be a string",
+        ),
+        (
+            lambda: resolve_secret_setting(7, None, "field"),
+            "field must be a string",
+        ),
+    ],
+)
+def test_config_utils_validation_errors(call: Any, message: str) -> None:
+    with pytest.raises(ConfigValidationError, match=message):
+        call()
+
+
+def test_config_utils_environment_and_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKSPACE_ROOT", "/tmp/root")
+    monkeypatch.setenv("SECRET_TOKEN", "")
+
+    assert normalize_state_limits({"To Do": "2"}, "field") == {"to do": 2}
+    assert boolean(False, "field", True) is False
+    assert env_reference_name("$WORKSPACE_ROOT") == "WORKSPACE_ROOT"
+    assert env_reference_name("$9bad") is None
+    assert normalize_path_token("$WORKSPACE_ROOT") == "/tmp/root"
+    assert normalize_path_token("literal") == "literal"
+    assert resolve_path_value("$WORKSPACE_ROOT", "/tmp/default", "field") == "/tmp/root"
+    assert normalize_secret_value("") is None
+    assert resolve_env_value("$SECRET_TOKEN", "fallback") is None
+    assert resolve_env_value("$MISSING_SECRET", "fallback") == "fallback"
+    assert resolve_env_value("literal", "fallback") == "literal"
+    assert resolve_secret_setting("$SECRET_TOKEN", "fallback", "field") is None
+    assert normalize_keys({"x": [{"y": 1}]}) == {"x": [{"y": 1}]}
+
+
+def test_validate_dispatch_settings_and_state_limit_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workflow = write_workflow_file(
+        tmp_path / "WORKFLOW.md",
+        agent={
+            "max_concurrent_agents": 5,
+            "max_concurrent_agents_by_state": {"Todo": 2},
+        },
+    )
+    settings = make_snapshot(workflow).settings
+    tracker_calls: list[Any] = []
+    agent_calls: list[Any] = []
+
+    monkeypatch.setattr(
+        "symphony.config.validation.validate_tracker_settings",
+        lambda s: tracker_calls.append(s),
+    )
+    monkeypatch.setattr(
+        "symphony.config.validation.validate_coding_agent_settings",
+        lambda s: agent_calls.append(s),
+    )
+
+    validate_dispatch_settings(settings)
+    assert tracker_calls == [settings]
+    assert agent_calls == [settings]
+    assert max_concurrent_agents_for_state(settings, "Todo") == 2
+    assert max_concurrent_agents_for_state(settings, "Done") == 5
+    assert max_concurrent_agents_for_state(settings, None) == 5
+
+
+def test_prompt_value_serialization_and_continuation_prompt() -> None:
+    @dataclass
+    class Payload:
+        when: datetime
+        on: date
+        at: time
+        tags: tuple[str, ...]
+
+    result = to_liquid_value(
+        Payload(
+            when=datetime(2024, 1, 2, 3, 4, tzinfo=UTC),
+            on=date(2024, 1, 2),
+            at=time(3, 4),
+            tags=("a", "b"),
+        )
+    )
+
+    assert result == {
+        "when": "2024-01-02T03:04:00Z",
+        "on": "2024-01-02",
+        "at": "03:04:00",
+        "tags": ["a", "b"],
+    }
+    assert "Continuation guidance" in continuation_prompt(2, 5)
+
+
+def test_workflow_loader_helpers_and_current_stamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert workflow_file_path() == str(tmp_path / DEFAULT_WORKFLOW_FILENAME)
+    assert workflow_file_path("custom.md") == "custom.md"
+    assert split_front_matter("---\na: 1\n---\nbody\n") == (["a: 1"], ["body"])
+    assert split_front_matter("---\na: 1\n") == (["a: 1"], [])
+    assert front_matter_yaml_to_map([]) == {}
+    assert front_matter_yaml_to_map(["null"]) == {}
+    assert front_matter_yaml_to_map(["a: 1"]) == {"a": 1}
+    with pytest.raises(WorkflowLoadError, match="workflow_parse_error"):
+        front_matter_yaml_to_map(["a: ["])
+
+    workflow = tmp_path / "WORKFLOW.md"
+    workflow.write_text("prompt\n", encoding="utf-8")
+    stamp = current_stamp(str(workflow))
+    assert stamp.size == workflow.stat().st_size
+    with pytest.raises(WorkflowLoadError, match="missing_workflow_file"):
+        current_stamp(str(tmp_path / "missing.md"))
+
+
+@pytest.mark.asyncio
+async def test_workflow_store_reload_run_and_error_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workflow = write_workflow_file(tmp_path / "WORKFLOW.md", prompt="one")
+    snapshots: list[Any] = []
+    errors: list[Any] = []
+    actor = WorkflowStoreActor(
+        str(workflow),
+        on_snapshot=lambda snapshot: snapshots.append(snapshot) or asyncio.sleep(0),
+        on_error=lambda error: errors.append(error) or asyncio.sleep(0),
+        poll_interval_s=0.001,
+    )
+
+    initial = await actor.load_initial_snapshot()
+    assert initial.version == 1
+
+    await actor._reload_if_changed()
+    assert snapshots == []
+
+    workflow.write_text(
+        "---\ntracker:\n  kind: linear\n  api_key: token\n  project_slug: next\n---\nnew\n",
+        encoding="utf-8",
+    )
+    await actor._reload_if_changed()
+    assert snapshots[-1].version == 2
+
+    monkeypatch.setattr(
+        "symphony.workflow.store.current_stamp",
+        lambda _path: (_ for _ in ()).throw(OSError("boom")),
+    )
+    await actor._reload_if_changed()
+    assert actor._state is not None
+    assert actor._state.last_reload_error is not None
+    assert errors
+
+    stop_event = asyncio.Event()
+    runs = 0
+
+    async def fake_reload() -> None:
+        nonlocal runs
+        runs += 1
+        stop_event.set()
+
+    actor._reload_if_changed = fake_reload  # type: ignore[method-assign]
+    await actor.run(stop_event)
+    assert runs == 1
+
+
+@pytest.mark.asyncio
+async def test_service_run_forever_wires_runtime_components(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workflow = write_workflow_file(tmp_path / "WORKFLOW.md", server={"port": 4321})
+    snapshot = make_snapshot(workflow)
+    service = SymphonyService(str(workflow), logs_root=str(tmp_path / "logs"))
+    calls: list[str] = []
+
+    class FakeOrchestrator:
+        def __init__(self, initial_snapshot: Any) -> None:
+            self.initial_snapshot = initial_snapshot
+
+        async def startup_terminal_workspace_cleanup(self) -> None:
+            calls.append("cleanup")
+
+        async def run(self, stop_event: asyncio.Event) -> None:
+            calls.append("orchestrator.run")
+            stop_event.set()
+
+        async def shutdown(self) -> None:
+            calls.append("orchestrator.shutdown")
+
+        async def notify_workflow_updated(self, snapshot: Any) -> None:
+            calls.append("workflow.updated")
+
+        async def notify_workflow_reload_error(self, error: Any) -> None:
+            calls.append("workflow.error")
+
+    class FakeWorkflowStoreActor:
+        def __init__(
+            self, path: str, *, on_snapshot: Any, on_error: Any = None
+        ) -> None:
+            self.path = path
+            self.on_snapshot = on_snapshot
+            self.on_error = on_error
+
+        async def load_initial_snapshot(self) -> Any:
+            calls.append("workflow.load")
+            return snapshot
+
+        async def run(self, stop_event: asyncio.Event) -> None:
+            calls.append("workflow.run")
+            await stop_event.wait()
+
+    class FakeHTTPServer:
+        def __init__(self, orchestrator: Any, *, host: str, port: int) -> None:
+            self.host = host
+            self.port = port
+
+        async def run(self, stop_event: asyncio.Event) -> None:
+            calls.append("http.run")
+            await stop_event.wait()
+
+    monkeypatch.setattr(
+        "symphony.application.service.WorkflowStoreActor", FakeWorkflowStoreActor
+    )
+    monkeypatch.setattr(
+        "symphony.application.service.OrchestratorActor", FakeOrchestrator
+    )
+    monkeypatch.setattr(
+        "symphony.application.service.ObservabilityHTTPServer", FakeHTTPServer
+    )
+    monkeypatch.setattr(
+        "symphony.application.service.configure_logging",
+        lambda logs_root: Path(logs_root) / "log" / "symphony.log",
+    )
+    monkeypatch.setattr(
+        "symphony.application.service.validate_dispatch_settings",
+        lambda settings: calls.append("validate"),
+    )
+    monkeypatch.setattr(
+        service, "_install_signal_handlers", lambda stop_event: calls.append("signals")
+    )
+
+    await service.run_forever()
+
+    assert calls == [
+        "signals",
+        "workflow.load",
+        "validate",
+        "cleanup",
+        "orchestrator.run",
+        "workflow.run",
+        "http.run",
+        "orchestrator.shutdown",
+    ]
+    assert service.orchestrator is not None
+    assert service.workflow_store is not None
+
+
+@pytest.mark.asyncio
+async def test_service_run_forever_starts_dashboard_and_input_monitor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workflow = write_workflow_file(tmp_path / "WORKFLOW.md")
+    snapshot = make_snapshot(workflow)
+    service = SymphonyService(str(workflow))
+    calls: list[str] = []
+
+    class FakeOrchestrator:
+        def __init__(self, initial_snapshot: Any) -> None:
+            self.initial_snapshot = initial_snapshot
+
+        async def startup_terminal_workspace_cleanup(self) -> None:
+            return None
+
+        async def run(self, stop_event: asyncio.Event) -> None:
+            await stop_event.wait()
+
+        async def shutdown(self) -> None:
+            calls.append("shutdown")
+
+        async def notify_workflow_updated(self, snapshot: Any) -> None:
+            return None
+
+        async def notify_workflow_reload_error(self, error: Any) -> None:
+            return None
+
+    class FakeWorkflowStoreActor:
+        def __init__(
+            self, path: str, *, on_snapshot: Any, on_error: Any = None
+        ) -> None:
+            return None
+
+        async def load_initial_snapshot(self) -> Any:
+            return snapshot
+
+        async def run(self, stop_event: asyncio.Event) -> None:
+            await stop_event.wait()
+
+    class FakeDashboard:
+        async def run(self, stop_event: asyncio.Event) -> None:
+            calls.append("dashboard.run")
+            await stop_event.wait()
+
+    monkeypatch.setattr(
+        "symphony.application.service.WorkflowStoreActor", FakeWorkflowStoreActor
+    )
+    monkeypatch.setattr(
+        "symphony.application.service.OrchestratorActor", FakeOrchestrator
+    )
+    monkeypatch.setattr(
+        "symphony.application.service.validate_dispatch_settings",
+        lambda settings: None,
+    )
+    monkeypatch.setattr(service, "_install_signal_handlers", lambda stop_event: None)
+    monkeypatch.setattr(service, "_configure_logging", lambda dashboard_enabled: None)
+    monkeypatch.setattr(service, "_build_http_server", lambda *args: None)
+    monkeypatch.setattr(
+        service, "_build_status_dashboard", lambda *args: FakeDashboard()
+    )
+    monkeypatch.setattr(service, "_dashboard_input_supported", lambda: True)
+
+    async def fake_monitor(stop_event: asyncio.Event) -> None:
+        calls.append("monitor.run")
+        stop_event.set()
+
+    monkeypatch.setattr(service, "_monitor_dashboard_input", fake_monitor)
+    await service.run_forever()
+    assert calls == ["dashboard.run", "monitor.run", "shutdown"]
+    assert await service._ignore_snapshot(None) is None
+
+
+def test_workspace_path_helpers(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    nested = root / "a" / "b"
+    nested.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    symlink_path = root / "escape"
+    symlink_path.symlink_to(outside, target_is_directory=True)
+
+    assert canonicalize(str(root / "a" / ".." / "a" / "b")) == str(nested.resolve())
+    assert is_within(str(root), str(nested))
+    assert not is_within(str(root), str(outside))
+    assert safe_identifier("A/B:C") == "A_B_C"
+    assert workspace_path_for_issue(str(root), "A/B") == str((root / "A_B").resolve())
+    assert validate_workspace_path(str(root), str(nested)) == str(nested.resolve())
+    with pytest.raises(WorkspaceError, match="workspace_equals_root"):
+        validate_workspace_path(str(root), str(root))
+    with pytest.raises(WorkspaceError, match="workspace_outside_root"):
+        validate_workspace_path(str(root), str(outside))
+    with pytest.raises(WorkspaceError, match="workspace_symlink_escape"):
+        validate_workspace_path(str(root), str(symlink_path))
+
+
+def test_workspace_utils_and_issue_context(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    created = ensure_workspace(str(workspace))
+    assert created is True
+    file_path = tmp_path / "workspace-file"
+    file_path.write_text("x", encoding="utf-8")
+    assert ensure_workspace(str(file_path)) is True
+    assert file_path.is_dir()
+
+    tmp_dir = workspace / "tmp"
+    elixir_ls = workspace / ".elixir_ls"
+    tmp_dir.mkdir(parents=True)
+    elixir_ls.mkdir()
+    clean_tmp_artifacts(str(workspace))
+    assert not tmp_dir.exists()
+    assert not elixir_ls.exists()
+
+    issue = make_issue(id="i-1", identifier="MT-9")
+    assert issue_context(issue) == {"issue_id": "i-1", "issue_identifier": "MT-9"}
+    assert issue_context("MT-2") == {"issue_id": None, "issue_identifier": "MT-2"}
+    assert issue_context(None) == {"issue_id": None, "issue_identifier": "issue"}
+
+
+@pytest.mark.asyncio
+async def test_run_hook_handles_success_timeout_and_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = make_snapshot(write_workflow_file(tmp_path / "WORKFLOW.md")).settings
+    calls: list[Any] = []
+
+    class FakeProcess:
+        async def capture_output(self, timeout_ms: int) -> tuple[int, str]:
+            calls.append(("capture", timeout_ms))
+            return 0, "ok"
+
+        async def terminate(self) -> None:
+            calls.append("terminate")
+
+    async def spawn_success(*args: Any, **kwargs: Any) -> FakeProcess:
+        calls.append((args, kwargs))
+        return FakeProcess()
+
+    monkeypatch.setattr(
+        "symphony.workspace.hooks.ProcessTree.spawn_shell", spawn_success
+    )
+    await run_hook(
+        settings,
+        "echo ok",
+        str(tmp_path),
+        {"issue_id": "i-1", "issue_identifier": "MT-1"},
+        "before_run",
+        fatal=True,
+    )
+
+    class TimeoutProcess(FakeProcess):
+        async def capture_output(self, timeout_ms: int) -> tuple[int, str]:
+            raise TimeoutError
+
+    async def spawn_timeout(*args: Any, **kwargs: Any) -> TimeoutProcess:
+        return TimeoutProcess()
+
+    monkeypatch.setattr(
+        "symphony.workspace.hooks.ProcessTree.spawn_shell", spawn_timeout
+    )
+    with pytest.raises(WorkspaceError, match="workspace_hook_timeout"):
+        await run_hook(
+            settings,
+            "sleep",
+            str(tmp_path),
+            {"issue_id": "i-1", "issue_identifier": "MT-1"},
+            "before_run",
+            fatal=True,
+        )
+
+    class FailureProcess(FakeProcess):
+        async def capture_output(self, timeout_ms: int) -> tuple[int, str]:
+            return 17, "boom"
+
+    async def spawn_failure(*args: Any, **kwargs: Any) -> FailureProcess:
+        return FailureProcess()
+
+    monkeypatch.setattr(
+        "symphony.workspace.hooks.ProcessTree.spawn_shell", spawn_failure
+    )
+    with pytest.raises(WorkspaceError, match="workspace_hook_failed"):
+        await run_hook(
+            settings,
+            "false",
+            str(tmp_path),
+            {"issue_id": "i-1", "issue_identifier": "MT-1"},
+            "after_run",
+            fatal=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_workspace_manager_runs_hooks_and_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workflow = write_workflow_file(
+        tmp_path / "WORKFLOW.md",
+        workspace={"root": str(tmp_path / "workspaces")},
+        hooks={
+            "after_create": "create",
+            "before_run": "before",
+            "after_run": "after",
+            "before_remove": "remove",
+            "timeout_ms": 1000,
+        },
+    )
+    snapshot = make_snapshot(workflow)
+    manager = WorkspaceManager(snapshot.settings)
+    calls: list[tuple[str, str]] = []
+
+    async def fake_run_hook(
+        _settings: Any,
+        command: str,
+        workspace: str,
+        _issue_context: Any,
+        hook_name: str,
+        *,
+        fatal: bool,
+    ) -> None:
+        calls.append((hook_name, command))
+        if hook_name in {"after_run", "before_remove"} and not fatal:
+            raise WorkspaceError(("workspace_hook_failed", hook_name, 1, "boom"))
+
+    monkeypatch.setattr("symphony.workspace.manager.run_hook", fake_run_hook)
+    workspace = await manager.create_for_issue("MT/42")
+    assert workspace.created_now is True
+    assert workspace.workspace_key == "MT_42"
+
+    reused = await manager.create_for_issue("MT/42")
+    assert reused.created_now is False
+
+    await manager.run_before_run_hook(workspace.path, "MT/42")
+    await manager.run_after_run_hook(workspace.path, "MT/42")
+    await manager.remove_issue_workspaces(None)
+    await manager.remove_issue_workspaces("MT/42")
+
+    doomed = Path(workspace.path)
+    doomed.mkdir(parents=True, exist_ok=True)
+    await manager.remove(workspace.path)
+    assert not doomed.exists()
+    assert ("after_create", "create") in calls
+    assert ("before_run", "before") in calls
+    assert ("after_run", "after") in calls
+    assert ("before_remove", "remove") in calls
+
+
+@pytest.mark.asyncio
+async def test_maybe_aclose_supports_sync_async_and_missing_close() -> None:
+    events: list[str] = []
+
+    class AsyncCloser:
+        async def close(self) -> None:
+            events.append("async")
+
+    class SyncCloser:
+        def close(self) -> None:
+            events.append("sync")
+
+    await maybe_aclose(AsyncCloser())
+    await maybe_aclose(SyncCloser())
+    await maybe_aclose(object())
+    assert events == ["async", "sync"]
+
+
+def test_issue_helpers() -> None:
+    issue = Issue(labels=("backend", "ops"))
+    assert issue.label_names() == ["backend", "ops"]
+    assert normalize_issue_state(" In Progress ") == "in progress"
+    assert normalize_issue_state(None) == ""

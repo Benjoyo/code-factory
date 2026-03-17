@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "code-factory"
+version = "0.1.0"
+description = "Python asyncio port of the OpenAI Symphony spec"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "aiohttp>=3.11.13,<4",
+  "httpx>=0.28.1,<0.29",
+  "PyYAML>=6.0.2,<7",
+  "python-liquid>=2.1.0,<3",
+  "rich>=13.9.4,<14",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.5,<9",
+  "pytest-asyncio>=0.25.3,<1",
+  "pytest-cov>=6.1.1,<7",
+  "pyright>=1.1.398,<2",
+  "ruff>=0.11.0,<0.12",
+]
+
+[project.scripts]
+symphony = "symphony.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/symphony"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["B", "I", "UP", "RUF100"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+dev = [
+    "pytestarch>=4.0.1",
+]
