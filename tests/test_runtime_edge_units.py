@@ -365,11 +365,41 @@ async def test_config_utils_linear_graphql_client_and_worker_edge_paths(
     )
     failed_worker.workspace_manager = FailingCreateManager()  # type: ignore[assignment]
     failed_worker._agent_runtime = FakeRuntime()  # type: ignore[assignment]
-    await failed_worker.run()
+    with caplog.at_level(logging.ERROR):
+        await failed_worker.run()
     failed_exit = await failed_worker_queue.get()
     assert failed_exit.normal is False
     assert "boom" in (failed_exit.reason or "")
+    assert "Issue worker failed" in caplog.text
 
+    class StoppedFailingManager:
+        async def create_for_issue(self, issue: Any) -> Any:
+            stopped_failed_worker.stop_event.set()
+            raise RuntimeError("ignored")
+
+        async def run_before_run_hook(self, workspace: str, issue: Any) -> None:
+            return None
+
+        async def run_after_run_hook(self, workspace: str, issue: Any) -> None:
+            raise AssertionError("after_run should not execute without a workspace")
+
+    stopped_failed_queue: asyncio.Queue[Any] = asyncio.Queue()
+    stopped_failed_worker = IssueWorker(
+        issue=make_issue(id="issue-4"),
+        workflow_snapshot=snapshot,
+        orchestrator_queue=stopped_failed_queue,
+    )
+    stopped_failed_worker.workspace_manager = StoppedFailingManager()  # type: ignore[assignment]
+    stopped_failed_worker._agent_runtime = FakeRuntime()  # type: ignore[assignment]
+    caplog.clear()
+    with caplog.at_level(logging.ERROR):
+        await stopped_failed_worker.run()
+    stopped_failed_exit = await stopped_failed_queue.get()
+    assert stopped_failed_exit.normal is True
+    assert stopped_failed_exit.reason == "stopped"
+    assert "Issue worker failed" not in caplog.text
+
+    caplog.clear()
     with caplog.at_level(logging.DEBUG):
         log_non_json_stream_line("   ", "stderr")
     assert not caplog.records

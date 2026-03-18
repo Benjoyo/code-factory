@@ -55,6 +55,7 @@ def test_render_default_workflow_replaces_template_tokens() -> None:
     assert '"linear"' in rendered
     assert '"demo-project"' in rendered
     assert "git clone --depth 1 git@github.com:example/demo.git ." in rendered
+    assert "make setup" not in rendered
     assert '    - "Todo"' in rendered
     assert "  max_concurrent_agents: 2" in rendered
     assert "{{ issue.identifier }}" in rendered

@@ -19,6 +19,7 @@ from .dashboard import (
     dashboard_url,
     project_url,
 )
+from .dashboard_diagnostics import DashboardDiagnostics
 from .logging import configure_logging
 
 LOGGER = logging.getLogger(__name__)
@@ -52,7 +53,8 @@ class CodeFactoryService:
         dashboard_enabled = LiveStatusDashboard.enabled(
             initial_snapshot.settings, sys.stderr
         )
-        log_path = self._configure_logging(dashboard_enabled)
+        diagnostics = DashboardDiagnostics() if dashboard_enabled else None
+        log_path = self._configure_logging(dashboard_enabled, diagnostics)
         self._log_startup(initial_snapshot, log_path=log_path)
 
         orchestrator = OrchestratorActor(initial_snapshot)
@@ -66,7 +68,9 @@ class CodeFactoryService:
         await orchestrator.startup_terminal_workspace_cleanup()
 
         http_server = self._build_http_server(initial_snapshot, orchestrator)
-        status_dashboard = self._build_status_dashboard(initial_snapshot, orchestrator)
+        status_dashboard = self._build_status_dashboard(
+            initial_snapshot, orchestrator, diagnostics
+        )
         async with asyncio.TaskGroup() as task_group:
             task_group.create_task(orchestrator.run(stop_event))
             task_group.create_task(workflow_store.run(stop_event))
@@ -110,7 +114,10 @@ class CodeFactoryService:
         )
 
     def _build_status_dashboard(
-        self, initial_snapshot, orchestrator: OrchestratorActor
+        self,
+        initial_snapshot,
+        orchestrator: OrchestratorActor,
+        diagnostics: DashboardDiagnostics | None = None,
     ) -> LiveStatusDashboard | None:
         """Create the live TUI dashboard if the workflow declares it."""
 
@@ -119,6 +126,7 @@ class CodeFactoryService:
         return LiveStatusDashboard(
             orchestrator,
             settings=initial_snapshot.settings,
+            diagnostics=diagnostics,
             context=StatusDashboardContext(
                 max_agents=initial_snapshot.settings.agent.max_concurrent_agents,
                 project_url=project_url(initial_snapshot.settings.tracker.project_slug),
@@ -144,12 +152,29 @@ class CodeFactoryService:
         if log_path is not None:
             LOGGER.info("Rotating log file enabled path=%s", log_path)
 
-    def _configure_logging(self, dashboard_enabled: bool) -> Path | None:
+    def _configure_logging(
+        self,
+        dashboard_enabled: bool,
+        diagnostics: DashboardDiagnostics | None = None,
+    ) -> Path | None:
         """Call the shared logging helper, falling back for dashboards that rewire handlers."""
 
         try:
-            return configure_logging(self.logs_root, console=not dashboard_enabled)
+            return configure_logging(
+                self.logs_root,
+                console=not dashboard_enabled,
+                diagnostics=diagnostics,
+            )
         except TypeError as exc:
+            if "unexpected keyword argument 'diagnostics'" in str(exc):
+                try:
+                    return configure_logging(
+                        self.logs_root, console=not dashboard_enabled
+                    )
+                except TypeError as inner:
+                    if "unexpected keyword argument 'console'" not in str(inner):
+                        raise
+                    return configure_logging(self.logs_root)
             if "unexpected keyword argument 'console'" not in str(exc):
                 raise
             return configure_logging(self.logs_root)

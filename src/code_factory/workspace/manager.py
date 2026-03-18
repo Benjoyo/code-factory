@@ -56,14 +56,20 @@ class WorkspaceManager:
         validate_workspace_path(self.root, workspace_path)
         created_now = ensure_workspace(workspace_path)
         if created_now and self._settings.hooks.after_create:
-            await run_hook(
-                self._settings,
-                self._settings.hooks.after_create,
-                workspace_path,
-                context,
-                "after_create",
-                fatal=True,
-            )
+            try:
+                await run_hook(
+                    self._settings,
+                    self._settings.hooks.after_create,
+                    workspace_path,
+                    context,
+                    "after_create",
+                    fatal=True,
+                )
+            except WorkspaceError:
+                self._remove_failed_new_workspace(
+                    workspace_path, context["issue_identifier"]
+                )
+                raise
         return Workspace(
             path=workspace_path,
             workspace_key=safe_identifier(context["issue_identifier"]),
@@ -144,4 +150,21 @@ class WorkspaceManager:
         except WorkspaceError:
             LOGGER.warning(
                 "Ignoring before_remove hook failure workspace=%s", workspace
+            )
+
+    def _remove_failed_new_workspace(
+        self, workspace: str, issue_identifier: str | None
+    ) -> None:
+        """Discard a partially prepared brand-new workspace after a fatal create hook."""
+
+        try:
+            shutil.rmtree(workspace, ignore_errors=False)
+        except FileNotFoundError:
+            return
+        except Exception as exc:
+            LOGGER.warning(
+                "Failed to remove partially created workspace issue_identifier=%s workspace=%s reason=%r",
+                issue_identifier or "issue",
+                workspace,
+                exc,
             )

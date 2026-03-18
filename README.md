@@ -9,7 +9,7 @@ Use this port if you want the Symphony behavior and workflow contract in a Pytho
 ## What You Need
 
 - Python 3.12
-- [`uv`](https://docs.astral.sh/uv/) or `uvx`
+- [`uv`](https://docs.astral.sh/uv/)
 - A valid `WORKFLOW.md`
 - Access to Linear for the tracker configured in `WORKFLOW.md`
 - A working Codex app-server command available to `codex.command`

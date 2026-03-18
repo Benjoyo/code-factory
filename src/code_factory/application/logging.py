@@ -7,8 +7,15 @@ from logging import NullHandler
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from .dashboard_diagnostics import DashboardDiagnostics, DashboardDiagnosticsHandler
 
-def configure_logging(logs_root: str | None, *, console: bool = True) -> Path | None:
+
+def configure_logging(
+    logs_root: str | None,
+    *,
+    console: bool = True,
+    diagnostics: DashboardDiagnostics | None = None,
+) -> Path | None:
     """Set up shared handlers once and return the persistent log file path if enabled."""
 
     root_logger = logging.getLogger()
@@ -20,7 +27,7 @@ def configure_logging(logs_root: str | None, *, console: bool = True) -> Path | 
             stream_handler = logging.StreamHandler()
             stream_handler.setFormatter(formatter)
             root_logger.addHandler(stream_handler)
-        elif logs_root is None:
+        elif logs_root is None and diagnostics is None:
             root_logger.addHandler(NullHandler())
         if logs_root is not None:
             log_path = (
@@ -35,6 +42,7 @@ def configure_logging(logs_root: str | None, *, console: bool = True) -> Path | 
     elif logs_root is not None:
         # Preserve a reference to the configured log file even when handlers already exist.
         log_path = Path(logs_root).expanduser().resolve() / "log" / "code-factory.log"
+    _install_diagnostics_handler(root_logger, diagnostics)
     configure_library_loggers()
     return log_path
 
@@ -45,3 +53,17 @@ def configure_library_loggers() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
+
+
+def _install_diagnostics_handler(
+    root_logger: logging.Logger, diagnostics: DashboardDiagnostics | None
+) -> None:
+    if diagnostics is None:
+        return
+    for handler in root_logger.handlers:
+        if (
+            isinstance(handler, DashboardDiagnosticsHandler)
+            and handler.diagnostics is diagnostics
+        ):
+            return
+    root_logger.addHandler(DashboardDiagnosticsHandler(diagnostics))

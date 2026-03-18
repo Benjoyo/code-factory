@@ -14,6 +14,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
+from .dashboard_diagnostics import DiagnosticEntry, render_diagnostics_panel
 from .dashboard_format import (
     agents_text,
     clean_inline,
@@ -37,55 +38,86 @@ class StatusDashboardContext:
     dashboard_url: str | None
 
 
+RUNNING_TABLE_COLUMNS: tuple[dict[str, Any], ...] = (
+    {"header": "", "width": 1},
+    {"header": "ID", "width": 8, "style": "cyan"},
+    {"header": "STAGE", "width": 14},
+    {"header": "PID", "width": 8, "style": "yellow", "justify": "right"},
+    {"header": "AGE / TURN", "width": 12, "style": "magenta"},
+    {"header": "TOKENS", "width": 10, "style": "yellow", "justify": "right"},
+    {"header": "SESSION", "width": 13, "style": "cyan"},
+    {"header": "EVENT", "min_width": 24, "ratio": 1},
+)
+
+RETRY_TABLE_COLUMNS: tuple[dict[str, Any], ...] = (
+    {"header": "ID", "width": 12, "style": "red"},
+    {"header": "ATTEMPT", "width": 7, "style": "yellow", "justify": "right"},
+    {"header": "DUE IN", "width": 8, "style": "cyan", "justify": "right"},
+    {"header": "ERROR", "min_width": 24, "ratio": 1, "style": "dim"},
+)
+
+
 def render_status_dashboard(
     snapshot: dict[str, Any],
     context: StatusDashboardContext,
     *,
     throughput_tps: float,
+    recent_logs: tuple[DiagnosticEntry, ...] = (),
     unavailable: bool = False,
     unavailable_detail: str | None = None,
 ) -> RenderableType:
     if unavailable:
-        return _unavailable_panel(unavailable_detail)
-    running = mapping_list(snapshot.get("running"))
-    retrying = mapping_list(snapshot.get("retrying"))
-    totals = snapshot.get("agent_totals")
-    totals = totals if isinstance(totals, dict) else {}
-    runtime_seconds = int_value(totals.get("seconds_running")) + sum(
-        int_value(entry.get("runtime_seconds")) for entry in running
-    )
-    summary = Table.grid(expand=True)
-    summary.add_column(style="bold white", ratio=1)
-    summary.add_column(ratio=5)
-    summary.add_row("Agents:", agents_text(len(running), context.max_agents))
-    summary.add_row(
-        "Throughput:", Text(f"{format_count(int(throughput_tps))} tps", style="cyan")
-    )
-    summary.add_row("Runtime:", Text(format_runtime(runtime_seconds), style="magenta"))
-    summary.add_row("Tokens:", tokens_text(totals))
-    summary.add_row("Rate Limits:", rate_limits_text(snapshot.get("rate_limits")))
-    summary.add_row(
-        "Project:",
-        Text(
-            context.project_url or "n/a", style="cyan" if context.project_url else "dim"
-        ),
-    )
-    if context.dashboard_url is not None:
-        summary.add_row("Dashboard:", Text(context.dashboard_url, style="cyan"))
-    summary.add_row("Next refresh:", next_refresh_text(snapshot.get("polling")))
-    return Panel(
-        Group(
-            summary,
-            Rule("Running", style="bright_black"),
-            _running_renderable(running),
-            Rule("Backoff queue", style="bright_black"),
-            _retry_renderable(retrying),
-        ),
-        box=box.ROUNDED,
-        border_style="white",
-        padding=(0, 1),
-        title=Text("SYMPHONY STATUS", style="bold white"),
-        title_align="left",
+        status_panel = _unavailable_panel(unavailable_detail)
+    else:
+        running = mapping_list(snapshot.get("running"))
+        retrying = mapping_list(snapshot.get("retrying"))
+        totals = snapshot.get("agent_totals")
+        totals = totals if isinstance(totals, dict) else {}
+        runtime_seconds = int_value(totals.get("seconds_running")) + sum(
+            int_value(entry.get("runtime_seconds")) for entry in running
+        )
+        summary = Table.grid(expand=True)
+        summary.add_column(style="bold white", ratio=1)
+        summary.add_column(ratio=5)
+        summary.add_row("Agents:", agents_text(len(running), context.max_agents))
+        summary.add_row(
+            "Throughput:",
+            Text(f"{format_count(int(throughput_tps))} tps", style="cyan"),
+        )
+        summary.add_row(
+            "Runtime:", Text(format_runtime(runtime_seconds), style="magenta")
+        )
+        summary.add_row("Tokens:", tokens_text(totals))
+        summary.add_row("Rate Limits:", rate_limits_text(snapshot.get("rate_limits")))
+        summary.add_row(
+            "Project:",
+            Text(
+                context.project_url or "n/a",
+                style="cyan" if context.project_url else "dim",
+            ),
+        )
+        if context.dashboard_url is not None:
+            summary.add_row("Dashboard:", Text(context.dashboard_url, style="cyan"))
+        summary.add_row("Next refresh:", next_refresh_text(snapshot.get("polling")))
+        status_panel = Panel(
+            Group(
+                summary,
+                Rule("Running", style="bright_black"),
+                _running_renderable(running),
+                Rule("Backoff queue", style="bright_black"),
+                _retry_renderable(retrying),
+            ),
+            box=box.ROUNDED,
+            border_style="white",
+            padding=(0, 1),
+            title=Text("SYMPHONY STATUS", style="bold white"),
+            title_align="left",
+        )
+    diagnostics_panel = render_diagnostics_panel(recent_logs)
+    return (
+        Group(status_panel, diagnostics_panel)
+        if diagnostics_panel is not None
+        else status_panel
     )
 
 
@@ -140,17 +172,18 @@ def _running_renderable(running: list[dict[str, Any]]) -> RenderableType:
         header_style="bold bright_black",
         padding=(0, 1),
     )
-    for column in (
-        "",
-        "ID",
-        "STAGE",
-        "PID",
-        "AGE / TURN",
-        "TOKENS",
-        "SESSION",
-        "EVENT",
-    ):
-        table.add_column(column, overflow="ellipsis", no_wrap=column != "EVENT")
+    for spec in RUNNING_TABLE_COLUMNS:
+        header = str(spec["header"])
+        table.add_column(
+            header,
+            overflow="ellipsis",
+            no_wrap=header != "EVENT",
+            width=spec.get("width"),
+            min_width=spec.get("min_width"),
+            ratio=spec.get("ratio"),
+            justify=spec.get("justify", "left"),
+            style=spec.get("style"),
+        )
     for entry in sorted(running, key=lambda item: str(item.get("identifier") or "")):
         style = _event_style(
             entry.get("last_agent_event"), stopping=bool(entry.get("stopping"))
@@ -173,24 +206,38 @@ def _retry_renderable(retrying: list[dict[str, Any]]) -> RenderableType:
 
     if not retrying:
         return Padding(Text("No queued retries", style="dim"), (0, 1))
-    lines = Table.grid(expand=True)
-    for entry in sorted(retrying, key=lambda item: int_value(item.get("due_in_ms"))):
-        line = Text.assemble(
-            ("↻ ", "yellow"),
-            (
-                clean_inline(
-                    entry.get("identifier") or entry.get("issue_id") or "unknown", 24
-                ),
-                "red",
-            ),
-            (f" attempt={int_value(entry.get('attempt'))}", "yellow"),
-            (" in ", "dim"),
-            (_retry_due_text(entry.get("due_in_ms")), "cyan"),
+    lines = Table(
+        expand=True,
+        box=box.SIMPLE_HEAVY,
+        show_edge=False,
+        header_style="bold bright_black",
+        padding=(0, 1),
+    )
+    for spec in RETRY_TABLE_COLUMNS:
+        header = str(spec["header"])
+        lines.add_column(
+            header,
+            overflow="ellipsis",
+            no_wrap=header != "ERROR",
+            width=spec.get("width"),
+            min_width=spec.get("min_width"),
+            ratio=spec.get("ratio"),
+            justify=spec.get("justify", "left"),
+            style=spec.get("style"),
         )
+    for entry in sorted(retrying, key=lambda item: int_value(item.get("due_in_ms"))):
         error = clean_inline(entry.get("error"), 96)
-        if error:
-            line.append(f" error={error}", style="dim")
-        lines.add_row(line)
+        lines.add_row(
+            Text(
+                clean_inline(
+                    entry.get("identifier") or entry.get("issue_id") or "unknown", 12
+                ),
+                style="red",
+            ),
+            Text(str(int_value(entry.get("attempt"))), style="yellow"),
+            Text(_retry_due_text(entry.get("due_in_ms")), style="cyan"),
+            Text(error or "none", style="dim"),
+        )
     return lines
 
 

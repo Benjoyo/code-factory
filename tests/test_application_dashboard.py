@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from io import StringIO
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 from rich.console import Console
+from rich.table import Table
 
 from code_factory.application.dashboard import (
     LiveStatusDashboard,
@@ -16,6 +18,11 @@ from code_factory.application.dashboard import (
     dashboard_url,
     project_url,
     render_status_dashboard,
+)
+from code_factory.application.dashboard_diagnostics import (
+    DashboardDiagnostics,
+    DashboardDiagnosticsHandler,
+    DiagnosticEntry,
 )
 from code_factory.application.dashboard_format import (
     clean_inline,
@@ -27,7 +34,11 @@ from code_factory.application.dashboard_format import (
     rate_limit_credits,
     rate_limits_text,
 )
-from code_factory.application.dashboard_render import _event_style
+from code_factory.application.dashboard_render import (
+    _event_style,
+    _retry_renderable,
+    _running_renderable,
+)
 
 
 def test_dashboard_urls_match_elixir_style_host_rules() -> None:
@@ -154,6 +165,146 @@ def test_render_status_dashboard_covers_unavailable_and_empty_sections() -> None
     assert "error=" not in retry_stream.getvalue()
 
 
+def test_render_status_dashboard_includes_recent_diagnostics_panel() -> None:
+    stream = StringIO()
+    Console(file=stream, width=120).print(
+        render_status_dashboard(
+            {
+                "running": [],
+                "retrying": [],
+                "agent_totals": {},
+                "rate_limits": None,
+                "polling": {},
+            },
+            StatusDashboardContext(max_agents=1, project_url=None, dashboard_url=None),
+            throughput_tps=0,
+            recent_logs=(
+                DiagnosticEntry(
+                    timestamp="13:37:00",
+                    level="WARNING",
+                    logger_name="code_factory.workspace.hooks",
+                    message="Workspace hook failed\noutput:\nline 1",
+                ),
+                DiagnosticEntry(
+                    timestamp="13:37:01",
+                    level="ERROR",
+                    logger_name="code_factory.runtime.worker.actor",
+                    message=(
+                        "Issue worker failed\n\n"
+                        "Traceback (most recent call last):\n"
+                        "RuntimeError: boom"
+                    ),
+                ),
+            ),
+        )
+    )
+    rendered = stream.getvalue()
+    assert "RECENT WARNINGS / ERRORS" in rendered
+    assert "Issue worker failed" in rendered
+    assert "RuntimeError: boom" in rendered
+    assert "Workspace hook failed" in rendered
+
+
+def test_dashboard_diagnostics_handler_and_buffer_cover_error_paths() -> None:
+    logger = logging.getLogger("code_factory.tests.dashboard")
+    record = logger.makeRecord(
+        logger.name,
+        logging.WARNING,
+        __file__,
+        1,
+        "x" * 64,
+        (),
+        None,
+        sinfo="stack line",
+    )
+    diagnostics = DashboardDiagnostics(max_chars=256)
+    diagnostics.append_record(record)
+    entry = diagnostics.entries()[0]
+    assert "stack line" in entry.message
+
+    truncated = DashboardDiagnostics(max_chars=32)
+    truncated.append_record(record)
+    assert "... (truncated)" in truncated.entries()[0].message
+
+    line_limited = DashboardDiagnostics(max_lines_per_entry=2)
+    line_record = logger.makeRecord(
+        logger.name,
+        logging.ERROR,
+        __file__,
+        1,
+        "top line",
+        (),
+        None,
+    )
+    line_record.exc_info = (RuntimeError, RuntimeError("boom"), None)
+    line_limited.append_record(line_record)
+    assert line_limited.entries()[0].message.splitlines()[-1] == "... (truncated)"
+
+    called: list[logging.LogRecord] = []
+
+    class BrokenDiagnostics:
+        def append_record(self, record: logging.LogRecord) -> None:
+            raise RuntimeError("boom")
+
+    handler = DashboardDiagnosticsHandler(cast(Any, BrokenDiagnostics()))
+    handler.handleError = called.append  # type: ignore[method-assign]
+    handler.emit(record)
+    assert called == [record]
+
+
+def test_dashboard_tables_use_stable_column_widths() -> None:
+    running_table = cast(
+        Table,
+        _running_renderable(
+            [
+                {
+                    "identifier": "ENG-12345",
+                    "state": "In Progress",
+                    "runtime_pid": "12345",
+                    "runtime_seconds": 126,
+                    "turn_count": 3,
+                    "total_tokens": 9876,
+                    "session_id": "abcd1234-turn-42",
+                    "last_agent_event": "turn_completed",
+                    "last_agent_message": {
+                        "message": "A much longer event payload that should not resize the table"
+                    },
+                }
+            ]
+        ),
+    )
+    assert [column.width for column in running_table.columns[:-1]] == [
+        1,
+        8,
+        14,
+        8,
+        12,
+        10,
+        13,
+    ]
+    assert running_table.columns[-1].width is None
+    assert running_table.columns[-1].min_width == 24
+    assert running_table.columns[-1].ratio == 1
+
+    retry_table = cast(
+        Table,
+        _retry_renderable(
+            [
+                {
+                    "identifier": "ENG-2000",
+                    "attempt": 12,
+                    "due_in_ms": 3042,
+                    "error": "An intentionally long retry error that should stay inside the error column",
+                }
+            ]
+        ),
+    )
+    assert [column.width for column in retry_table.columns[:-1]] == [12, 7, 8]
+    assert retry_table.columns[-1].width is None
+    assert retry_table.columns[-1].min_width == 24
+    assert retry_table.columns[-1].ratio == 1
+
+
 def test_dashboard_format_helpers_cover_remaining_branches() -> None:
     assert next_refresh_text({"checking?": True}).plain == "checking now..."
     assert next_refresh_text({"next_poll_in_ms": 1500}).plain == "2s"
@@ -228,8 +379,9 @@ def test_dashboard_enabled_checks_tty() -> None:
 
 
 class _FakeLive:
-    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+    def __init__(self, *_args: Any, **kwargs: Any) -> None:
         self.updates: list[tuple[Any, bool]] = []
+        self.kwargs = kwargs
 
     def __enter__(self) -> _FakeLive:
         return self
@@ -250,6 +402,7 @@ async def test_live_status_dashboard_run_and_snapshot_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_live = _FakeLive()
+    live_kwargs: dict[str, Any] = {}
     stop_event = asyncio.Event()
     real_wait_for = asyncio.wait_for
     wait_for_calls = 0
@@ -263,7 +416,8 @@ async def test_live_status_dashboard_run_and_snapshot_paths(
             }
 
     monkeypatch.setattr(
-        "code_factory.application.dashboard.Live", lambda *a, **k: fake_live
+        "code_factory.application.dashboard.Live",
+        lambda *a, **k: live_kwargs.update(k) or fake_live,
     )
     dashboard = LiveStatusDashboard(
         cast(Any, SnapshotNowOrchestrator()),
@@ -287,6 +441,7 @@ async def test_live_status_dashboard_run_and_snapshot_paths(
     monkeypatch.setattr("asyncio.wait_for", stop_after_first_wait)
     await dashboard.run(stop_event)
     assert fake_live.updates and fake_live.updates[0][1] is True
+    assert live_kwargs["vertical_overflow"] == "ellipsis"
     monkeypatch.setattr("asyncio.wait_for", real_wait_for)
 
     class AsyncSnapshotOrchestrator:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import runpy
+import shlex
 import signal
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
@@ -15,6 +16,10 @@ import pytest
 from typer.testing import CliRunner
 
 from code_factory.application import CodeFactoryService
+from code_factory.application.dashboard_diagnostics import (
+    DashboardDiagnostics,
+    DashboardDiagnosticsHandler,
+)
 from code_factory.application.logging import configure_logging
 from code_factory.cli import (
     ACK_FLAG,
@@ -431,6 +436,60 @@ def test_configure_logging_supports_dashboard_mode_without_console() -> None:
         root_logger.setLevel(original_level)
 
 
+def test_configure_logging_dashboard_diagnostics_capture_multiline_errors() -> None:
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    original_level = root_logger.level
+    diagnostics = DashboardDiagnostics()
+    try:
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        assert configure_logging(None, console=False, diagnostics=diagnostics) is None
+        logger = logging.getLogger("code_factory.tests")
+        try:
+            raise RuntimeError("boom")
+        except RuntimeError:
+            logger.exception("hook failed\noutput:\nline 1\nline 2")
+        entries = diagnostics.entries()
+        assert len(entries) == 1
+        assert entries[0].level == "ERROR"
+        assert "hook failed" in entries[0].message
+        assert "line 1" in entries[0].message
+        assert "RuntimeError: boom" in entries[0].message
+        assert configure_logging(None, console=False, diagnostics=diagnostics) is None
+        assert (
+            len(
+                [
+                    handler
+                    for handler in root_logger.handlers
+                    if isinstance(handler, DashboardDiagnosticsHandler)
+                ]
+            )
+            == 1
+        )
+        other_diagnostics = DashboardDiagnostics()
+        assert (
+            configure_logging(None, console=False, diagnostics=other_diagnostics)
+            is None
+        )
+        assert (
+            len(
+                [
+                    handler
+                    for handler in root_logger.handlers
+                    if isinstance(handler, DashboardDiagnosticsHandler)
+                ]
+            )
+            == 2
+        )
+    finally:
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        for handler in original_handlers:
+            root_logger.addHandler(handler)
+        root_logger.setLevel(original_level)
+
+
 def test_service_dashboard_helpers_and_logging_fallbacks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -466,6 +525,14 @@ def test_service_dashboard_helpers_and_logging_fallbacks(
     assert service._configure_logging(True) is None
     assert calls == [(None, False)]
 
+    monkeypatch.setattr(
+        "code_factory.application.service.configure_logging",
+        lambda logs_root, *, console=True: Path("/tmp/diagnostics.log"),
+    )
+    assert service._configure_logging(
+        False, diagnostics=DashboardDiagnostics()
+    ) == Path("/tmp/diagnostics.log")
+
     def old_configure_logging(logs_root: str | None) -> Path | None:
         return Path("/tmp/fallback.log")
 
@@ -473,6 +540,37 @@ def test_service_dashboard_helpers_and_logging_fallbacks(
         "code_factory.application.service.configure_logging", old_configure_logging
     )
     assert service._configure_logging(False) == Path("/tmp/fallback.log")
+
+    compat_calls = 0
+
+    def staged_old_configure_logging(
+        logs_root: str | None,
+        *,
+        console: bool = True,
+        diagnostics: DashboardDiagnostics | None = None,
+    ) -> Path | None:
+        nonlocal compat_calls
+        compat_calls += 1
+        if compat_calls == 1:
+            raise TypeError("unexpected keyword argument 'diagnostics'")
+        if compat_calls == 2:
+            raise TypeError("unexpected keyword argument 'console'")
+        return Path("/tmp/staged-fallback.log")
+
+    monkeypatch.setattr(
+        "code_factory.application.service.configure_logging",
+        staged_old_configure_logging,
+    )
+    assert service._configure_logging(
+        False, diagnostics=DashboardDiagnostics()
+    ) == Path("/tmp/staged-fallback.log")
+
+    monkeypatch.setattr(
+        "code_factory.application.service.configure_logging", old_configure_logging
+    )
+    assert service._configure_logging(
+        False, diagnostics=DashboardDiagnostics()
+    ) == Path("/tmp/fallback.log")
 
     def bad_typeerror(logs_root: str | None, *, console: bool = True) -> Path | None:
         raise TypeError("different")
@@ -482,6 +580,21 @@ def test_service_dashboard_helpers_and_logging_fallbacks(
     )
     with pytest.raises(TypeError, match="different"):
         service._configure_logging(False)
+
+    def bad_typeerror_with_diagnostics(
+        logs_root: str | None,
+        *,
+        console: bool = True,
+        diagnostics: DashboardDiagnostics | None = None,
+    ) -> Path | None:
+        raise TypeError("different")
+
+    monkeypatch.setattr(
+        "code_factory.application.service.configure_logging",
+        bad_typeerror_with_diagnostics,
+    )
+    with pytest.raises(TypeError, match="different"):
+        service._configure_logging(False, diagnostics=DashboardDiagnostics())
 
     monkeypatch.setattr("code_factory.application.service.sys.stdin", object())
     assert service._dashboard_input_supported() is False
@@ -990,7 +1103,9 @@ async def test_service_run_forever_starts_dashboard_and_input_monitor(
         lambda settings: None,
     )
     monkeypatch.setattr(service, "_install_signal_handlers", lambda stop_event: None)
-    monkeypatch.setattr(service, "_configure_logging", lambda dashboard_enabled: None)
+    monkeypatch.setattr(
+        service, "_configure_logging", lambda dashboard_enabled, diagnostics=None: None
+    )
     monkeypatch.setattr(service, "_build_http_server", lambda *args: None)
     monkeypatch.setattr(
         service, "_build_status_dashboard", lambda *args: FakeDashboard()
@@ -1179,6 +1294,72 @@ async def test_workspace_manager_runs_hooks_and_cleanup(
     assert ("before_run", "before") in calls
     assert ("after_run", "after") in calls
     assert ("before_remove", "remove") in calls
+
+
+@pytest.mark.asyncio
+async def test_workspace_manager_removes_failed_after_create_workspace_and_retries(
+    tmp_path: Path,
+) -> None:
+    attempts_file = tmp_path / "attempts.txt"
+    workflow = write_workflow_file(
+        tmp_path / "WORKFLOW.md",
+        workspace={"root": str(tmp_path / "workspaces")},
+        hooks={
+            "after_create": "\n".join(
+                (
+                    f"count=$(cat {shlex.quote(str(attempts_file))} 2>/dev/null || echo 0)",
+                    "count=$((count + 1))",
+                    f"printf '%s' \"$count\" > {shlex.quote(str(attempts_file))}",
+                    'if [ "$count" -eq 1 ]; then',
+                    '  printf "bootstrap failed on attempt %s\\n" "$count"',
+                    "  exit 17",
+                    "fi",
+                    'printf "bootstrap succeeded on attempt %s\\n" "$count"',
+                )
+            ),
+            "timeout_ms": 1_000,
+        },
+    )
+    snapshot = make_snapshot(workflow)
+    manager = WorkspaceManager(snapshot.settings)
+    workspace_path = Path(manager.workspace_path_for_issue("MT-77"))
+
+    with pytest.raises(WorkspaceError, match="workspace_hook_failed"):
+        await manager.create_for_issue("MT-77")
+
+    assert attempts_file.read_text(encoding="utf-8") == "1"
+    assert workspace_path.exists() is False
+
+    workspace = await manager.create_for_issue("MT-77")
+    assert workspace.created_now is True
+    assert workspace.path == str(workspace_path)
+    assert attempts_file.read_text(encoding="utf-8") == "2"
+
+
+def test_workspace_manager_failed_workspace_cleanup_logs_removal_problems(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    workflow = write_workflow_file(
+        tmp_path / "WORKFLOW.md", workspace={"root": str(tmp_path / "workspaces")}
+    )
+    snapshot = make_snapshot(workflow)
+    manager = WorkspaceManager(snapshot.settings)
+
+    monkeypatch.setattr(
+        "code_factory.workspace.manager.shutil.rmtree",
+        lambda path, ignore_errors=False: (_ for _ in ()).throw(FileNotFoundError()),
+    )
+    manager._remove_failed_new_workspace(str(tmp_path / "missing"), None)
+
+    def fail_remove(path: str, ignore_errors: bool = False) -> None:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr("code_factory.workspace.manager.shutil.rmtree", fail_remove)
+    with caplog.at_level(logging.WARNING):
+        manager._remove_failed_new_workspace(str(tmp_path / "broken"), None)
+    assert "Failed to remove partially created workspace" in caplog.text
 
 
 @pytest.mark.asyncio

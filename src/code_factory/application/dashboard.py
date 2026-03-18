@@ -10,6 +10,7 @@ from rich.live import Live
 from ..config.models import Settings
 from ..runtime.orchestration import OrchestratorActor
 from ..runtime.support import monotonic_ms
+from .dashboard_diagnostics import DashboardDiagnostics
 from .dashboard_render import (
     StatusDashboardContext,
     dashboard_url,
@@ -37,10 +38,12 @@ class LiveStatusDashboard:
         *,
         settings: Settings,
         context: StatusDashboardContext,
+        diagnostics: DashboardDiagnostics | None = None,
         console: Console | None = None,
     ) -> None:
         self._orchestrator = orchestrator
         self._context = context
+        self._diagnostics = diagnostics
         self._console = console or Console(stderr=True)
         self._sleep_ms = max(250, min(settings.observability.refresh_ms, 1_000))
         self._samples: list[tuple[int, int]] = []
@@ -63,7 +66,7 @@ class LiveStatusDashboard:
             auto_refresh=False,
             console=self._console,
             screen=False,
-            vertical_overflow="visible",
+            vertical_overflow="ellipsis",
         ) as live:
             while True:
                 live.update(await self._snapshot_renderable(), refresh=True)
@@ -106,6 +109,7 @@ class LiveStatusDashboard:
             snapshot,
             self._context,
             throughput_tps=_rolling_tps(self._samples, now_ms, total_tokens),
+            recent_logs=self._recent_logs(),
             unavailable=False,
         )
 
@@ -116,9 +120,13 @@ class LiveStatusDashboard:
             {},
             self._context,
             throughput_tps=0.0,
+            recent_logs=self._recent_logs(),
             unavailable=True,
             unavailable_detail=self._last_snapshot_error,
         )
+
+    def _recent_logs(self):
+        return self._diagnostics.entries() if self._diagnostics is not None else ()
 
 
 def _total_tokens(snapshot: dict[str, object]) -> int:

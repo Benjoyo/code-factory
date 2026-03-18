@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from ...coding_agents import (
@@ -18,6 +19,8 @@ from ...workspace import WorkspaceManager
 from ..messages import AgentWorkerUpdate, WorkerExited
 from ..support import maybe_aclose
 from .utils import tracker_state_is_active
+
+LOGGER = logging.getLogger(__name__)
 
 
 class IssueWorker:
@@ -75,6 +78,13 @@ class IssueWorker:
         except Exception as exc:
             normal = self.stop_event.is_set()
             reason = "stopped" if normal else repr(exc)
+            if not normal:
+                LOGGER.exception(
+                    "Issue worker failed issue_id=%s identifier=%s workspace=%s",
+                    self.issue.id or "n/a",
+                    self.issue.identifier or "n/a",
+                    self.workspace_path or "n/a",
+                )
         finally:
             if self.workspace_path is not None:
                 await self.workspace_manager.run_after_run_hook(

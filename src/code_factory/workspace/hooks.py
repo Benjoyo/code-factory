@@ -51,14 +51,13 @@ async def run_hook(
     if status == 0:
         return
 
-    sanitized_output = output[:2048] + ("... (truncated)" if len(output) > 2048 else "")
     LOGGER.warning(
-        "Workspace hook failed hook=%s issue_identifier=%s workspace=%s status=%s output=%r",
+        "Workspace hook failed\nhook=%s\nissue_identifier=%s\nworkspace=%s\nstatus=%s\noutput:\n%s",
         hook_name,
         issue_context["issue_identifier"],
         workspace,
         status,
-        sanitized_output,
+        output.rstrip() or "<no output>",
     )
     if fatal:
         raise WorkspaceError(("workspace_hook_failed", hook_name, status, output))
