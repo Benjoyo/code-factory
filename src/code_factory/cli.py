@@ -8,10 +8,11 @@ from typing import Annotated
 
 import click
 import typer
+from rich.console import Console
 
 from .application import CodeFactoryService
+from .application.bootstrap import initialize_project, prompt_project_init
 from .workflow.loader import DEFAULT_WORKFLOW_FILENAME, workflow_file_path
-from .workflow.template import initialize_workflow
 
 ACK_FLAG = "--no-guardrails"
 _HELP_FLAGS = frozenset({"-h", "--help"})
@@ -160,21 +161,30 @@ def init_command(
         ),
     ] = False,
 ) -> None:
-    """Create a starter `WORKFLOW.md` in the current working directory."""
+    """Interactively create a starter workflow and bundled skills in this project."""
 
-    target = Path.cwd() / DEFAULT_WORKFLOW_FILENAME
+    console = Console()
+    values = prompt_project_init(console=console, target_dir=Path.cwd())
     try:
-        written_path = initialize_workflow(target, force=force)
+        result = initialize_project(values, target_dir=Path.cwd(), force=force)
     except FileExistsError:
         typer.echo(
-            f"{written_path_label(target)} already exists. Re-run with `--force` to overwrite it.",
+            "Bootstrap target already exists. Re-run with `--force` to overwrite "
+            f"{written_path_label(Path.cwd() / DEFAULT_WORKFLOW_FILENAME)} and "
+            f"{written_path_label(Path.cwd() / '.agents' / 'skills')}.",
             err=True,
         )
         raise typer.Exit(code=1) from None
 
-    typer.echo(
-        f"Created {written_path_label(written_path)} from the bundled default workflow."
+    console.print(
+        f"Created {written_path_label(result.workflow_path)} and copied skills to "
+        f"{written_path_label(result.skills_path)}."
     )
+    if values.tracker_kind != "linear":
+        console.print(
+            "[yellow]The bundled prompt body still contains Linear-specific guidance. "
+            "Review WORKFLOW.md before first use.[/yellow]"
+        )
 
 
 def written_path_label(path: Path) -> str:

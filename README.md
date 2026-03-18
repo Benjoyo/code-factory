@@ -20,8 +20,10 @@ Create a starter workflow in a new project by running:
 uv run cf init
 ```
 
-That writes the bundled default `WORKFLOW.md` into the current directory. Re-run
-with `--force` if you want to overwrite an existing file.
+`cf init` now walks you through the starter values with Rich prompts, renders a
+project-specific `WORKFLOW.md`, and copies this repo's bundled skills into
+`./.agents/skills`. Re-run with `--force` if you want to overwrite an existing
+workflow or skills bundle.
 
 ## Running the Service
 
@@ -51,8 +53,13 @@ cf serve [OPTIONS] [WORKFLOW]
 
 `cf init`
 
-- Copies the bundled default workflow template to `./WORKFLOW.md`.
-- Refuses to overwrite an existing workflow unless `--force` is passed.
+- Prompts for tracker kind, project slug, git repo, state lists, workspace
+  root, and max concurrent agents.
+- Renders `./WORKFLOW.md` from the bundled meta-template and keeps the rest of
+  the workflow on the shipped defaults.
+- Copies the packaged skill directories to `./.agents/skills`.
+- Refuses to overwrite an existing workflow or skills bundle unless `--force`
+  is passed.
 
 `cf serve`
 

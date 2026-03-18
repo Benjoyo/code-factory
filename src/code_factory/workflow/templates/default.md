@@ -1,23 +1,18 @@
 ---
 tracker:
-  kind: linear
-  project_slug: "code-factory"
+  kind: [[CF_TRACKER_KIND]]
+  project_slug: [[CF_PROJECT_SLUG]]
   active_states:
-    - Todo
-    - In Progress
-    - Merging
-    - Rework
+[[CF_ACTIVE_STATES]]
   terminal_states:
-    - Canceled
-    - Duplicate
-    - Done
+[[CF_TERMINAL_STATES]]
 polling:
   interval_ms: 5000
 workspace:
-  root: ~/code/code-factory-workspaces
+  root: [[CF_WORKSPACE_ROOT]]
 hooks:
   after_create: |
-    git clone --depth 1 git@github.com:Benjoyo/labelforge-studio.git .
+    git clone --depth 1 [[CF_GIT_REPO]] .
     make setup
   before_remove: |
     branch=$(git branch --show-current 2>/dev/null)
@@ -27,7 +22,7 @@ hooks:
       done
     fi
 agent:
-  max_concurrent_agents: 2
+  max_concurrent_agents: [[CF_MAX_CONCURRENT_AGENTS]]
   max_turns: 20
 codex:
   command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh --model gpt-5.3-codex app-server

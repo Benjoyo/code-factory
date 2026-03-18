@@ -62,7 +62,10 @@ from code_factory.workflow.loader import (
     workflow_file_path,
 )
 from code_factory.workflow.store import WorkflowStoreActor
-from code_factory.workflow.template import default_workflow_template
+from code_factory.workflow.template import (
+    WorkflowTemplateValues,
+    render_default_workflow,
+)
 from code_factory.workspace.hooks import run_hook
 from code_factory.workspace.manager import WorkspaceManager
 from code_factory.workspace.paths import (
@@ -143,6 +146,16 @@ def test_init_command_copies_default_workflow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    values = WorkflowTemplateValues(
+        tracker_kind="linear",
+        project_slug="demo-project",
+        git_repo="git@github.com:example/demo.git",
+        active_states=("Todo", "In Progress"),
+        terminal_states=("Done",),
+        workspace_root="/tmp/demo-workspaces",
+        max_concurrent_agents=3,
+    )
+    monkeypatch.setattr("code_factory.cli.prompt_project_init", lambda **_: values)
 
     result = runner.invoke(app, ["init"])
 
@@ -150,13 +163,26 @@ def test_init_command_copies_default_workflow(
     assert "Created" in result.output
     assert (tmp_path / DEFAULT_WORKFLOW_FILENAME).read_text(
         encoding="utf-8"
-    ) == default_workflow_template()
+    ) == render_default_workflow(values)
+    assert (tmp_path / ".agents" / "skills" / "commit" / "SKILL.md").is_file()
 
 
 def test_init_command_rejects_existing_workflow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "code_factory.cli.prompt_project_init",
+        lambda **_: WorkflowTemplateValues(
+            tracker_kind="linear",
+            project_slug="demo-project",
+            git_repo="git@github.com:example/demo.git",
+            active_states=("Todo",),
+            terminal_states=("Done",),
+            workspace_root="/tmp/demo-workspaces",
+            max_concurrent_agents=2,
+        ),
+    )
     workflow = tmp_path / DEFAULT_WORKFLOW_FILENAME
     workflow.write_text("existing\n", encoding="utf-8")
 
@@ -171,13 +197,28 @@ def test_init_command_force_overwrites_existing_workflow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    values = WorkflowTemplateValues(
+        tracker_kind="memory",
+        project_slug="demo-project",
+        git_repo="https://github.com/example/demo.git",
+        active_states=("Queued",),
+        terminal_states=("Done",),
+        workspace_root="/tmp/demo-workspaces",
+        max_concurrent_agents=4,
+    )
+    monkeypatch.setattr("code_factory.cli.prompt_project_init", lambda **_: values)
     workflow = tmp_path / DEFAULT_WORKFLOW_FILENAME
     workflow.write_text("existing\n", encoding="utf-8")
+    skills_dir = tmp_path / ".agents" / "skills"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "old.txt").write_text("old\n", encoding="utf-8")
 
     result = runner.invoke(app, ["init", "--force"])
 
     assert result.exit_code == 0
-    assert workflow.read_text(encoding="utf-8") == default_workflow_template()
+    assert workflow.read_text(encoding="utf-8") == render_default_workflow(values)
+    assert not (skills_dir / "old.txt").exists()
+    assert (skills_dir / "land" / "land_watch.py").is_file()
 
 
 def test_main_returns_acknowledgement_failure(

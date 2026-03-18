@@ -300,6 +300,15 @@ async def test_issue_worker_paths(
     await stop_worker.stop("stop")
     assert stop_worker.stop_event.is_set()
 
+    idle_worker = IssueWorker(
+        issue=issue,
+        workflow_snapshot=snapshot,
+        orchestrator_queue=asyncio.Queue(),
+        tracker=tracker,
+    )
+    await idle_worker.stop("stop")
+    assert idle_worker.stop_event.is_set()
+
 
 @pytest.mark.asyncio
 async def test_orchestrator_dispatch_and_reconciliation_paths(
