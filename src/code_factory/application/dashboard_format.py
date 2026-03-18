@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from math import ceil
 from typing import Any
 
@@ -66,20 +67,8 @@ def rate_limit_bucket(bucket: Any) -> str:
         if int_like(remaining) and int_like(limit)
         else "n/a"
     )
-    reset = pick(
-        bucket,
-        "reset_in_seconds",
-        "resetInSeconds",
-        "reset_at",
-        "resetAt",
-        "resets_at",
-        "resetsAt",
-    )
-    if isinstance(reset, int | float):
-        return f"{base} reset {ceil(reset)}s"
-    if isinstance(reset, str) and reset.strip():
-        return f"{base} reset {clean_inline(reset, 24)}"
-    return base
+    reset = rate_limit_reset(bucket)
+    return f"{base} reset {reset}" if reset is not None else base
 
 
 def rate_limit_credits(credits: Any) -> str:
@@ -95,6 +84,47 @@ def rate_limit_credits(credits: Any) -> str:
             return "credits none"
         return f"credits {clean_inline(remaining, 24) or 'none'}"
     return f"credits {clean_inline(credits, 24) or 'n/a'}"
+
+
+def rate_limit_reset(bucket: dict[str, Any]) -> str | None:
+    """Render relative resets as durations and absolute resets as local timestamps."""
+
+    for key in ("reset_in_seconds", "resetInSeconds"):
+        reset = bucket.get(key)
+        if isinstance(reset, int | float):
+            return f"in {ceil(reset)}s"
+        if isinstance(reset, str) and reset.strip():
+            return clean_inline(reset, 24)
+    for key in ("reset_at", "resetAt", "resets_at", "resetsAt"):
+        reset = bucket.get(key)
+        if isinstance(reset, int | float):
+            return format_reset_timestamp(float(reset))
+        if isinstance(reset, str) and reset.strip():
+            return format_reset_string(reset)
+    return None
+
+
+def format_reset_timestamp(reset: float) -> str:
+    """Format unix timestamps in seconds or milliseconds using local time."""
+
+    timestamp = reset / 1000 if reset >= 1_000_000_000_000 else reset
+    return (
+        datetime.fromtimestamp(timestamp, tz=UTC)
+        .astimezone()
+        .strftime("%Y-%m-%d %H:%M:%S %Z")
+    )
+
+
+def format_reset_string(reset: str) -> str:
+    """Normalize ISO-like reset timestamps, leaving opaque strings untouched."""
+
+    normalized = reset.strip()
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        return clean_inline(normalized, 24)
+    localized = parsed.astimezone() if parsed.tzinfo is not None else parsed
+    return localized.strftime("%Y-%m-%d %H:%M:%S %Z").rstrip()
 
 
 def mapping_list(value: Any) -> list[dict[str, Any]]:

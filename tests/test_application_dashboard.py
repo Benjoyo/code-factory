@@ -105,7 +105,7 @@ def test_render_status_dashboard_includes_summary_running_and_backoff_sections()
     assert "Throughput:" in rendered and "15 tps" in rendered
     assert "Runtime:" in rendered and "42m 6s" in rendered
     assert "Tokens:" in rendered and "16,995,300" in rendered
-    assert "Rate Limits:" in rendered and "primary 0/20,000 reset 95s" in rendered
+    assert "Rate Limits:" in rendered and "primary 0/20,000 reset in 95s" in rendered
     assert "Project:" in rendered and "labelforge-studio/issues" in rendered
     assert "Dashboard:" in rendered and "127.0.0.1:4000" in rendered
     assert "Next refresh:" in rendered and "3s" in rendered
@@ -312,11 +312,17 @@ def test_dashboard_format_helpers_cover_remaining_branches() -> None:
 
     assert rate_limits_text(None).plain == "unavailable"
     assert rate_limits_text("odd").plain == "odd"
-    assert "reset 2s" in rate_limit_bucket(
+    assert "reset in 2s" in rate_limit_bucket(
         {"remaining": 1, "limit": 2, "reset_in_seconds": 2}
     )
     assert "reset soon" in rate_limit_bucket(
         {"remaining": "3", "limit": "4", "resetAt": "soon"}
+    )
+    assert "2026-03-18" in rate_limit_bucket(
+        {"remaining": 1, "limit": 2, "resetAt": 1773842133}
+    )
+    assert "2026-03-18" in rate_limit_bucket(
+        {"remaining": 1, "limit": 2, "reset_at": "2026-03-18T12:00:00Z"}
     )
     assert rate_limit_bucket({"remaining": 1, "limit": 2, "resetAt": ""}) == "1/2"
     assert rate_limit_bucket([]) == "n/a"
