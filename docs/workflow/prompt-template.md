@@ -1,0 +1,168 @@
+# Workflow Prompt Templates
+
+The Markdown body of `WORKFLOW.md` is the prompt template for the first turn of each worker attempt.
+
+## How rendering works
+
+- The body is rendered with a strict [Liquid](https://liquidtemplater.com/)-compatible engine (`python-liquid` with `StrictUndefined`).
+- Unknown variables fail rendering.
+- Unknown filters fail rendering.
+- The template body is trimmed before use.
+- If the body is blank after trimming, Code Factory falls back to its built-in default prompt.
+- The workflow template is only used for turn 1 of an attempt. Turns 2..`agent.max_turns` use Code Factory's built-in continuation prompt instead.
+
+That means a good template should fully set up the task for a fresh attempt, but it should not try to manage continuation-turn behavior itself.
+
+## Available variables
+
+Only these top-level variables are available:
+
+| Variable | Type | Description |
+| --- | --- | --- |
+| `issue` | object | The normalized issue snapshot passed to the worker. |
+| `attempt` | integer or `nil` | `nil` on the first attempt, `1` on the first retry/continuation redispatch, then incrementing for later retries. |
+
+There are no other top-level template variables.
+
+## `issue` object reference
+
+`issue` contains every field from [`Issue`](/Users/bennet/git/code-factory/src/code_factory/issues.py).
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `issue.id` | string or `nil` | Tracker-specific issue id. |
+| `issue.identifier` | string or `nil` | Human-facing issue key, for example `ENG-123`. |
+| `issue.title` | string or `nil` | Issue title. |
+| `issue.description` | string or `nil` | Issue body/description. |
+| `issue.priority` | integer or `nil` | Tracker priority as an integer if available. |
+| `issue.state` | string or `nil` | Current tracker workflow state. |
+| `issue.branch_name` | string or `nil` | Tracker-provided branch name, if any. |
+| `issue.url` | string or `nil` | Canonical issue URL. |
+| `issue.assignee_id` | string or `nil` | Tracker assignee id, if present. |
+| `issue.blocked_by` | array | Array of blocker objects. Empty if there are no blockers. |
+| `issue.labels` | array | Array of label names. Empty if there are no labels. |
+| `issue.assigned_to_worker` | boolean | Whether the issue is considered assigned to the worker route. |
+| `issue.created_at` | string or `nil` | Issue creation time serialized as ISO 8601. UTC datetimes end with `Z`. |
+| `issue.updated_at` | string or `nil` | Issue update time serialized as ISO 8601. UTC datetimes end with `Z`. |
+
+### `issue.blocked_by[]` object reference
+
+Each blocker entry comes from [`BlockerRef`](/Users/bennet/git/code-factory/src/code_factory/issues.py).
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `blocker.id` | string or `nil` | Tracker-specific blocker id. |
+| `blocker.identifier` | string or `nil` | Human-facing blocker key. |
+| `blocker.state` | string or `nil` | Current blocker state. |
+
+Example:
+
+```liquid
+{% if issue.blocked_by != blank %}
+Blocking issues:
+{% for blocker in issue.blocked_by %}
+- {{ blocker.identifier }}{% if blocker.state %} ({{ blocker.state }}){% endif %}
+{% endfor %}
+{% endif %}
+```
+
+## Value conversion rules
+
+Before rendering, Code Factory normalizes values for Liquid:
+
+- dataclasses become plain objects
+- tuples become arrays
+- dictionary keys become strings
+- `datetime` values become ISO 8601 strings
+- `date` values become `YYYY-MM-DD`
+- `time` values become `HH:MM:SS` style ISO strings
+
+## Writing a correct template
+
+Use Liquid syntax, not Jinja or f-string syntax.
+
+Good patterns:
+
+- Guard optional fields with `{% if ... %}`.
+- Use `{% else %}` fallbacks for fields that are often missing, especially `issue.description`, `issue.branch_name`, and `attempt`.
+- Iterate arrays with `{% for ... %}`.
+- Assume strict rendering: if you mistype a variable name, the attempt fails.
+
+Common mistakes:
+
+- Referencing variables that do not exist, such as `ticket`, `issue.body`, or `workflow`.
+- Using an unknown filter or custom helper that the Liquid engine does not provide.
+- Assuming `attempt` is always an integer.
+- Writing a blank prompt body and expecting repository-specific instructions to appear automatically.
+
+## Writing a good template
+
+A good workflow prompt usually does four things:
+
+1. Identifies the issue clearly.
+2. States the expected outcome in repository-specific terms.
+3. Tells the agent how to verify completion.
+4. Tells the agent what to do when information is missing or the issue is blocked.
+
+Practical guidance:
+
+- Prefer direct instructions over long meta-prompting.
+- Keep repository policy in the prompt, not in the issue body.
+- Treat the issue description as input data, not as the only source of truth.
+- Be explicit about required tests, linting, review notes, or state transitions.
+- If your workflow relies on labels, blockers, priorities, or branch names, reference them conditionally so missing data does not crash the render.
+- Avoid adding custom "continuation" instructions for later turns; Code Factory already injects a continuation prompt after the first turn.
+
+## Example template
+
+```liquid
+You are the coding agent for this repository.
+
+Work the tracked issue below from the current workspace.
+
+Issue:
+- Identifier: {{ issue.identifier }}
+- Title: {{ issue.title }}
+- State: {{ issue.state }}
+{% if issue.priority != nil %}- Priority: {{ issue.priority }}{% endif %}
+{% if issue.url %}- URL: {{ issue.url }}{% endif %}
+{% if issue.branch_name %}- Suggested branch: {{ issue.branch_name }}{% endif %}
+
+{% if issue.labels != blank %}
+Labels:
+{% for label in issue.labels %}
+- {{ label }}
+{% endfor %}
+{% endif %}
+
+{% if issue.blocked_by != blank %}
+Blocking issues:
+{% for blocker in issue.blocked_by %}
+- {{ blocker.identifier }}{% if blocker.state %} ({{ blocker.state }}){% endif %}
+{% endfor %}
+{% endif %}
+
+Description:
+{% if issue.description %}
+{{ issue.description }}
+{% else %}
+No issue description was provided. Inspect the repository and tracker context before making changes.
+{% endif %}
+
+{% if attempt %}
+This is retry attempt {{ attempt }}. Reuse prior workspace context if it is still relevant.
+{% endif %}
+
+Expectations:
+- Make the smallest correct change that resolves the issue.
+- Run the relevant verification for any changed behavior.
+- Leave the repository in a reviewable state.
+- If blocked, explain the blocker precisely and stop after collecting the evidence needed to unblock.
+```
+
+## Built-in fallback prompt
+
+If the template body is empty, Code Factory uses the default prompt from
+[`src/code_factory/config/defaults.py`](/Users/bennet/git/code-factory/src/code_factory/config/defaults.py).
+
+That fallback is intentionally minimal. For real workflows, define an explicit prompt template in `WORKFLOW.md`.

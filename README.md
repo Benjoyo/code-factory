@@ -14,33 +14,47 @@ Use this port if you want the Symphony behavior and workflow contract in a Pytho
 - Access to Linear for the tracker configured in `WORKFLOW.md`
 - A working Codex app-server command available to `codex.command`
 
-The easiest starting point for the workflow file is the shipped reference at `../elixir/WORKFLOW.md`.
+Create a starter workflow in a new project by running:
+
+```bash
+uv run cf init
+```
+
+That writes the bundled default `WORKFLOW.md` into the current directory. Re-run
+with `--force` if you want to overwrite an existing file.
 
 ## Running the Service
 
 Run from the package directory with `uv`:
 
 ```bash
-uv run code-factory --no-guardrails /path/to/WORKFLOW.md
+uv run cf serve --no-guardrails /path/to/WORKFLOW.md
 ```
 
 Or run it directly with `uvx`:
 
 ```bash
-uvx --from /Users/bennet/git/code-factory code-factory --no-guardrails /path/to/WORKFLOW.md
+uvx --from /Users/bennet/git/code-factory cf serve --no-guardrails /path/to/WORKFLOW.md
 ```
 
-If you omit the workflow path, the CLI defaults to `./WORKFLOW.md`.
+If you omit the workflow path, the CLI defaults to `./WORKFLOW.md`. Bare service
+invocations like `cf --no-guardrails` are routed to `cf serve`.
 
 ## CLI Reference
 
-Usage:
+Top-level commands:
 
 ```bash
-code-factory [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]
+cf init [--force]
+cf serve [OPTIONS] [WORKFLOW]
 ```
 
-Flags:
+`cf init`
+
+- Copies the bundled default workflow template to `./WORKFLOW.md`.
+- Refuses to overwrite an existing workflow unless `--force` is passed.
+
+`cf serve`
 
 - `--no-guardrails`
   Required acknowledgement flag. The service will print a banner and exit without it.
@@ -51,6 +65,8 @@ Flags:
   `0` is allowed if you want the OS to choose an ephemeral port.
 - `path-to-WORKFLOW.md`
   Explicit workflow file path. If omitted, the CLI uses `WORKFLOW.md` in the current working directory.
+
+Use `cf --help`, `cf init --help`, and `cf serve --help` for the full generated Typer help output.
 
 ## Observability API
 
@@ -75,7 +91,7 @@ Available routes:
 Example:
 
 ```bash
-uv run code-factory \
+uv run cf serve \
   --no-guardrails \
   --port 4000 \
   /path/to/WORKFLOW.md

@@ -10,11 +10,21 @@ from logging import NullHandler
 from pathlib import Path
 from typing import Any, cast
 
+import click
 import pytest
+from typer.testing import CliRunner
 
 from code_factory.application import CodeFactoryService
 from code_factory.application.logging import configure_logging
-from code_factory.cli import ACK_FLAG, CLIConfig, acknowledgement_banner, evaluate, main
+from code_factory.cli import (
+    ACK_FLAG,
+    CLIConfig,
+    acknowledgement_banner,
+    app,
+    build_cli_config,
+    main,
+    normalize_cli_args,
+)
 from code_factory.config import (
     max_concurrent_agents_for_state,
     validate_dispatch_settings,
@@ -52,6 +62,7 @@ from code_factory.workflow.loader import (
     workflow_file_path,
 )
 from code_factory.workflow.store import WorkflowStoreActor
+from code_factory.workflow.template import default_workflow_template
 from code_factory.workspace.hooks import run_hook
 from code_factory.workspace.manager import WorkspaceManager
 from code_factory.workspace.paths import (
@@ -69,20 +80,27 @@ from code_factory.workspace.utils import (
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
 
+runner = CliRunner()
 
-def test_evaluate_parses_ack_logs_root_port_and_default_path(
+
+def test_normalize_cli_args_routes_bare_service_invocations() -> None:
+    assert normalize_cli_args([]) == ["serve"]
+    assert normalize_cli_args([ACK_FLAG]) == ["serve", ACK_FLAG]
+    assert normalize_cli_args(["workflow.md"]) == ["serve", "workflow.md"]
+    assert normalize_cli_args(["serve", ACK_FLAG]) == ["serve", ACK_FLAG]
+    assert normalize_cli_args(["init"]) == ["init"]
+    assert normalize_cli_args(["--help"]) == ["--help"]
+
+
+def test_build_cli_config_resolves_logs_root_port_and_default_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    result = evaluate(
-        [
-            ACK_FLAG,
-            "--logs-root",
-            "~/logs",
-            "--port",
-            "9000",
-            "workflow.md",
-        ]
+
+    result = build_cli_config(
+        Path("workflow.md"),
+        Path("~/logs"),
+        9000,
     )
 
     assert result == CLIConfig(
@@ -90,36 +108,19 @@ def test_evaluate_parses_ack_logs_root_port_and_default_path(
         logs_root=str(Path("~/logs").expanduser().resolve()),
         port=9000,
     )
-    defaulted = evaluate([ACK_FLAG])
-    assert isinstance(defaulted, CLIConfig)
+    defaulted = build_cli_config(None, None, None)
     assert defaulted.workflow_path == str(
         (tmp_path / DEFAULT_WORKFLOW_FILENAME).resolve()
     )
 
 
-@pytest.mark.parametrize(
-    "args",
-    [
-        ["--logs-root"],
-        ["--logs-root", " "],
-        ["--port"],
-        ["--port", "abc"],
-        ["--port", "-1"],
-        ["--unknown"],
-        ["one.md", "two.md"],
-    ],
-)
-def test_evaluate_rejects_invalid_arguments(args: list[str]) -> None:
-    assert evaluate(args) == (
-        "Usage: code-factory [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
-    )
+def test_cli_help_lists_init_and_serve() -> None:
+    result = runner.invoke(app, ["--help"])
 
-
-def test_evaluate_requires_acknowledgement() -> None:
-    banner = evaluate([])
-    assert isinstance(banner, str)
-    assert ACK_FLAG in banner
-    assert "low key engineering preview" in banner
+    assert result.exit_code == 0
+    assert "init" in result.output
+    assert "serve" in result.output
+    assert "create a starter workflow" in result.output.lower()
 
 
 def test_acknowledgement_banner_has_consistent_frame() -> None:
@@ -130,9 +131,83 @@ def test_acknowledgement_banner_has_consistent_frame() -> None:
     assert len({len(line) for line in lines}) == 1
 
 
-def test_main_returns_usage_failure(capsys: pytest.CaptureFixture[str]) -> None:
+def test_serve_command_requires_acknowledgement() -> None:
+    result = runner.invoke(app, ["serve"])
+
+    assert result.exit_code == 1
+    assert ACK_FLAG in result.output
+    assert "low key engineering preview" in result.output
+
+
+def test_init_command_copies_default_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["init"])
+
+    assert result.exit_code == 0
+    assert "Created" in result.output
+    assert (tmp_path / DEFAULT_WORKFLOW_FILENAME).read_text(
+        encoding="utf-8"
+    ) == default_workflow_template()
+
+
+def test_init_command_rejects_existing_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    workflow = tmp_path / DEFAULT_WORKFLOW_FILENAME
+    workflow.write_text("existing\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["init"])
+
+    assert result.exit_code == 1
+    assert "--force" in result.output
+    assert workflow.read_text(encoding="utf-8") == "existing\n"
+
+
+def test_init_command_force_overwrites_existing_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    workflow = tmp_path / DEFAULT_WORKFLOW_FILENAME
+    workflow.write_text("existing\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["init", "--force"])
+
+    assert result.exit_code == 0
+    assert workflow.read_text(encoding="utf-8") == default_workflow_template()
+
+
+def test_main_returns_acknowledgement_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     assert main([]) == 1
     assert ACK_FLAG in capsys.readouterr().err
+
+
+def test_main_returns_click_exception_exit_code(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class FakeCommand:
+        def main(self, **_: Any) -> None:
+            raise click.ClickException("bad args")
+
+    monkeypatch.setattr("typer.main.get_command", lambda _: FakeCommand())
+
+    assert main(["serve"]) == 1
+    assert "bad args" in capsys.readouterr().err
+
+
+def test_main_returns_click_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeCommand:
+        def main(self, **_: Any) -> None:
+            raise click.exceptions.Exit(7)
+
+    monkeypatch.setattr("typer.main.get_command", lambda _: FakeCommand())
+
+    assert main(["serve"]) == 7
 
 
 def test_main_rejects_missing_workflow(

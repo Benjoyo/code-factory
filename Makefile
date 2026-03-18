@@ -19,10 +19,10 @@ typecheck:
 	@$(UV) pyright
 
 test:
-	@$(UV) pytest -q
+	@$(UV) python -m pytest -q
 
 test-coverage:
-	@$(UV) pytest -q --cov=$(SOURCE_DIR) --cov-branch --cov-report= --cov-report=json:$(COVERAGE_JSON)
+	@$(UV) python -m pytest -q --cov=$(SOURCE_DIR) --cov-branch --cov-report= --cov-report=json:$(COVERAGE_JSON)
 	@$(UV) python -c '\
 import json; \
 from pathlib import Path; \

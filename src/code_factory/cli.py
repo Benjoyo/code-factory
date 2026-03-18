@@ -1,13 +1,30 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Annotated
+
+import click
+import typer
 
 from .application import CodeFactoryService
+from .workflow.loader import DEFAULT_WORKFLOW_FILENAME, workflow_file_path
+from .workflow.template import initialize_workflow
 
 ACK_FLAG = "--no-guardrails"
+_HELP_FLAGS = frozenset({"-h", "--help"})
+_CLI_COMMANDS = frozenset({"init", "serve"})
+
+app = typer.Typer(
+    add_completion=False,
+    help=(
+        "Code Factory automation service and project bootstrap CLI. "
+        "Use `cf init` to create a starter workflow and `cf serve` to run it."
+    ),
+    rich_markup_mode="markdown",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,24 +37,63 @@ class CLIConfig:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Validates CLI arguments and hands control to the async service loop."""
+    """Run the Typer CLI and normalize exit handling for scripts/tests."""
 
-    argv = list(sys.argv[1:] if argv is None else argv)
-    result = evaluate(argv)
-    if isinstance(result, str):
-        print(result, file=sys.stderr)
-        return 1
+    args = normalize_cli_args(sys.argv[1:] if argv is None else argv)
+    command = typer.main.get_command(app)
+    try:
+        result = command.main(args=args, prog_name="cf", standalone_mode=False)
+    except click.ClickException as exc:
+        exc.show(file=sys.stderr)
+        return exc.exit_code
+    except click.exceptions.Exit as exc:
+        return exc.exit_code
+    return 0 if result is None else int(result)
 
-    if not os.path.isfile(result.workflow_path):
-        print(f"Workflow file not found: {result.workflow_path}", file=sys.stderr)
+
+def normalize_cli_args(argv: list[str]) -> list[str]:
+    """Route bare service invocations through the explicit `serve` subcommand."""
+
+    if not argv:
+        return ["serve"]
+    if argv[0] in _HELP_FLAGS:
+        return argv
+    if argv[0] in _CLI_COMMANDS:
+        return argv
+    return ["serve", *argv]
+
+
+def build_cli_config(
+    workflow_path: Path | None,
+    logs_root: Path | None,
+    port: int | None,
+) -> CLIConfig:
+    """Resolve CLI path inputs into the normalized runtime configuration."""
+
+    selected_workflow = workflow_path or Path(workflow_file_path())
+    resolved_logs_root = (
+        None if logs_root is None else str(logs_root.expanduser().resolve())
+    )
+    return CLIConfig(
+        workflow_path=str(selected_workflow.expanduser().resolve()),
+        logs_root=resolved_logs_root,
+        port=port,
+    )
+
+
+def run_service(config: CLIConfig) -> int:
+    """Start the async service after validating that the workflow file exists."""
+
+    if not Path(config.workflow_path).is_file():
+        typer.echo(f"Workflow file not found: {config.workflow_path}", err=True)
         return 1
 
     try:
         asyncio.run(
             CodeFactoryService(
-                result.workflow_path,
-                logs_root=result.logs_root,
-                port_override=result.port,
+                config.workflow_path,
+                logs_root=config.logs_root,
+                port_override=config.port,
             ).run_forever()
         )
     except KeyboardInterrupt:
@@ -45,75 +101,96 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def evaluate(args: list[str]) -> CLIConfig | str:
-    """Parses the minimal CLI surface without introducing an argparse dependency."""
-
-    workflow_path: str | None = None
-    logs_root: str | None = None
-    port: int | None = None
-    acknowledged = False
-
-    index = 0
-    while index < len(args):
-        arg = args[index]
-        if arg == ACK_FLAG:
-            acknowledged = True
-            index += 1
-            continue
-        if arg == "--logs-root":
-            index += 1
-            if index >= len(args) or not args[index].strip():
-                return usage_message()
-            logs_root = os.path.abspath(os.path.expanduser(args[index]))
-            index += 1
-            continue
-        if arg == "--port":
-            index += 1
-            if index >= len(args):
-                return usage_message()
-            try:
-                port = int(args[index])
-            except ValueError:
-                return usage_message()
-            if port < 0:
-                return usage_message()
-            index += 1
-            continue
-        if arg.startswith("-"):
-            return usage_message()
-        if workflow_path is not None:
-            return usage_message()
-        workflow_path = os.path.abspath(os.path.expanduser(arg))
-        index += 1
-
-    if not acknowledged:
-        return acknowledgement_banner()
-
-    return CLIConfig(
-        workflow_path=os.path.abspath(
-            os.path.expanduser(workflow_path or "WORKFLOW.md")
+@app.command("serve")
+def serve_command(
+    workflow_path: Annotated[
+        Path | None,
+        typer.Argument(
+            help=(
+                "Path to the workflow file to run. Defaults to `./WORKFLOW.md` "
+                "when omitted."
+            ),
+            metavar="WORKFLOW",
         ),
-        logs_root=logs_root,
-        port=port,
+    ] = None,
+    logs_root: Annotated[
+        Path | None,
+        typer.Option(
+            "--logs-root",
+            help="Enable rotating file logs at `<path>/log/code-factory.log`.",
+        ),
+    ] = None,
+    port: Annotated[
+        int | None,
+        typer.Option(
+            "--port",
+            min=0,
+            help=(
+                "Expose the observability API on this port and override the "
+                "workflow setting for the current run."
+            ),
+        ),
+    ] = None,
+    no_guardrails: Annotated[
+        bool,
+        typer.Option(
+            ACK_FLAG,
+            help=(
+                "Required acknowledgement for preview-mode execution of the "
+                "coding agent service."
+            ),
+        ),
+    ] = False,
+) -> None:
+    """Run the long-lived Code Factory service for the selected workflow."""
+
+    if not no_guardrails:
+        typer.echo(acknowledgement_banner(), err=True)
+        raise typer.Exit(code=1)
+    raise typer.Exit(code=run_service(build_cli_config(workflow_path, logs_root, port)))
+
+
+@app.command("init")
+def init_command(
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Overwrite an existing `WORKFLOW.md` in the current directory.",
+        ),
+    ] = False,
+) -> None:
+    """Create a starter `WORKFLOW.md` in the current working directory."""
+
+    target = Path.cwd() / DEFAULT_WORKFLOW_FILENAME
+    try:
+        written_path = initialize_workflow(target, force=force)
+    except FileExistsError:
+        typer.echo(
+            f"{written_path_label(target)} already exists. Re-run with `--force` to overwrite it.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from None
+
+    typer.echo(
+        f"Created {written_path_label(written_path)} from the bundled default workflow."
     )
 
 
-def usage_message() -> str:
-    """Returns the compact usage text shared by all validation failures."""
+def written_path_label(path: Path) -> str:
+    """Return a compact display label for user-facing file paths."""
 
-    return (
-        "Usage: cf [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
-    )
+    return str(path.resolve())
 
 
 def acknowledgement_banner() -> str:
-    """Builds the explicit opt-in banner for preview-mode execution."""
+    """Build the explicit opt-in banner for preview-mode execution."""
 
     lines = [
         "Code Factory is a low key engineering preview.",
         "The coding agent will run without any guardrails.",
         "Code Factory is not a supported product and is presented as-is.",
-        f"To proceed, start with `{ACK_FLAG}` CLI argument",
+        f"To proceed, rerun with `cf serve {ACK_FLAG}`.",
     ]
     width = max(len(line) for line in lines)
     border = "─" * (width + 2)
