@@ -26,7 +26,7 @@ dev = [
 ]
 
 [project.scripts]
-code-factory = "code_factory.cli:main"
+cf = "code_factory.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/code_factory"]

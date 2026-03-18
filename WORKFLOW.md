@@ -8,7 +8,6 @@ tracker:
     - Merging
     - Rework
   terminal_states:
-    - Closed
     - Canceled
     - Duplicate
     - Done

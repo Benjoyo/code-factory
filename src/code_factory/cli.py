@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from .application import CodeFactoryService
 
-ACK_FLAG = "--i-understand-that-this-will-be-running-without-the-usual-guardrails"
+ACK_FLAG = "--no-guardrails"
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,7 +102,7 @@ def usage_message() -> str:
     """Returns the compact usage text shared by all validation failures."""
 
     return (
-        "Usage: code-factory [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
+        "Usage: cf [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
     )
 
 
@@ -110,7 +110,7 @@ def acknowledgement_banner() -> str:
     """Builds the explicit opt-in banner for preview-mode execution."""
 
     lines = [
-        "This Code Factory implementation is a low key engineering preview.",
+        "Code Factory is a low key engineering preview.",
         "The coding agent will run without any guardrails.",
         "Code Factory is not a supported product and is presented as-is.",
         f"To proceed, start with `{ACK_FLAG}` CLI argument",

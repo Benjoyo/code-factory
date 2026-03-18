@@ -21,13 +21,13 @@ The easiest starting point for the workflow file is the shipped reference at `..
 Run from the package directory with `uv`:
 
 ```bash
-uv run code-factory --i-understand-that-this-will-be-running-without-the-usual-guardrails /path/to/WORKFLOW.md
+uv run code-factory --no-guardrails /path/to/WORKFLOW.md
 ```
 
 Or run it directly with `uvx`:
 
 ```bash
-uvx --from /Users/bennet/git/code-factory code-factory --i-understand-that-this-will-be-running-without-the-usual-guardrails /path/to/WORKFLOW.md
+uvx --from /Users/bennet/git/code-factory code-factory --no-guardrails /path/to/WORKFLOW.md
 ```
 
 If you omit the workflow path, the CLI defaults to `./WORKFLOW.md`.
@@ -42,7 +42,7 @@ code-factory [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]
 
 Flags:
 
-- `--i-understand-that-this-will-be-running-without-the-usual-guardrails`
+- `--no-guardrails`
   Required acknowledgement flag. The service will print a banner and exit without it.
 - `--logs-root <path>`
   Enables a rotating log file at `<path>/log/code-factory.log`.
@@ -76,7 +76,7 @@ Example:
 
 ```bash
 uv run code-factory \
-  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
+  --no-guardrails \
   --port 4000 \
   /path/to/WORKFLOW.md
 ```
