@@ -6,7 +6,7 @@ import asyncio
 import os
 from typing import Any
 
-from ....config.models import Settings
+from ....config.models import CodingAgentSettings, WorkspaceSettings
 from ....errors import AppServerError, WorkspaceError
 from ....issues import Issue
 from ....runtime.subprocess import ProcessTree
@@ -22,8 +22,15 @@ from .turns import await_turn_completion
 class AppServerClient:
     """Low-level client orchestrating the Codex app-server subprocess lifecycle."""
 
-    def __init__(self, settings: Settings, *, dynamic_tool_factory=None) -> None:
-        self._settings = settings
+    def __init__(
+        self,
+        coding_agent: CodingAgentSettings,
+        workspace: WorkspaceSettings,
+        *,
+        dynamic_tool_factory=None,
+    ) -> None:
+        self._coding_agent = coding_agent
+        self._workspace = workspace
         self._dynamic_tool_factory = dynamic_tool_factory
 
     async def run(
@@ -51,7 +58,7 @@ class AppServerClient:
         """Spin up the Codex runtime and bootstrap a messaging thread before use."""
         validated_workspace = self._validate_workspace_cwd(workspace)
         process_tree = await ProcessTree.spawn_shell(
-            self._settings.coding_agent.command,
+            self._coding_agent.command,
             cwd=validated_workspace,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -112,14 +119,14 @@ class AppServerClient:
         )
         stderr_task = asyncio.create_task(stderr_reader(process_tree.process.stderr))
         wait_task = asyncio.create_task(wait_for_exit(process_tree, stdout_queue))
-        approval_policy = self._settings.coding_agent.approval_policy
+        approval_policy = self._coding_agent.approval_policy
         turn_sandbox_policy = self._resolve_turn_sandbox_policy(workspace)
-        thread_sandbox = self._settings.coding_agent.thread_sandbox
+        thread_sandbox = self._coding_agent.thread_sandbox
         try:
             await send_initialize(
                 stdout_queue,
                 process_tree,
-                default_timeout_ms=self._settings.coding_agent.read_timeout_ms,
+                default_timeout_ms=self._coding_agent.read_timeout_ms,
             )
             thread_id = await start_thread(
                 stdout_queue,
@@ -127,7 +134,7 @@ class AppServerClient:
                 workspace,
                 approval_policy,
                 thread_sandbox,
-                default_timeout_ms=self._settings.coding_agent.read_timeout_ms,
+                default_timeout_ms=self._coding_agent.read_timeout_ms,
             )
         except Exception:
             await process_tree.terminate()
@@ -142,8 +149,8 @@ class AppServerClient:
             thread_sandbox=thread_sandbox,
             turn_sandbox_policy=turn_sandbox_policy,
             thread_id=thread_id,
-            read_timeout_ms=self._settings.coding_agent.read_timeout_ms,
-            turn_timeout_ms=self._settings.coding_agent.turn_timeout_ms,
+            read_timeout_ms=self._coding_agent.read_timeout_ms,
+            turn_timeout_ms=self._coding_agent.turn_timeout_ms,
             auto_approve_requests=approval_policy == "never",
             stdout_queue=stdout_queue,
             stdout_task=stdout_task,
@@ -166,9 +173,7 @@ class AppServerClient:
     def _validate_workspace_cwd(self, workspace: str) -> str:
         """Check the workspace path is inside the configured workspace root."""
         expanded_workspace = os.path.abspath(os.path.expanduser(workspace))
-        expanded_root = os.path.abspath(
-            os.path.expanduser(self._settings.workspace.root)
-        )
+        expanded_root = os.path.abspath(os.path.expanduser(self._workspace.root))
         canonical_workspace = canonicalize(expanded_workspace)
         canonical_root = canonicalize(expanded_root)
         try:
@@ -179,9 +184,9 @@ class AppServerClient:
 
     def _resolve_turn_sandbox_policy(self, workspace: str) -> dict[str, Any]:
         # Default sandbox gives the agent write access only to the running workspace.
-        if self._settings.coding_agent.turn_sandbox_policy is not None:
-            return self._settings.coding_agent.turn_sandbox_policy
-        writable_root = canonicalize(workspace or self._settings.workspace.root)
+        if self._coding_agent.turn_sandbox_policy is not None:
+            return self._coding_agent.turn_sandbox_policy
+        writable_root = canonicalize(workspace or self._workspace.root)
         return {
             "type": "workspaceWrite",
             "writableRoots": [writable_root],

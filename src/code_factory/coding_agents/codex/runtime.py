@@ -17,10 +17,11 @@ from .tools import DynamicToolExecutor
 class CodexRuntime:
     """Real runtime implementation that proxies work through App Server sessions."""
 
-    def __init__(self, settings: Settings, tracker: Tracker) -> None:
+    def __init__(self, settings: Settings, tracker: Tracker | None = None) -> None:
         self._tracker = tracker
         self._client = AppServerClient(
-            settings,
+            settings.coding_agent,
+            settings.workspace,
             dynamic_tool_factory=self._build_dynamic_tool_executor,
         )
 
@@ -43,7 +44,7 @@ class CodexRuntime:
 
     def _build_dynamic_tool_executor(self, workspace: str) -> DynamicToolExecutor:
         """Expose tracker-level GraphQL calls to tools that need them."""
-        graphql = getattr(self._tracker, "graphql", None)
+        graphql = getattr(self._tracker, "graphql", None) if self._tracker else None
 
         async def graphql_call(query: str, variables: dict[str, Any]) -> dict[str, Any]:
             if callable(graphql):
@@ -58,6 +59,6 @@ class CodexRuntime:
 
 
 def build_coding_agent_runtime(
-    settings: Settings, tracker: Tracker
+    settings: Settings, tracker: Tracker | None = None
 ) -> CodingAgentRuntime:
     return CodexRuntime(settings, tracker)

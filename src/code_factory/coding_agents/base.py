@@ -30,7 +30,7 @@ class CodingAgentRuntime(Protocol):
 
 
 def build_coding_agent_runtime(
-    settings: Settings, tracker: Tracker
+    settings: Settings, tracker: Tracker | None = None
 ) -> CodingAgentRuntime:
     # Codex is the default runtime. Swap this import if another agent is added.
     from .codex.runtime import build_coding_agent_runtime as build_runtime

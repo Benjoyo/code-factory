@@ -30,7 +30,9 @@ async def test_app_server_rejects_workspace_root_and_paths_outside_root(
         tmp_path / "WORKFLOW.md", workspace={"root": str(workspace_root)}
     )
     snapshot = make_snapshot(workflow)
-    client = AppServerClient(snapshot.settings)
+    client = AppServerClient(
+        snapshot.settings.coding_agent, snapshot.settings.workspace
+    )
     issue = make_issue()
 
     with pytest.raises(AppServerError):
@@ -67,7 +69,9 @@ done
         codex={"command": f"{agent_runtime} app-server"},
     )
     snapshot = make_snapshot(workflow)
-    client = AppServerClient(snapshot.settings)
+    client = AppServerClient(
+        snapshot.settings.coding_agent, snapshot.settings.workspace
+    )
 
     with pytest.raises(AppServerError) as excinfo:
         await client.run(str(workspace), "Needs input", make_issue(identifier="MT-88"))
@@ -110,7 +114,9 @@ done
         codex={"command": f"{agent_runtime} app-server"},
     )
     snapshot = make_snapshot(workflow)
-    client = AppServerClient(snapshot.settings)
+    client = AppServerClient(
+        snapshot.settings.coding_agent, snapshot.settings.workspace
+    )
     messages: list[dict] = []
 
     async def on_message(message: dict) -> None:

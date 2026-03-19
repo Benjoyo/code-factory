@@ -568,7 +568,7 @@ async def test_client_runtime_and_observability_behaviors(
         tmp_path, overrides={"workspace": {"root": str(tmp_path / "workspaces")}}
     )
     issue = make_issue(identifier="ENG-1")
-    client = AppServerClient(settings)
+    client = AppServerClient(settings.coding_agent, settings.workspace)
 
     workspace = tmp_path / "workspaces" / "ENG-1"
     workspace.mkdir(parents=True)
@@ -583,7 +583,9 @@ async def test_client_runtime_and_observability_behaviors(
         tmp_path,
         overrides={"codex": {"turn_sandbox_policy": {"type": "custom"}}},
     )
-    custom_client = AppServerClient(settings_with_policy)
+    custom_client = AppServerClient(
+        settings_with_policy.coding_agent, settings_with_policy.workspace
+    )
     assert custom_client._resolve_turn_sandbox_policy(str(workspace)) == {
         "type": "custom"
     }

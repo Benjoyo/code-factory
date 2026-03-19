@@ -619,7 +619,7 @@ async def test_protocol_and_client_bootstrap_edge_paths(
         await start_turn(session, "prompt", make_issue())
 
     settings = make_settings(tmp_path)
-    client = AppServerClient(settings)
+    client = AppServerClient(settings.coding_agent, settings.workspace)
 
     class BootstrapProcessTree:
         def __init__(self) -> None:
@@ -672,7 +672,9 @@ async def test_protocol_and_client_bootstrap_edge_paths(
         tmp_path / "explicit",
         overrides={"codex": {"turn_sandbox_policy": {"type": "dangerouslyBypass"}}},
     )
-    explicit_client = AppServerClient(explicit_settings)
+    explicit_client = AppServerClient(
+        explicit_settings.coding_agent, explicit_settings.workspace
+    )
     assert explicit_client._resolve_turn_sandbox_policy("/tmp/workspace") == {
         "type": "dangerouslyBypass"
     }
@@ -785,9 +787,9 @@ async def test_codex_runtime_dynamic_tool_executor_supports_sync_and_async_graph
     class MissingGraphqlTracker:
         graphql = None
 
-    missing_executor = CodexRuntime(
-        settings, cast(Any, MissingGraphqlTracker())
-    )._build_dynamic_tool_executor("/tmp/workspace")
+    missing_executor = CodexRuntime(settings)._build_dynamic_tool_executor(
+        "/tmp/workspace"
+    )
     missing_outcome = await missing_executor.execute(
         "linear_graphql", {"query": "query Viewer { viewer { id } }"}
     )
