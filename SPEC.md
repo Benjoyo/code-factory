@@ -429,6 +429,14 @@ fields locally if they want stricter startup checks.
   - Default: `codex app-server`
   - The runtime launches this command via `bash -lc` in the workspace directory.
   - The launched process must speak a compatible app-server protocol over stdio.
+- `model` (string or null)
+  - Default: `null`
+  - When present, the runtime inserts `--model <value>` immediately before the `app-server`
+    argument in `codex.command`.
+- `reasoning_effort` (string or null)
+  - Default: `null`
+  - When present, the runtime inserts `--config model_reasoning_effort=<value>` immediately
+    before the `app-server` argument in `codex.command`.
 - `approval_policy` (Codex `AskForApproval` value)
   - Default: implementation-defined.
 - `thread_sandbox` (Codex `SandboxMode` value)
@@ -569,6 +577,8 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
 - `agent.max_concurrent_agents_by_state`: map of positive integers, default `{}`
 - `codex.command`: shell command string, default `codex app-server`
+- `codex.model`: string or null, default `null`
+- `codex.reasoning_effort`: string or null, default `null`
 - `codex.approval_policy`: Codex `AskForApproval` value, default implementation-defined
 - `codex.thread_sandbox`: Codex `SandboxMode` value, default implementation-defined
 - `codex.turn_sandbox_policy`: Codex `SandboxPolicy` value, default implementation-defined
@@ -905,8 +915,8 @@ Compatibility profile:
 
 Subprocess launch parameters:
 
-- Command: `codex.command`
-- Invocation: `bash -lc <codex.command>`
+- Command: `codex.command` with optional `codex.model` / `codex.reasoning_effort` CLI overrides
+- Invocation: `bash -lc <effective codex command>`
 - Working directory: workspace path
 - Stdout/stderr: separate streams
 - Framing: line-delimited protocol messages on stdout (JSON-RPC-like JSON per line)
@@ -914,6 +924,8 @@ Subprocess launch parameters:
 Notes:
 
 - The default command is `codex app-server`.
+- If configured, `codex.model` and `codex.reasoning_effort` are injected immediately before
+  `app-server`.
 - Approval policy, cwd, and prompt are expressed in the protocol messages in Section 10.2.
 
 Recommended additional process settings:
@@ -1947,6 +1959,7 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - `$VAR` resolution works for tracker API key and path values
 - `~` path expansion works
 - `codex.command` is preserved as a shell command string
+- `codex.model` and `codex.reasoning_effort` inject CLI overrides ahead of `app-server`
 - Per-state concurrency override map normalizes state names and ignores invalid values
 - Prompt template renders `issue` and `attempt`
 - Prompt rendering fails on unknown variables (strict mode)
@@ -2000,7 +2013,7 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 
 ### 17.5 Coding-Agent App-Server Client
 
-- Launch command uses workspace cwd and invokes `bash -lc <codex.command>`
+- Launch command uses workspace cwd and invokes `bash -lc <effective codex command>`
 - Startup handshake sends `initialize`, `initialized`, `thread/start`, `turn/start`
 - `initialize` includes client identity/capabilities payload required by the targeted Codex
   app-server protocol
@@ -2080,7 +2093,7 @@ Use the same validation profiles as Section 17:
 - Workspace lifecycle hooks (`after_create`, `before_run`, `after_run`, `before_remove`)
 - Hook timeout config (`hooks.timeout_ms`, default `60000`)
 - Coding-agent app-server subprocess client with JSON line protocol
-- Codex launch command config (`codex.command`, default `codex app-server`)
+- Codex launch command config (`codex.command`, `codex.model`, `codex.reasoning_effort`)
 - Strict prompt rendering with `issue` and `attempt` variables
 - Exponential retry queue with continuation retries after normal exit
 - Configurable retry backoff cap (`agent.max_retry_backoff_ms`, default 5m)

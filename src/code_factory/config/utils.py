@@ -64,6 +64,15 @@ def optional_string(value: Any, field_name: str) -> str | None:
     raise ConfigValidationError(f"{field_name} must be a string")
 
 
+def optional_non_blank_string(value: Any, field_name: str) -> str | None:
+    parsed = optional_string(value, field_name)
+    if parsed is None:
+        return None
+    if parsed.strip() == "":
+        raise ConfigValidationError(f"{field_name} can't be blank")
+    return parsed
+
+
 def string_with_default(value: Any, field_name: str, default: str) -> str:
     if value is None:
         return default

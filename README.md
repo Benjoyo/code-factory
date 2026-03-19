@@ -125,7 +125,7 @@ curl http://127.0.0.1:4000/api/v1/state
 - Tracker configuration
 - Active and terminal states
 - Workspace root and lifecycle hooks
-- Codex app-server command and sandbox settings
+- Codex app-server command, model selection, and sandbox settings
 - Prompt template used for the first turn of each worker attempt
 - Optional HTTP server host/port
 

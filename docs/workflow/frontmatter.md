@@ -130,6 +130,7 @@ Agent settings control orchestration concurrency and retry behavior.
 Code Factory validates only a subset of these fields itself:
 
 - `codex.command` must be a non-empty string
+- `codex.model` and `codex.reasoning_effort` must be non-blank strings if present
 - `codex.approval_policy` must be a string or object
 - `codex.turn_sandbox_policy` must be an object if present
 
@@ -139,13 +140,22 @@ For the enum-like Codex values below, the concrete accepted values were verified
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `codex.command` | non-empty string | `codex app-server` | Launched in the workspace with a shell. |
+| `codex.command` | non-empty string | `codex app-server` | Base app-server command launched in the workspace with a shell. |
+| `codex.model` | non-blank string or `null` | `null` | Injected as `--model <value>` immediately before `app-server`. |
+| `codex.reasoning_effort` | non-blank string or `null` | `null` | Injected as `--config model_reasoning_effort=<value>` immediately before `app-server`. |
 | `codex.approval_policy` | string or object | `{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}` | Passed through to Codex thread start. |
 | `codex.thread_sandbox` | string | `workspace-write` | Passed through to Codex thread start. |
 | `codex.turn_sandbox_policy` | object or `null` | `null` | Passed through to Codex turn start. If omitted, Code Factory builds a workspace-scoped default policy. |
 | `codex.turn_timeout_ms` | positive integer | `3600000` | Per-turn timeout. |
 | `codex.read_timeout_ms` | positive integer | `5000` | App-server protocol read timeout. |
 | `codex.stall_timeout_ms` | non-negative integer | `300000` | `0` disables stall detection. |
+
+`codex.command` remains the base shell command. If `codex.model` or
+`codex.reasoning_effort` is set, Code Factory parses the command as shell-style
+argv, inserts those flags immediately before the `app-server` argument, and
+launches the resulting command. This means the base command should keep
+`app-server` as an explicit argument when you use these workflow-managed
+overrides.
 
 ### `codex.approval_policy` string values
 

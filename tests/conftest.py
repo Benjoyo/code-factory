@@ -36,6 +36,8 @@ def default_workflow_config() -> dict[str, Any]:
         },
         "codex": {
             "command": "codex app-server",
+            "model": None,
+            "reasoning_effort": None,
             "approval_policy": {
                 "reject": {
                     "sandbox_approval": True,

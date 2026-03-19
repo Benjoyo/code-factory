@@ -54,6 +54,8 @@ class CodingAgentSettings:
     """Controls how the coding agent process is started and sandboxed."""
 
     command: str = ""
+    model: str | None = None
+    reasoning_effort: str | None = None
     approval_policy: str | dict[str, Any] = field(
         default_factory=lambda: {
             "reject": {

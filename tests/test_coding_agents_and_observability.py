@@ -63,7 +63,10 @@ from code_factory.coding_agents.codex.app_server.turns import (
     handle_tool_request_user_input,
     handle_turn_message,
 )
-from code_factory.coding_agents.codex.config import normalize_approval_policy
+from code_factory.coding_agents.codex.config import (
+    build_launch_command,
+    normalize_approval_policy,
+)
 from code_factory.coding_agents.codex.runtime import CodexRuntime
 from code_factory.coding_agents.codex.tools import DynamicToolExecutor
 from code_factory.coding_agents.codex.tools.results import ToolExecutionOutcome
@@ -203,6 +206,69 @@ async def test_coding_agent_base_wrappers_and_codex_config(
     assert normalize_approval_policy({"x": 1}) == {"x": 1}
     with pytest.raises(ConfigValidationError, match="codex.approval_policy"):
         normalize_approval_policy(1)
+
+
+def test_build_launch_command_injects_model_and_reasoning_before_app_server(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+    launch_command = build_launch_command(
+        replace(
+            settings.coding_agent,
+            command="codex -c shell_environment_policy.inherit=all app-server",
+            model="gpt-5.3-codex",
+            reasoning_effort="xhigh",
+        )
+    )
+    assert (
+        launch_command == "codex -c shell_environment_policy.inherit=all --config "
+        "model_reasoning_effort=xhigh --model gpt-5.3-codex app-server"
+    )
+
+
+def test_build_launch_command_supports_wrapped_app_server_command(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+    launch_command = build_launch_command(
+        replace(
+            settings.coding_agent,
+            command="/tmp/fake-codex app-server",
+            model="gpt-5.3-codex",
+            reasoning_effort="high",
+        )
+    )
+    assert (
+        launch_command
+        == "/tmp/fake-codex --config model_reasoning_effort=high --model "
+        "gpt-5.3-codex app-server"
+    )
+
+
+def test_build_launch_command_supports_model_only_override(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    launch_command = build_launch_command(
+        replace(
+            settings.coding_agent,
+            command="codex app-server",
+            model="gpt-5.3-codex",
+        )
+    )
+    assert launch_command == "codex --model gpt-5.3-codex app-server"
+
+
+def test_build_launch_command_supports_reasoning_only_override(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+    launch_command = build_launch_command(
+        replace(
+            settings.coding_agent,
+            command="codex app-server",
+            reasoning_effort="high",
+        )
+    )
+    assert launch_command == "codex --config model_reasoning_effort=high app-server"
 
 
 @pytest.mark.asyncio

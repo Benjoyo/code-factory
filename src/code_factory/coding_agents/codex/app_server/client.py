@@ -11,6 +11,7 @@ from ....errors import AppServerError, WorkspaceError
 from ....issues import Issue
 from ....runtime.subprocess import ProcessTree
 from ....workspace.paths import canonicalize, validate_workspace_path
+from ..config import build_launch_command
 from ..tools import DynamicToolExecutor
 from .messages import default_on_message, emit_message
 from .protocol import send_initialize, start_thread, start_turn
@@ -58,7 +59,7 @@ class AppServerClient:
         """Spin up the Codex runtime and bootstrap a messaging thread before use."""
         validated_workspace = self._validate_workspace_cwd(workspace)
         process_tree = await ProcessTree.spawn_shell(
-            self._coding_agent.command,
+            build_launch_command(self._coding_agent),
             cwd=validated_workspace,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,

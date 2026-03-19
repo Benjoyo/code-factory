@@ -732,6 +732,33 @@ async def test_messages_runtime_and_loader_edge_paths(tmp_path: Path) -> None:
         validate_coding_agent_settings(blank_settings)
     with pytest.raises(Exception, match="codex.turn_sandbox_policy must be an object"):
         parse_coding_agent_settings({"codex": {"turn_sandbox_policy": 7}})
+    parsed = parse_coding_agent_settings(
+        {"codex": {"model": "gpt-5.3-codex", "reasoning_effort": "high"}}
+    )
+    assert parsed.model == "gpt-5.3-codex"
+    assert parsed.reasoning_effort == "high"
+    with pytest.raises(Exception, match="codex.model can't be blank"):
+        parse_coding_agent_settings({"codex": {"model": "  "}})
+    invalid_shell_command = replace(
+        settings,
+        coding_agent=replace(
+            settings.coding_agent,
+            command='codex "app-server',
+            model="gpt-5.3-codex",
+        ),
+    )
+    with pytest.raises(Exception, match="must be a valid shell-style command"):
+        validate_coding_agent_settings(invalid_shell_command)
+    invalid_model_command = replace(
+        settings,
+        coding_agent=replace(
+            settings.coding_agent,
+            command="codex",
+            model="gpt-5.3-codex",
+        ),
+    )
+    with pytest.raises(Exception, match="must include an `app-server` argument"):
+        validate_coding_agent_settings(invalid_model_command)
 
 
 @pytest.mark.asyncio
