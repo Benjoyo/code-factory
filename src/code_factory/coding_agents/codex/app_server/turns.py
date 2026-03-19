@@ -18,6 +18,7 @@ from .messages import (
 )
 from .session import AppServerSession
 from .streams import log_non_json_stream_line, send_message
+from .tool_response import build_tool_response
 
 
 async def await_turn_completion(
@@ -150,13 +151,15 @@ async def handle_tool_call(
     """Execute a dynamic tool request and send the result back to the app server."""
 
     params = message_params(payload)
-    result, event = await tool_executor.execute(
+    outcome = await tool_executor.execute(
         tool_call_name(params), params.get("arguments", {})
     )
-    if event == "tool_call_completed" and result.get("success") is not True:
+    event = outcome.event
+    response = build_tool_response(outcome)
+    if event == "tool_call_completed" and outcome.success is not True:
         event = "tool_call_failed"
     await send_message(
-        session.process_tree, {"id": payload.get("id"), "result": result}
+        session.process_tree, {"id": payload.get("id"), "result": response}
     )
     await emit_message(on_message, event, {"payload": payload, "raw": raw}, metadata)
     return "continue"

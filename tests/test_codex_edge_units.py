@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from pydantic import BaseModel, ValidationError
 
 from code_factory.coding_agents.codex.app_server.client import AppServerClient
 from code_factory.coding_agents.codex.app_server.messages import (
@@ -24,6 +25,10 @@ from code_factory.coding_agents.codex.app_server.protocol import (
     start_turn,
 )
 from code_factory.coding_agents.codex.app_server.session import AppServerSession
+from code_factory.coding_agents.codex.app_server.tool_response import (
+    build_tool_response,
+    encode_payload,
+)
 from code_factory.coding_agents.codex.app_server.turns import (
     await_turn_completion,
     handle_tool_call,
@@ -35,15 +40,27 @@ from code_factory.coding_agents.codex.config import (
     validate_coding_agent_settings,
 )
 from code_factory.coding_agents.codex.runtime import CodexRuntime
-from code_factory.coding_agents.codex.tools.executor import (
+from code_factory.coding_agents.codex.tools import DynamicToolExecutor
+from code_factory.coding_agents.codex.tools.linear_errors import linear_error_payload
+from code_factory.coding_agents.codex.tools.linear_graphql import LinearGraphqlInput
+from code_factory.coding_agents.codex.tools.registry import (
+    _validation_error_payload,
+    build_input_schema,
+    dynamic_tool,
+    unexpected_tool_failure_payload,
+)
+from code_factory.coding_agents.codex.tools.results import (
+    ToolExecutionError,
+    ToolExecutionOutcome,
+    ToolResult,
+)
+from code_factory.coding_agents.codex.tools.sync_workpad import (
     SYNC_WORKPAD_CREATE,
     SYNC_WORKPAD_UPDATE,
-    encode_payload,
-    normalize_linear_graphql_arguments,
-    normalize_sync_workpad_args,
+    SyncWorkpadInput,
+    _validation_error_message,
     read_workpad_file,
     sync_workpad_request,
-    tool_error_payload,
 )
 from code_factory.errors import AppServerError, TrackerClientError, WorkflowLoadError
 from code_factory.prompts import build_prompt
@@ -127,28 +144,34 @@ async def collect_messages(message: dict[str, Any], sink: list[dict[str, Any]]) 
 async def test_dynamic_tool_executor_validation_and_error_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    assert normalize_linear_graphql_arguments(" query { viewer { id } } ") == (
-        "query { viewer { id } }",
-        {},
+    assert LinearGraphqlInput.model_validate(" query { viewer { id } } ") == (
+        LinearGraphqlInput(query="query { viewer { id } }", variables={})
     )
-    with pytest.raises(ValueError, match="missing_query"):
-        normalize_linear_graphql_arguments("  ")
-    with pytest.raises(ValueError, match="missing_query"):
-        normalize_linear_graphql_arguments({"query": ""})
-    with pytest.raises(TypeError, match="invalid_variables"):
-        normalize_linear_graphql_arguments({"query": "query", "variables": [1]})
-    with pytest.raises(TypeError, match="invalid_arguments"):
-        normalize_linear_graphql_arguments(7)
+    with pytest.raises(ValidationError, match="non-empty `query` string"):
+        LinearGraphqlInput.model_validate("  ")
+    with pytest.raises(ValidationError, match="non-empty `query` string"):
+        LinearGraphqlInput.model_validate({"query": ""})
+    with pytest.raises(ValidationError, match="JSON object when provided"):
+        LinearGraphqlInput.model_validate({"query": "query", "variables": [1]})
+    with pytest.raises(ValidationError, match="expects either a GraphQL query string"):
+        LinearGraphqlInput.model_validate(7)
 
-    assert normalize_sync_workpad_args(
+    assert SyncWorkpadInput.model_validate(
         {"issue_id": "ENG-1", "file_path": "/tmp/workpad.md", "comment_id": ""}
-    ) == ("ENG-1", "/tmp/workpad.md", None)
-    with pytest.raises(ValueError, match="issue_id"):
-        normalize_sync_workpad_args({"file_path": "/tmp/workpad.md"})
-    with pytest.raises(ValueError, match="file_path"):
-        normalize_sync_workpad_args({"issue_id": "ENG-1"})
-    with pytest.raises(ValueError, match="required"):
-        normalize_sync_workpad_args("bad")
+    ) == SyncWorkpadInput(
+        issue_id="ENG-1", file_path="/tmp/workpad.md", comment_id=None
+    )
+    with pytest.raises(ValidationError, match="issue_id"):
+        SyncWorkpadInput.model_validate({"file_path": "/tmp/workpad.md"})
+    with pytest.raises(ValidationError, match="file_path"):
+        SyncWorkpadInput.model_validate({"issue_id": "ENG-1"})
+    with pytest.raises(ValidationError, match="required"):
+        SyncWorkpadInput.model_validate("bad")
+    with pytest.raises(ValidationError) as excinfo:
+        SyncWorkpadInput.model_validate(
+            {"issue_id": "ENG-1", "file_path": "/tmp/workpad.md", "extra": True}
+        )
+    assert _validation_error_message(excinfo.value) == "unexpected field: `extra`"
 
     assert sync_workpad_request("ENG-1", None, "body") == (
         SYNC_WORKPAD_CREATE,
@@ -167,58 +190,200 @@ async def test_dynamic_tool_executor_validation_and_error_paths(
 
     empty = workspace / "empty.md"
     empty.write_text("", encoding="utf-8")
-    with pytest.raises(ValueError, match="file is empty"):
+    with pytest.raises(ToolExecutionError, match="file is empty"):
         read_workpad_file(str(empty), (str(workspace),))
 
     outside = tmp_path / "outside.md"
     outside.write_text("forbidden\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="outside the allowed workspace roots"):
+    with pytest.raises(ToolExecutionError, match="outside the allowed workspace roots"):
         read_workpad_file(str(outside), (str(workspace),))
 
     missing = workspace / "missing.md"
-    with pytest.raises(ValueError, match="cannot read"):
+    with pytest.raises(ToolExecutionError, match="cannot read"):
         read_workpad_file(str(missing), (str(workspace),))
 
     monkeypatch.setattr(
-        "code_factory.coding_agents.codex.tools.executor.canonicalize",
+        "code_factory.coding_agents.codex.tools.sync_workpad.canonicalize",
         lambda _path: (_ for _ in ()).throw(OSError("boom")),
     )
-    with pytest.raises(ValueError, match="cannot read"):
+    with pytest.raises(ToolExecutionError, match="cannot read"):
         read_workpad_file(str(workpad), (str(workspace),))
+    monkeypatch.undo()
 
     assert json.loads(encode_payload({"a": 1})) == {"a": 1}
     assert encode_payload("raw") == "'raw'"
 
-    assert tool_error_payload(ValueError("missing_query")) == {
-        "error": {"message": "`linear_graphql` requires a non-empty `query` string."}
-    }
-    assert tool_error_payload(TypeError("invalid_arguments")) == {
-        "error": {
-            "message": "`linear_graphql` expects either a GraphQL query string or an object with `query` and optional `variables`."
-        }
-    }
-    assert tool_error_payload(TypeError("invalid_variables")) == {
-        "error": {
-            "message": "`linear_graphql.variables` must be a JSON object when provided."
-        }
-    }
-    assert tool_error_payload(TrackerClientError("missing_linear_api_token")) == {
+    assert linear_error_payload(TrackerClientError("missing_linear_api_token")) == {
         "error": {
             "message": "Code Factory is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`."
         }
     }
-    assert tool_error_payload(ValueError(("other", "x"))) == {
+    assert linear_error_payload(TrackerClientError(("linear_api_status", 503))) == {
+        "error": {
+            "message": "Linear GraphQL request failed with HTTP 503.",
+            "status": 503,
+        }
+    }
+    assert linear_error_payload(
+        TrackerClientError(("linear_api_request", "timeout"))
+    ) == {
+        "error": {
+            "message": "Linear GraphQL request failed before receiving a successful response.",
+            "reason": "'timeout'",
+        }
+    }
+    assert linear_error_payload(TypeError("invalid_arguments")) == {
+        "error": {
+            "message": "Linear GraphQL tool execution failed.",
+            "reason": "'invalid_arguments'",
+        }
+    }
+    assert linear_error_payload(ValueError(("other", "x"))) == {
         "error": {
             "message": "Linear GraphQL tool execution failed.",
             "reason": "\"('other', 'x')\"",
         }
     }
-    assert tool_error_payload(RuntimeError("boom")) == {
+    assert linear_error_payload(RuntimeError("boom")) == {
         "error": {
             "message": "Linear GraphQL tool execution failed.",
             "reason": "'boom'",
         }
     }
+
+    async def failing_linear(_query: str, _variables: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("boom")
+
+    sync_outcome = await DynamicToolExecutor(
+        failing_linear, allowed_roots=(str(workspace),)
+    ).execute(
+        "sync_workpad",
+        {"issue_id": "ENG-1", "file_path": "workpad.md"},
+    )
+    assert sync_outcome.success is False
+    assert sync_outcome.payload == {
+        "error": {
+            "message": "Linear GraphQL tool execution failed.",
+            "reason": "'boom'",
+        }
+    }
+
+    assert SyncWorkpadInput.model_validate(
+        {"issue_id": "ENG-1", "file_path": "/tmp/workpad.md", "comment_id": []}
+    ) == SyncWorkpadInput(
+        issue_id="ENG-1", file_path="/tmp/workpad.md", comment_id=None
+    )
+
+    error = ValidationError.from_exception_data(
+        "SyncWorkpadInput",
+        [
+            {
+                "type": "value_error",
+                "loc": (),
+                "input": None,
+                "ctx": {"error": ValueError("boom")},
+            }
+        ],
+    )
+    assert _validation_error_message(error) == "invalid arguments"
+
+    class SimpleInput(BaseModel):
+        value: int
+
+    async def sample_handler(_context, parsed):
+        return ToolResult.ok({"value": parsed.value})
+
+    sample_tool = dynamic_tool(
+        name="sample",
+        description="sample",
+        args_model=SimpleInput,
+    )(sample_handler)
+    parsed = sample_tool.parse({"value": "7"})
+    assert parsed.value == 7
+
+    class FlexibleInput(BaseModel):
+        value: str | int | None
+
+    schema = build_input_schema(FlexibleInput)
+    assert schema["properties"]["value"]["anyOf"] == [
+        {"type": "string"},
+        {"type": "integer"},
+        {"type": "null"},
+    ]
+
+    class NullableObjectInput(BaseModel):
+        value: dict[str, Any] | None
+
+    schema = build_input_schema(NullableObjectInput)
+    assert schema["properties"]["value"] == {
+        "type": ["object", "null"],
+        "additionalProperties": True,
+    }
+
+    with pytest.raises(ValidationError) as excinfo:
+        SimpleInput.model_validate({})
+    assert _validation_error_payload("sample", excinfo.value) == {
+        "error": {"message": "sample: `value` is required"}
+    }
+
+    with pytest.raises(ValidationError) as excinfo:
+        LinearGraphqlInput.model_validate("  ")
+    assert _validation_error_payload("linear_graphql", excinfo.value) == {
+        "error": {"message": "`linear_graphql` requires a non-empty `query` string."}
+    }
+
+    assert _validation_error_payload("sample", RuntimeError("boom")) == {
+        "error": {
+            "message": "`sample` received invalid input.",
+            "reason": "boom",
+        }
+    }
+    assert unexpected_tool_failure_payload("sample") == {
+        "error": {"message": "Dynamic tool `sample` failed unexpectedly."}
+    }
+
+    with pytest.raises(ValueError, match="non-empty tool name"):
+        dynamic_tool(
+            name=" ",
+            args_model=SimpleInput,
+        )(sample_handler)
+
+    async def undocumented_handler(_context, _parsed):
+        return ToolResult.ok({})
+
+    undocumented_handler.__doc__ = " "
+    with pytest.raises(ValueError, match="requires a description or docstring"):
+        dynamic_tool(
+            args_model=SimpleInput,
+        )(undocumented_handler)
+
+    @dynamic_tool(args_model=SimpleInput, name="explode", description="explode")
+    async def exploding_handler(_context, _parsed) -> ToolResult:
+        raise RuntimeError("boom")
+
+    async def fake_linear(_query: str, _variables: dict[str, Any]) -> dict[str, Any]:
+        return {"data": {}}
+
+    outcome = await DynamicToolExecutor(
+        fake_linear, tools=(cast(Any, exploding_handler),)
+    ).execute("explode", {"value": 1})
+    assert outcome.success is False
+    assert outcome.payload == {
+        "error": {"message": "Dynamic tool `explode` failed unexpectedly."}
+    }
+
+    field_error = ValidationError.from_exception_data(
+        "SyncWorkpadInput",
+        [
+            {
+                "type": "value_error",
+                "loc": ("comment_id",),
+                "input": None,
+                "ctx": {"error": ValueError("boom")},
+            }
+        ],
+    )
+    assert _validation_error_message(field_error) == "invalid `comment_id`"
 
 
 @pytest.mark.asyncio
@@ -228,14 +393,22 @@ async def test_turn_handlers_cover_stream_and_input_edge_paths(
     class FailingExecutor:
         async def execute(
             self, _tool: str | None, _arguments: Any
-        ) -> tuple[dict[str, Any], str]:
-            return {"success": False, "contentItems": []}, "tool_call_completed"
+        ) -> ToolExecutionOutcome:
+            return ToolExecutionOutcome(
+                success=False,
+                payload={"error": {"message": "bad"}},
+                event="tool_call_completed",
+            )
 
     class SuccessExecutor:
         async def execute(
             self, _tool: str | None, _arguments: Any
-        ) -> tuple[dict[str, Any], str]:
-            return {"success": True, "contentItems": []}, "tool_call_completed"
+        ) -> ToolExecutionOutcome:
+            return ToolExecutionOutcome(
+                success=True,
+                payload={"ok": True},
+                event="tool_call_completed",
+            )
 
     sent_messages: list[dict[str, Any]] = []
     monkeypatch.setattr(
@@ -347,7 +520,13 @@ async def test_turn_handlers_cover_stream_and_input_edge_paths(
     )
     assert sent_messages[-1] == {
         "id": 2,
-        "result": {"success": False, "contentItems": []},
+        "result": build_tool_response(
+            ToolExecutionOutcome(
+                success=False,
+                payload={"error": {"message": "bad"}},
+                event="tool_call_completed",
+            )
+        ),
     }
     assert messages[-1]["event"] == "tool_call_failed"
 
@@ -480,12 +659,14 @@ async def test_protocol_and_client_bootstrap_edge_paths(
     assert process_tree.terminated == 1
 
     fallback_executor = client._build_tool_executor("/tmp/workspace")
-    result, event = await fallback_executor.execute(
+    outcome = await fallback_executor.execute(
         "linear_graphql", {"query": "query Viewer { viewer { id } }"}
     )
-    assert event == "tool_call_completed"
-    assert result["success"] is False
-    assert "Linear GraphQL tool execution failed." in result["contentItems"][0]["text"]
+    assert outcome.event == "tool_call_completed"
+    assert outcome.success is False
+    assert (
+        outcome.payload["error"]["message"] == "Linear GraphQL tool execution failed."
+    )
 
     explicit_settings = make_settings(
         tmp_path / "explicit",
@@ -564,11 +745,11 @@ async def test_codex_runtime_dynamic_tool_executor_supports_sync_and_async_graph
     sync_executor = CodexRuntime(
         settings, cast(Any, SyncTracker())
     )._build_dynamic_tool_executor("/tmp/workspace")
-    sync_result, _event = await sync_executor.execute(
+    sync_outcome = await sync_executor.execute(
         "linear_graphql",
         {"query": "query Viewer { viewer { id } }", "variables": {"ok": True}},
     )
-    assert sync_result["success"] is True
+    assert sync_outcome.success is True
 
     class AsyncTracker:
         async def graphql(
@@ -579,11 +760,11 @@ async def test_codex_runtime_dynamic_tool_executor_supports_sync_and_async_graph
     async_executor = CodexRuntime(
         settings, cast(Any, AsyncTracker())
     )._build_dynamic_tool_executor("/tmp/workspace")
-    async_result, _event = await async_executor.execute(
+    async_outcome = await async_executor.execute(
         "linear_graphql",
         {"query": "query Viewer { viewer { id } }", "variables": {"ok": True}},
     )
-    assert async_result["success"] is True
+    assert async_outcome.success is True
 
     class BrokenTracker:
         def graphql(self, _query: str, _variables: dict[str, Any]) -> list[str]:
@@ -592,11 +773,11 @@ async def test_codex_runtime_dynamic_tool_executor_supports_sync_and_async_graph
     broken_executor = CodexRuntime(
         settings, cast(Any, BrokenTracker())
     )._build_dynamic_tool_executor("/tmp/workspace")
-    broken_result, _event = await broken_executor.execute(
+    broken_outcome = await broken_executor.execute(
         "linear_graphql", {"query": "query Viewer { viewer { id } }"}
     )
-    assert broken_result["success"] is False
-    payload = json.loads(broken_result["contentItems"][0]["text"])
+    assert broken_outcome.success is False
+    payload = broken_outcome.payload
     assert payload["error"]["message"].startswith(
         "Code Factory is missing Linear auth."
     )
@@ -607,7 +788,7 @@ async def test_codex_runtime_dynamic_tool_executor_supports_sync_and_async_graph
     missing_executor = CodexRuntime(
         settings, cast(Any, MissingGraphqlTracker())
     )._build_dynamic_tool_executor("/tmp/workspace")
-    missing_result, _event = await missing_executor.execute(
+    missing_outcome = await missing_executor.execute(
         "linear_graphql", {"query": "query Viewer { viewer { id } }"}
     )
-    assert missing_result["success"] is False
+    assert missing_outcome.success is False

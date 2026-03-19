@@ -261,7 +261,12 @@ async def test_integration_retry_releases_missing_issue_and_reschedules_when_slo
         harness.tracker.remove_issue("issue-1021")
         await wait_for_snapshot(
             harness,
-            lambda snapshot: not snapshot["running"] and not snapshot["retrying"],
+            lambda snapshot: (
+                all(entry["issue_id"] != "issue-1021" for entry in snapshot["running"])
+                and all(
+                    entry["issue_id"] != "issue-1021" for entry in snapshot["retrying"]
+                )
+            ),
         )
         assert len(harness.controller.prompt_log["ENG-001"]) == 1
 

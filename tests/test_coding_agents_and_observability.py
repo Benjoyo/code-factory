@@ -52,6 +52,9 @@ from code_factory.coding_agents.codex.app_server.streams import (
     stdout_reader,
     wait_for_exit,
 )
+from code_factory.coding_agents.codex.app_server.tool_response import (
+    build_tool_response,
+)
 from code_factory.coding_agents.codex.app_server.turns import (
     approve_or_require,
     await_turn_completion,
@@ -62,6 +65,7 @@ from code_factory.coding_agents.codex.app_server.turns import (
 from code_factory.coding_agents.codex.config import normalize_approval_policy
 from code_factory.coding_agents.codex.runtime import CodexRuntime
 from code_factory.coding_agents.codex.tools import DynamicToolExecutor
+from code_factory.coding_agents.codex.tools.results import ToolExecutionOutcome
 from code_factory.errors import (
     AppServerError,
     ConfigValidationError,
@@ -585,11 +589,11 @@ async def test_client_runtime_and_observability_behaviors(
     }
 
     executor = client._build_tool_executor(str(workspace))
-    result, event = await executor.execute(
+    outcome = await executor.execute(
         "linear_graphql", {"query": "query Viewer { viewer { id } }"}
     )
-    assert event == "tool_call_completed"
-    assert result["success"] is False
+    assert outcome.event == "tool_call_completed"
+    assert outcome.success is False
 
     emitted: list[str] = []
 
@@ -628,10 +632,10 @@ async def test_client_runtime_and_observability_behaviors(
 
     runtime = CodexRuntime(settings, GraphQLTracker())
     tool_executor = runtime._build_dynamic_tool_executor(str(workspace))
-    result, _event = await tool_executor.execute(
+    outcome = await tool_executor.execute(
         "linear_graphql", {"query": "query Viewer { viewer { id } }"}
     )
-    assert result["success"] is True
+    assert outcome.success is True
     with pytest.raises(TypeError, match="Unsupported session type"):
         await runtime.run_turn(object(), "prompt", issue)  # type: ignore[arg-type]
 

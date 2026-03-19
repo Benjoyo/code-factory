@@ -32,6 +32,7 @@ from code_factory.application.dashboard_format import (
     pick,
     rate_limit_bucket,
     rate_limit_credits,
+    rate_limit_reset,
     rate_limits_text,
 )
 from code_factory.application.dashboard_render import (
@@ -325,6 +326,7 @@ def test_dashboard_format_helpers_cover_remaining_branches() -> None:
         {"remaining": 1, "limit": 2, "reset_at": "2026-03-18T12:00:00Z"}
     )
     assert rate_limit_bucket({"remaining": 1, "limit": 2, "resetAt": ""}) == "1/2"
+    assert rate_limit_reset({"resetInSeconds": " soon "}) == "soon"
     assert rate_limit_bucket([]) == "n/a"
     assert rate_limit_credits(None) == "credits n/a"
     assert rate_limit_credits({"unlimited": True}) == "credits unlimited"
