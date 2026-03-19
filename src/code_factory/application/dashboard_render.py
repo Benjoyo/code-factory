@@ -27,15 +27,22 @@ from .dashboard_format import (
     rate_limits_text,
     tokens_text,
 )
+from .dashboard_workflow import (
+    dashboard_link,
+    max_agents,
+    project_link,
+    workflow_status_text,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class StatusDashboardContext:
-    """Trivial holder for dashboard URLs and the current concurrency limit."""
+    """Optional fallback values plus immutable service-level overrides."""
 
-    max_agents: int
-    project_url: str | None
-    dashboard_url: str | None
+    max_agents: int | None = None
+    project_url: str | None = None
+    dashboard_url: str | None = None
+    port_override: int | None = None
 
 
 RUNNING_TABLE_COLUMNS: tuple[dict[str, Any], ...] = (
@@ -71,15 +78,29 @@ def render_status_dashboard(
     else:
         running = mapping_list(snapshot.get("running"))
         retrying = mapping_list(snapshot.get("retrying"))
+        raw_workflow = snapshot.get("workflow")
+        workflow: dict[str, Any] = (
+            raw_workflow if isinstance(raw_workflow, dict) else {}
+        )
         totals = snapshot.get("agent_totals")
         totals = totals if isinstance(totals, dict) else {}
+        configured_max_agents = context.max_agents
+        configured_project_url = context.project_url
+        configured_dashboard_url = context.dashboard_url
+        max_agents_value = max_agents(workflow, configured_max_agents)
+        project_link_value = project_link(workflow, configured_project_url)
+        dashboard_link_value = dashboard_link(
+            workflow,
+            configured_dashboard_url,
+            context.port_override,
+        )
         runtime_seconds = int_value(totals.get("seconds_running")) + sum(
             int_value(entry.get("runtime_seconds")) for entry in running
         )
         summary = Table.grid(expand=True)
         summary.add_column(style="bold white", ratio=1)
         summary.add_column(ratio=5)
-        summary.add_row("Agents:", agents_text(len(running), context.max_agents))
+        summary.add_row("Agents:", agents_text(len(running), max_agents_value))
         summary.add_row(
             "Throughput:",
             Text(f"{format_count(int(throughput_tps))} tps", style="cyan"),
@@ -87,17 +108,21 @@ def render_status_dashboard(
         summary.add_row(
             "Runtime:", Text(format_runtime(runtime_seconds), style="magenta")
         )
+        summary.add_row("Workflow:", workflow_status_text(workflow))
         summary.add_row("Tokens:", tokens_text(totals))
         summary.add_row("Rate Limits:", rate_limits_text(snapshot.get("rate_limits")))
         summary.add_row(
             "Project:",
             Text(
-                context.project_url or "n/a",
-                style="cyan" if context.project_url else "dim",
+                project_link_value or "n/a",
+                style="cyan" if project_link_value else "dim",
             ),
         )
-        if context.dashboard_url is not None:
-            summary.add_row("Dashboard:", Text(context.dashboard_url, style="cyan"))
+        if dashboard_link_value is not None:
+            summary.add_row("Dashboard:", Text(dashboard_link_value, style="cyan"))
+        reload_error = clean_inline(pick(workflow, "reload_error"), 96)
+        if reload_error:
+            summary.add_row("Reload error:", Text(reload_error, style="yellow"))
         summary.add_row("Next refresh:", next_refresh_text(snapshot.get("polling")))
         status_panel = Panel(
             Group(
@@ -119,29 +144,6 @@ def render_status_dashboard(
         if diagnostics_panel is not None
         else status_panel
     )
-
-
-def project_url(project_slug: str | None) -> str | None:
-    """Provide a tracker-specific URL linking to the configured Linear project."""
-
-    return (
-        f"https://linear.app/project/{project_slug}/issues"
-        if isinstance(project_slug, str) and project_slug.strip()
-        else None
-    )
-
-
-def dashboard_url(host: str, port: int | None) -> str | None:
-    """Build the observability dashboard URL, defaulting to localhost for wildcards."""
-
-    if not isinstance(port, int) or port <= 0:
-        return None
-    cleaned = host.strip() if isinstance(host, str) else ""
-    if cleaned in {"", "0.0.0.0", "::", "[::]"}:
-        cleaned = "127.0.0.1"
-    elif ":" in cleaned and not (cleaned.startswith("[") and cleaned.endswith("]")):
-        cleaned = f"[{cleaned}]"
-    return f"http://{cleaned}:{port}/"
 
 
 def _unavailable_panel(detail: str | None) -> RenderableType:

@@ -697,7 +697,7 @@ def test_service_build_http_server_and_signal_handlers(
     snapshot = make_snapshot(workflow)
     service = CodeFactoryService(str(workflow), port_override=4567)
 
-    calls: list[tuple[str, int]] = []
+    calls: list[tuple[str, int | None]] = []
 
     class FakeServer:
         def __init__(self, _orchestrator: Any, *, host: str, port: int) -> None:
@@ -714,10 +714,11 @@ def test_service_build_http_server_and_signal_handlers(
         write_workflow_file(tmp_path / "NO_SERVER.md", server={"port": None})
     )
     disabled_service = CodeFactoryService(str(workflow))
-    assert (
-        disabled_service._build_http_server(disabled_snapshot, cast(Any, object()))
-        is None
+    disabled_server = disabled_service._build_http_server(
+        disabled_snapshot, cast(Any, object())
     )
+    assert isinstance(disabled_server, FakeServer)
+    assert calls[-1] == ("127.0.0.1", None)
 
     recorded: list[Any] = []
 
@@ -729,6 +730,23 @@ def test_service_build_http_server_and_signal_handlers(
     monkeypatch.setattr("asyncio.get_running_loop", lambda: FakeLoop())
     service._install_signal_handlers(asyncio.Event())
     assert recorded == [signal.SIGTERM]
+
+
+def test_service_build_http_server_reraises_unexpected_constructor_typeerror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = make_snapshot(write_workflow_file(tmp_path / "WORKFLOW.md"))
+    service = CodeFactoryService(str(snapshot.path))
+
+    class BrokenServer:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            raise TypeError("boom")
+
+    monkeypatch.setattr(
+        "code_factory.application.service.ObservabilityHTTPServer", BrokenServer
+    )
+    with pytest.raises(TypeError, match="boom"):
+        service._build_http_server(snapshot, cast(Any, object()))
 
 
 @pytest.mark.parametrize(
@@ -957,6 +975,31 @@ async def test_workflow_store_reload_run_and_error_paths(
 
 
 @pytest.mark.asyncio
+async def test_workflow_store_current_snapshot_and_watch_loop_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workflow = write_workflow_file(tmp_path / "WORKFLOW.md")
+    actor = WorkflowStoreActor(str(workflow))
+    actor.subscribe(on_snapshot=lambda snapshot: asyncio.sleep(0))
+    actor.subscribe(on_error=lambda error: asyncio.sleep(0))
+    initial = await actor.load_initial_snapshot()
+    assert actor.current_snapshot() == initial
+
+    stop_event = asyncio.Event()
+
+    async def fake_awatch(*_args: Any, **_kwargs: Any):
+        yield {("modified", str(workflow))}
+
+    async def fake_reload() -> Any:
+        stop_event.set()
+        return actor.current_snapshot()
+
+    monkeypatch.setattr("code_factory.workflow.store.awatch", fake_awatch)
+    actor.reload_if_changed = fake_reload  # type: ignore[method-assign]
+    await actor._watch_loop(stop_event)
+
+
+@pytest.mark.asyncio
 async def test_service_run_forever_wires_runtime_components(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1045,6 +1088,46 @@ async def test_service_run_forever_wires_runtime_components(
     ]
     assert service.orchestrator is not None
     assert service.workflow_store is not None
+
+
+@pytest.mark.asyncio
+async def test_service_run_forever_reraises_unexpected_orchestrator_typeerror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workflow = write_workflow_file(tmp_path / "WORKFLOW.md")
+    snapshot = make_snapshot(workflow)
+    service = CodeFactoryService(str(workflow))
+
+    class FakeWorkflowStoreActor:
+        def __init__(
+            self, path: str, *, on_snapshot: Any, on_error: Any = None
+        ) -> None:
+            return None
+
+        async def load_initial_snapshot(self) -> Any:
+            return snapshot
+
+    class BrokenOrchestrator:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            raise TypeError("boom")
+
+    monkeypatch.setattr(
+        "code_factory.application.service.WorkflowStoreActor", FakeWorkflowStoreActor
+    )
+    monkeypatch.setattr(
+        "code_factory.application.service.OrchestratorActor", BrokenOrchestrator
+    )
+    monkeypatch.setattr(
+        "code_factory.application.service.validate_dispatch_settings",
+        lambda settings: None,
+    )
+    monkeypatch.setattr(service, "_install_signal_handlers", lambda stop_event: None)
+    monkeypatch.setattr(
+        service, "_configure_logging", lambda dashboard_enabled, diagnostics=None: None
+    )
+
+    with pytest.raises(TypeError, match="boom"):
+        await service.run_forever()
 
 
 @pytest.mark.asyncio

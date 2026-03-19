@@ -15,6 +15,7 @@ def state_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
             "running": len(snapshot["running"]),
             "retrying": len(snapshot["retrying"]),
         },
+        "workflow": snapshot.get("workflow"),
         "running": [running_entry_payload(entry) for entry in snapshot["running"]],
         "retrying": [retry_entry_payload(entry) for entry in snapshot["retrying"]],
         "agent_totals": snapshot["agent_totals"],

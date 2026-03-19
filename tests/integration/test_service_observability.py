@@ -36,6 +36,8 @@ async def test_integration_observability_http_endpoints_and_method_errors(
             state_payload = await state_response.json()
             assert state_response.status == 200
             assert state_payload["counts"] == {"running": 1, "retrying": 0}
+            assert state_payload["workflow"]["agent"]["max_concurrent_agents"] == 10
+            assert state_payload["workflow"]["tracker"]["kind"] == "memory"
 
             issue_response = await session.get(f"{base_url}/api/v1/ENG-901")
             issue_payload = await issue_response.json()

@@ -16,6 +16,7 @@ dependencies = [
   "python-liquid>=2.1.0,<3",
   "rich>=13.9.4,<14",
   "typer>=0.16.0,<0.17",
+  "watchfiles>=1.1.1,<2",
 ]
 
 [project.optional-dependencies]

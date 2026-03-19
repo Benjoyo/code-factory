@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
@@ -49,6 +49,8 @@ class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
         workflow_snapshot: WorkflowSnapshot,
         *,
         tracker_factory: Callable[[Settings], Tracker] | None = None,
+        reload_workflow_if_changed: Callable[[], Awaitable[WorkflowSnapshot | None]]
+        | None = None,
     ) -> None:
         self.queue: asyncio.Queue[Any] = asyncio.Queue()
         self._logger = LOGGER
@@ -56,6 +58,7 @@ class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
         self._tracker_factory = tracker_factory or (
             lambda settings: build_tracker(settings)
         )
+        self._reload_workflow_if_changed = reload_workflow_if_changed
         self.tracker: Tracker = self._tracker_factory(workflow_snapshot.settings)
         self.running: dict[str, RunningEntry] = {}
         self.claimed: set[str] = set()
@@ -156,6 +159,7 @@ class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
         elif isinstance(message, SnapshotRequest):
             message.future.set_result(self._snapshot_payload())
         elif isinstance(message, RefreshRequest):
+            await self._ensure_workflow_current()
             message.future.set_result(self._queue_refresh())
         elif isinstance(
             message, Shutdown
@@ -164,6 +168,12 @@ class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
             message.future.set_result(True)
 
     async def _replace_workflow(self, snapshot: WorkflowSnapshot) -> None:
+        if snapshot.version < self.workflow_snapshot.version or (
+            snapshot.version == self.workflow_snapshot.version
+            and snapshot.path == self.workflow_snapshot.path
+            and snapshot.stamp == self.workflow_snapshot.stamp
+        ):
+            return
         self.workflow_snapshot = snapshot
         self.workflow_reload_error = None
         old_tracker = self.tracker
@@ -223,3 +233,11 @@ class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
 
     def _monotonic_ms(self) -> int:
         return monotonic_ms()
+
+    async def _ensure_workflow_current(self) -> None:
+        refresher = self._reload_workflow_if_changed
+        if refresher is None:
+            return
+        snapshot = await refresher()
+        if snapshot is not None:
+            await self._replace_workflow(snapshot)

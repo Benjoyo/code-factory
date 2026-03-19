@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -13,6 +14,7 @@ from rich.table import Table
 from code_factory.application.dashboard import (
     LiveStatusDashboard,
     StatusDashboardContext,
+    _dashboard_refresh_ms,
     _rolling_tps,
     _total_tokens,
     dashboard_url,
@@ -40,6 +42,14 @@ from code_factory.application.dashboard_render import (
     _retry_renderable,
     _running_renderable,
 )
+from code_factory.application.dashboard_workflow import (
+    dashboard_link,
+    max_agents,
+    project_link,
+    workflow_status_text,
+)
+
+from .conftest import make_snapshot, write_workflow_file
 
 
 def test_dashboard_urls_match_elixir_style_host_rules() -> None:
@@ -164,6 +174,53 @@ def test_render_status_dashboard_covers_unavailable_and_empty_sections() -> None
         )
     )
     assert "error=" not in retry_stream.getvalue()
+
+
+def test_render_status_dashboard_prefers_live_workflow_summary() -> None:
+    stream = StringIO()
+    Console(file=stream, width=140).print(
+        render_status_dashboard(
+            {
+                "running": [{"identifier": "ENG-1", "runtime_seconds": 1}],
+                "retrying": [],
+                "agent_totals": {},
+                "rate_limits": None,
+                "polling": {},
+                "workflow": {
+                    "version": 2,
+                    "loaded_at": "2026-03-19T10:00:00Z",
+                    "reload_error": "'boom'",
+                    "agent": {"max_concurrent_agents": 5},
+                    "tracker": {"project_slug": "live-project"},
+                    "server": {"host": "0.0.0.0", "port": 4321},
+                },
+            },
+            StatusDashboardContext(
+                max_agents=1,
+                project_url="https://linear.app/project/stale/issues",
+                dashboard_url="http://stale:9999/",
+            ),
+            throughput_tps=0,
+        )
+    )
+    rendered = stream.getvalue()
+    assert "1/5" in rendered
+    assert "live-project/issues" in rendered
+    assert "127.0.0.1:4321" in rendered
+    assert "v2 loaded 2026-03-19T10:00:00Z" in rendered
+    assert "'boom'" in rendered
+
+
+def test_dashboard_workflow_helpers_cover_live_and_fallback_paths() -> None:
+    assert max_agents({"agent": {"max_concurrent_agents": 4}}, 1) == 4
+    assert max_agents({}, 3) == 3
+    assert project_link({"tracker": {}}, "https://fallback") == "https://fallback"
+    assert dashboard_link({"server": {}}, "http://fallback", None) == "http://fallback"
+    assert workflow_status_text({}).plain == "n/a"
+    assert workflow_status_text({"loaded_at": "2026-03-19T10:00:00Z"}).plain.startswith(
+        "unknown loaded"
+    )
+    assert workflow_status_text({"version": 3, "loaded_at": ""}).plain == "v3"
 
 
 def test_render_status_dashboard_includes_recent_diagnostics_panel() -> None:
@@ -359,6 +416,15 @@ def test_dashboard_helpers_cover_token_and_event_branches() -> None:
     assert _event_style("task_started", stopping=False) == "green"
     assert _event_style("token_count", stopping=False) == "yellow"
     assert _event_style("other", stopping=False) == "bright_blue"
+    assert _dashboard_refresh_ms({}, 250) == 250
+    assert _dashboard_refresh_ms({"workflow": {}}, 250) == 250
+    assert _dashboard_refresh_ms({"workflow": {"observability": {}}}, 250) == 250
+    assert (
+        _dashboard_refresh_ms(
+            {"workflow": {"observability": {"refresh_ms": 1500}}}, 250
+        )
+        == 1000
+    )
 
 
 def test_dashboard_enabled_checks_tty() -> None:
@@ -498,3 +564,204 @@ async def test_live_status_dashboard_run_and_snapshot_paths(
     )
     await dashboard_fail._snapshot_renderable()
     assert dashboard_fail._last_snapshot_error == "RuntimeError: boom"
+
+
+@pytest.mark.asyncio
+async def test_live_status_dashboard_dynamic_helpers_cover_disabled_and_reconfigure_paths(
+    tmp_path: Path,
+) -> None:
+    class SnapshotOrchestrator:
+        def snapshot_now(self) -> dict[str, Any]:
+            return {"running": [], "retrying": [], "agent_totals": {"total_tokens": 1}}
+
+    dashboard = LiveStatusDashboard(
+        cast(Any, SnapshotOrchestrator()),
+        settings=cast(
+            Any,
+            SimpleNamespace(
+                observability=SimpleNamespace(refresh_ms=250, dashboard_enabled=False)
+            ),
+        ),
+        context=StatusDashboardContext(),
+    )
+    stop_event = asyncio.Event()
+    assert await dashboard._wait_for_stop_or_config(stop_event, timeout=0.001) is False
+
+    dashboard._config_event.set()
+    assert await dashboard._wait_for_stop_or_config(stop_event, timeout=None) is False
+    assert dashboard._config_event.is_set() is False
+
+    stop_event.set()
+    assert await dashboard._wait_for_stop_or_config(stop_event, timeout=None) is True
+
+    updated_snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            observability={"dashboard_enabled": True, "refresh_ms": 900},
+        )
+    )
+    await dashboard.apply_workflow_snapshot(updated_snapshot)
+    assert dashboard._enabled is True
+    assert dashboard._sleep_ms == 900
+
+    await dashboard.apply_workflow_reload_error(RuntimeError("boom"))
+    assert dashboard._config_event.is_set() is True
+
+    dashboard._config_event.set()
+    stop_event.clear()
+    assert await dashboard._wait_for_stop_or_config(stop_event, timeout=0.001) is False
+    assert dashboard._config_event.is_set() is False
+
+
+@pytest.mark.asyncio
+async def test_live_status_dashboard_run_handles_disabled_then_reenabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_live = _FakeLive()
+
+    class SnapshotNowOrchestrator:
+        def snapshot_now(self) -> dict[str, Any]:
+            return {
+                "running": [],
+                "retrying": [],
+                "agent_totals": {"total_tokens": 1},
+            }
+
+    monkeypatch.setattr(
+        "code_factory.application.dashboard.Live", lambda *a, **k: fake_live
+    )
+    dashboard = LiveStatusDashboard(
+        cast(Any, SnapshotNowOrchestrator()),
+        settings=cast(
+            Any,
+            SimpleNamespace(
+                observability=SimpleNamespace(refresh_ms=250, dashboard_enabled=False)
+            ),
+        ),
+        context=StatusDashboardContext(),
+    )
+    stop_event = asyncio.Event()
+    waits: list[float | None] = []
+
+    async def fake_wait(
+        passed_stop_event: asyncio.Event, *, timeout: float | None
+    ) -> bool:
+        waits.append(timeout)
+        if timeout is None:
+            dashboard._enabled = True
+            return False
+        passed_stop_event.set()
+        return True
+
+    monkeypatch.setattr(dashboard, "_wait_for_stop_or_config", fake_wait)
+    await dashboard.run(stop_event)
+    assert waits == [None, 0.25]
+    assert fake_live.updates and fake_live.updates[0][1] is True
+
+
+@pytest.mark.asyncio
+async def test_live_status_dashboard_run_returns_while_disabled_when_stop_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dashboard = LiveStatusDashboard(
+        cast(Any, SimpleNamespace(snapshot_now=lambda: {})),
+        settings=cast(
+            Any,
+            SimpleNamespace(
+                observability=SimpleNamespace(refresh_ms=250, dashboard_enabled=False)
+            ),
+        ),
+        context=StatusDashboardContext(),
+    )
+    stop_event = asyncio.Event()
+
+    async def fake_wait(
+        passed_stop_event: asyncio.Event, *, timeout: float | None
+    ) -> bool:
+        assert timeout is None
+        passed_stop_event.set()
+        return True
+
+    monkeypatch.setattr(dashboard, "_wait_for_stop_or_config", fake_wait)
+    await dashboard.run(stop_event)
+
+
+@pytest.mark.asyncio
+async def test_live_status_dashboard_run_skips_when_already_stopped() -> None:
+    dashboard = LiveStatusDashboard(
+        cast(Any, SimpleNamespace(snapshot_now=lambda: {})),
+        settings=cast(
+            Any,
+            SimpleNamespace(
+                observability=SimpleNamespace(refresh_ms=250, dashboard_enabled=False)
+            ),
+        ),
+        context=StatusDashboardContext(),
+    )
+    stop_event = asyncio.Event()
+    stop_event.set()
+    await dashboard.run(stop_event)
+
+
+@pytest.mark.asyncio
+async def test_live_status_dashboard_run_loops_again_after_non_terminal_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_live = _FakeLive()
+
+    class SnapshotNowOrchestrator:
+        def snapshot_now(self) -> dict[str, Any]:
+            return {
+                "running": [],
+                "retrying": [],
+                "agent_totals": {"total_tokens": 1},
+            }
+
+    monkeypatch.setattr(
+        "code_factory.application.dashboard.Live", lambda *a, **k: fake_live
+    )
+    dashboard = LiveStatusDashboard(
+        cast(Any, SnapshotNowOrchestrator()),
+        settings=cast(
+            Any,
+            SimpleNamespace(
+                observability=SimpleNamespace(refresh_ms=250, dashboard_enabled=True)
+            ),
+        ),
+        context=StatusDashboardContext(),
+    )
+    stop_event = asyncio.Event()
+    waits = 0
+
+    async def fake_wait(
+        passed_stop_event: asyncio.Event, *, timeout: float | None
+    ) -> bool:
+        nonlocal waits
+        waits += 1
+        if waits == 1:
+            dashboard._enabled = False
+            return False
+        passed_stop_event.set()
+        return True
+
+    monkeypatch.setattr(dashboard, "_wait_for_stop_or_config", fake_wait)
+    await dashboard.run(stop_event)
+    assert waits == 2
+    assert fake_live.updates and fake_live.updates[0][1] is True
+
+
+@pytest.mark.asyncio
+async def test_live_status_dashboard_wait_helper_returns_when_stop_task_wins() -> None:
+    dashboard = LiveStatusDashboard(
+        cast(Any, SimpleNamespace(snapshot_now=lambda: {})),
+        settings=cast(
+            Any,
+            SimpleNamespace(
+                observability=SimpleNamespace(refresh_ms=250, dashboard_enabled=True)
+            ),
+        ),
+        context=StatusDashboardContext(),
+    )
+    stop_event = asyncio.Event()
+    asyncio.get_running_loop().call_soon(stop_event.set)
+    assert await dashboard._wait_for_stop_or_config(stop_event, timeout=None) is True

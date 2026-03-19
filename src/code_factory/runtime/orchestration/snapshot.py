@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from ...workflow.models import WorkflowSnapshot
 from .models import RetryEntry, RunningEntry
 
 
@@ -12,6 +13,8 @@ def snapshot_payload(
     running: dict[str, RunningEntry],
     retry_entries: dict[str, RetryEntry],
     *,
+    workflow_snapshot: WorkflowSnapshot | None = None,
+    workflow_reload_error: str | None = None,
     agent_totals: dict[str, int],
     rate_limits: dict[str, Any] | None,
     poll_check_in_progress: bool,
@@ -32,6 +35,7 @@ def snapshot_payload(
         ],
         "agent_totals": dict(agent_totals),
         "rate_limits": rate_limits,
+        "workflow": workflow_payload(workflow_snapshot, workflow_reload_error),
         "polling": {
             "checking?": poll_check_in_progress,
             "next_poll_in_ms": max(0, next_poll_due_at_ms - now_ms)
@@ -40,6 +44,48 @@ def snapshot_payload(
             "poll_interval_ms": poll_interval_ms,
         },
     }
+
+
+def workflow_payload(
+    snapshot: WorkflowSnapshot | None, reload_error: str | None
+) -> dict[str, Any]:
+    if snapshot is None:
+        return {"reload_error": reload_error}
+    settings = snapshot.settings
+    return {
+        "version": snapshot.version,
+        "path": snapshot.path,
+        "loaded_at": iso8601(snapshot.loaded_at),
+        "reload_error": reload_error,
+        "agent": {
+            "max_concurrent_agents": settings.agent.max_concurrent_agents,
+            "max_turns": settings.agent.max_turns,
+            "max_concurrent_agents_by_state": dict(
+                settings.agent.max_concurrent_agents_by_state
+            ),
+        },
+        "tracker": {
+            "kind": settings.tracker.kind,
+            "project_slug": settings.tracker.project_slug,
+            "active_states": list(settings.tracker.active_states),
+            "terminal_states": list(settings.tracker.terminal_states),
+        },
+        "workspace": {"root": settings.workspace.root},
+        "observability": {
+            "dashboard_enabled": settings.observability.dashboard_enabled,
+            "refresh_ms": settings.observability.refresh_ms,
+        },
+        "server": {
+            "host": settings.server.host,
+            "port": settings.server.port,
+        },
+    }
+
+
+def iso8601(value: datetime) -> str:
+    return (
+        value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
 
 
 def running_entry_payload(

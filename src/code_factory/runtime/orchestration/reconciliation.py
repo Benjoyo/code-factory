@@ -195,6 +195,8 @@ class ReconciliationMixin:
         return snapshot_payload(
             self.running,
             self.retry_entries,
+            workflow_snapshot=self.workflow_snapshot,
+            workflow_reload_error=self.workflow_reload_error,
             agent_totals=self.agent_totals,
             rate_limits=self.agent_rate_limits,
             poll_check_in_progress=self.poll_check_in_progress,

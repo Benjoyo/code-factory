@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -672,8 +673,10 @@ async def test_client_runtime_and_observability_behaviors(
         ],
         "agent_totals": {"total_tokens": 3},
         "rate_limits": {"primary": {}},
+        "workflow": {"version": 2, "agent": {"max_concurrent_agents": 4}},
     }
     assert state_payload(snapshot)["counts"] == {"running": 1, "retrying": 1}
+    assert state_payload(snapshot)["workflow"]["version"] == 2
     running_issue = issue_payload("ENG-1", snapshot)
     retry_issue = issue_payload("ENG-2", snapshot)
     assert running_issue is not None and running_issue["status"] == "running"
@@ -778,4 +781,200 @@ async def test_observability_server_run_retries_and_cleans_up(
         "code_factory.observability.api.server.asyncio.wait_for", fake_wait_for
     )
     await server.run(stop_event)
+    assert events == ["started", "cleanup"]
+
+
+@pytest.mark.asyncio
+async def test_observability_server_rebinds_only_on_effective_endpoint_change(
+    tmp_path: Path,
+) -> None:
+    initial = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md", server={"host": "127.0.0.1", "port": 4000}
+        )
+    )
+    server = ObservabilityHTTPServer(
+        cast(Any, SimpleNamespace(snapshot=lambda: {})),
+        host=initial.settings.server.host,
+        port=initial.settings.server.port,
+        port_override=4567,
+    )
+    assert server._desired_endpoint() == ("127.0.0.1", 4567)
+
+    await server.apply_workflow_snapshot(
+        replace(
+            make_snapshot(
+                write_workflow_file(
+                    tmp_path / "UPDATED_WORKFLOW.md",
+                    server={"host": "127.0.0.1", "port": 9999},
+                )
+            ),
+            version=2,
+        )
+    )
+    assert server._config_event.is_set() is False
+
+    await server.apply_workflow_snapshot(
+        replace(
+            make_snapshot(
+                write_workflow_file(
+                    tmp_path / "UPDATED_HOST_WORKFLOW.md",
+                    server={"host": "0.0.0.0", "port": 9999},
+                )
+            ),
+            version=3,
+        )
+    )
+    assert server._config_event.is_set() is True
+
+
+@pytest.mark.asyncio
+async def test_observability_server_disabled_until_reconfigured_and_helper_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+
+    class FakeOrchestrator:
+        async def snapshot(self) -> dict[str, Any]:
+            return {
+                "running": [],
+                "retrying": [],
+                "agent_totals": {},
+                "rate_limits": {},
+            }
+
+        async def request_refresh(self) -> dict[str, Any]:
+            return {"queued": True}
+
+    class FakeRunner:
+        async def cleanup(self) -> None:
+            events.append("cleanup")
+
+    server = ObservabilityHTTPServer(
+        cast(Any, FakeOrchestrator()), host="127.0.0.1", port=None
+    )
+    stop_event = asyncio.Event()
+
+    async def fake_start_runner() -> FakeRunner:
+        events.append("started")
+        stop_event.set()
+        return FakeRunner()
+
+    async def fake_wait(stop: asyncio.Event, *, timeout: float | None) -> bool:
+        events.append(f"wait:{timeout}")
+        if timeout is None and not events.count("started"):
+            await server.apply_workflow_snapshot(
+                make_snapshot(
+                    write_workflow_file(
+                        tmp_path / "WORKFLOW.md",
+                        server={"host": "127.0.0.1", "port": 4321},
+                    )
+                )
+            )
+            return False
+        return stop.is_set()
+
+    monkeypatch.setattr(server, "_start_runner", fake_start_runner)
+    monkeypatch.setattr(server, "_wait_for_stop_or_config", fake_wait)
+    await server.run(stop_event)
+    assert events == ["wait:None", "started", "wait:None", "cleanup"]
+    monkeypatch.undo()
+
+    await server.apply_workflow_reload_error(RuntimeError("boom"))
+    stop_event.set()
+    assert await server._wait_for_stop_or_config(stop_event, timeout=None) is True
+
+    stop_event.clear()
+    server._config_event.set()
+    assert await server._wait_for_stop_or_config(stop_event, timeout=0.001) is False
+    assert server._config_event.is_set() is False
+
+    server._config_event.set()
+    assert await server._wait_for_stop_or_config(stop_event, timeout=None) is False
+    assert server._config_event.is_set() is False
+
+
+@pytest.mark.asyncio
+async def test_observability_server_run_returns_when_retry_wait_stops() -> None:
+    class FakeOrchestrator:
+        async def snapshot(self) -> dict[str, Any]:
+            return {
+                "running": [],
+                "retrying": [],
+                "agent_totals": {},
+                "rate_limits": {},
+            }
+
+        async def request_refresh(self) -> dict[str, Any]:
+            return {"queued": True}
+
+    server = ObservabilityHTTPServer(
+        cast(Any, FakeOrchestrator()), host="127.0.0.1", port=9999
+    )
+    stop_event = asyncio.Event()
+
+    async def fake_start_runner() -> Any:
+        raise OSError("boom")
+
+    async def fake_wait(stop: asyncio.Event, *, timeout: float | None) -> bool:
+        assert timeout == 5
+        stop.set()
+        return True
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(server, "_start_runner", fake_start_runner)
+    monkeypatch.setattr(server, "_wait_for_stop_or_config", fake_wait)
+    try:
+        await server.run(stop_event)
+    finally:
+        monkeypatch.undo()
+
+
+@pytest.mark.asyncio
+async def test_observability_server_run_retries_loop_when_started_wait_is_not_terminal() -> (
+    None
+):
+    events: list[str] = []
+
+    class FakeOrchestrator:
+        async def snapshot(self) -> dict[str, Any]:
+            return {
+                "running": [],
+                "retrying": [],
+                "agent_totals": {},
+                "rate_limits": {},
+            }
+
+        async def request_refresh(self) -> dict[str, Any]:
+            return {"queued": True}
+
+    class FakeRunner:
+        async def cleanup(self) -> None:
+            events.append("cleanup")
+
+    server = ObservabilityHTTPServer(
+        cast(Any, FakeOrchestrator()), host="127.0.0.1", port=9999
+    )
+    stop_event = asyncio.Event()
+    waits = 0
+
+    async def fake_start_runner() -> FakeRunner:
+        events.append("started")
+        return FakeRunner()
+
+    async def fake_wait(stop: asyncio.Event, *, timeout: float | None) -> bool:
+        nonlocal waits
+        waits += 1
+        if waits == 1:
+            stop.set()
+            return False
+        return True
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(server, "_start_runner", fake_start_runner)
+    monkeypatch.setattr(server, "_wait_for_stop_or_config", fake_wait)
+    try:
+        await server.run(stop_event)
+    finally:
+        monkeypatch.undo()
     assert events == ["started", "cleanup"]

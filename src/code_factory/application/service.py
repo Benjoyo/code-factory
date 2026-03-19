@@ -16,10 +16,9 @@ from ..workflow import WorkflowStoreActor
 from .dashboard import (
     LiveStatusDashboard,
     StatusDashboardContext,
-    dashboard_url,
-    project_url,
 )
 from .dashboard_diagnostics import DashboardDiagnostics
+from .dashboard_workflow import dashboard_url, project_url
 from .logging import configure_logging
 
 LOGGER = logging.getLogger(__name__)
@@ -46,31 +45,53 @@ class CodeFactoryService:
 
         stop_event = asyncio.Event()
         self._install_signal_handlers(stop_event)
-        initial_snapshot = await WorkflowStoreActor(
+        workflow_store = WorkflowStoreActor(
             self.workflow_path, on_snapshot=self._ignore_snapshot
-        ).load_initial_snapshot()
-        validate_dispatch_settings(initial_snapshot.settings)
-        dashboard_enabled = LiveStatusDashboard.enabled(
-            initial_snapshot.settings, sys.stderr
         )
-        diagnostics = DashboardDiagnostics() if dashboard_enabled else None
-        log_path = self._configure_logging(dashboard_enabled, diagnostics)
+        initial_snapshot = await workflow_store.load_initial_snapshot()
+        validate_dispatch_settings(initial_snapshot.settings)
+        dashboard_supported = LiveStatusDashboard.stream_supported(sys.stderr)
+        diagnostics = DashboardDiagnostics() if dashboard_supported else None
+        log_path = self._configure_logging(dashboard_supported, diagnostics)
         self._log_startup(initial_snapshot, log_path=log_path)
 
-        orchestrator = OrchestratorActor(initial_snapshot)
-        workflow_store = WorkflowStoreActor(
-            self.workflow_path,
-            on_snapshot=orchestrator.notify_workflow_updated,
-            on_error=orchestrator.notify_workflow_reload_error,
+        reload_workflow_if_changed = getattr(workflow_store, "reload_if_changed", None)
+        try:
+            orchestrator = OrchestratorActor(
+                initial_snapshot,
+                reload_workflow_if_changed=reload_workflow_if_changed,
+            )
+        except TypeError as exc:
+            if "unexpected keyword argument 'reload_workflow_if_changed'" not in str(
+                exc
+            ):
+                raise
+            orchestrator = OrchestratorActor(initial_snapshot)
+        self._subscribe_workflow_runtime(
+            workflow_store,
+            on_snapshot=getattr(orchestrator, "notify_workflow_updated", None),
+            on_error=getattr(orchestrator, "notify_workflow_reload_error", None),
         )
         self.orchestrator = orchestrator
         self.workflow_store = workflow_store
         await orchestrator.startup_terminal_workspace_cleanup()
 
         http_server = self._build_http_server(initial_snapshot, orchestrator)
+        if http_server is not None:
+            self._subscribe_workflow_runtime(
+                workflow_store,
+                on_snapshot=getattr(http_server, "apply_workflow_snapshot", None),
+                on_error=getattr(http_server, "apply_workflow_reload_error", None),
+            )
         status_dashboard = self._build_status_dashboard(
             initial_snapshot, orchestrator, diagnostics
         )
+        if status_dashboard is not None:
+            self._subscribe_workflow_runtime(
+                workflow_store,
+                on_snapshot=getattr(status_dashboard, "apply_workflow_snapshot", None),
+                on_error=getattr(status_dashboard, "apply_workflow_reload_error", None),
+            )
         async with asyncio.TaskGroup() as task_group:
             task_group.create_task(orchestrator.run(stop_event))
             task_group.create_task(workflow_store.run(stop_event))
@@ -87,10 +108,21 @@ class CodeFactoryService:
         """Placeholder callback used before the orchestrator is wired into the workflow store."""
         return None
 
+    def _subscribe_workflow_runtime(
+        self,
+        workflow_store,
+        *,
+        on_snapshot,
+        on_error,
+    ) -> None:
+        subscribe = getattr(workflow_store, "subscribe", None)
+        if callable(subscribe) and (callable(on_snapshot) or callable(on_error)):
+            subscribe(on_snapshot=on_snapshot, on_error=on_error)
+
     def _build_http_server(
         self, initial_snapshot, orchestrator: OrchestratorActor
     ) -> ObservabilityHTTPServer | None:
-        """Conditionally install the observability API once a valid port is configured."""
+        """Create the observability API manager with the current effective endpoint."""
 
         effective_port = (
             self.port_override
@@ -101,17 +133,27 @@ class CodeFactoryService:
             LOGGER.info(
                 "Observability API disabled; set `server.port` in WORKFLOW.md or pass `--port` to enable it"
             )
-            return None
-        LOGGER.info(
-            "Observability API enabled host=%s port=%s",
-            initial_snapshot.settings.server.host,
-            effective_port,
-        )
-        return ObservabilityHTTPServer(
-            orchestrator,
-            host=initial_snapshot.settings.server.host,
-            port=effective_port,
-        )
+        else:
+            LOGGER.info(
+                "Observability API enabled host=%s port=%s",
+                initial_snapshot.settings.server.host,
+                effective_port,
+            )
+        try:
+            return ObservabilityHTTPServer(
+                orchestrator,
+                host=initial_snapshot.settings.server.host,
+                port=initial_snapshot.settings.server.port,
+                port_override=self.port_override,
+            )
+        except TypeError as exc:
+            if "unexpected keyword argument 'port_override'" not in str(exc):
+                raise
+            return ObservabilityHTTPServer(
+                orchestrator,
+                host=initial_snapshot.settings.server.host,
+                port=effective_port,
+            )
 
     def _build_status_dashboard(
         self,
@@ -121,7 +163,10 @@ class CodeFactoryService:
     ) -> LiveStatusDashboard | None:
         """Create the live TUI dashboard if the workflow declares it."""
 
-        if not LiveStatusDashboard.enabled(initial_snapshot.settings, sys.stderr):
+        if not (
+            LiveStatusDashboard.stream_supported(sys.stderr)
+            or LiveStatusDashboard.enabled(initial_snapshot.settings, sys.stderr)
+        ):
             return None
         return LiveStatusDashboard(
             orchestrator,
@@ -134,7 +179,9 @@ class CodeFactoryService:
                     initial_snapshot.settings.server.host,
                     self._effective_port(initial_snapshot),
                 ),
+                port_override=self.port_override,
             ),
+            stream=sys.stderr,
         )
 
     def _log_startup(self, snapshot, *, log_path: Path | None) -> None:

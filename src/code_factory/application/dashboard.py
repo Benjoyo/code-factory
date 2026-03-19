@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from rich.console import Console, RenderableType
 from rich.live import Live
@@ -10,13 +11,10 @@ from rich.live import Live
 from ..config.models import Settings
 from ..runtime.orchestration import OrchestratorActor
 from ..runtime.support import monotonic_ms
+from ..workflow.models import WorkflowSnapshot
 from .dashboard_diagnostics import DashboardDiagnostics
-from .dashboard_render import (
-    StatusDashboardContext,
-    dashboard_url,
-    project_url,
-    render_status_dashboard,
-)
+from .dashboard_render import StatusDashboardContext, render_status_dashboard
+from .dashboard_workflow import dashboard_url, project_url
 
 __all__ = [
     "LiveStatusDashboard",
@@ -40,44 +38,54 @@ class LiveStatusDashboard:
         context: StatusDashboardContext,
         diagnostics: DashboardDiagnostics | None = None,
         console: Console | None = None,
+        stream: object | None = None,
     ) -> None:
         self._orchestrator = orchestrator
         self._context = context
         self._diagnostics = diagnostics
         self._console = console or Console(stderr=True)
+        self._stream = stream or self._console.file
         self._sleep_ms = max(250, min(settings.observability.refresh_ms, 1_000))
         self._samples: list[tuple[int, int]] = []
         self._last_snapshot_error: str | None = None
+        self._enabled = bool(getattr(settings.observability, "dashboard_enabled", True))
+        self._config_event = asyncio.Event()
+
+    @staticmethod
+    def stream_supported(stream: object) -> bool:
+        """Positive when the stream appears attached to a tty."""
+
+        is_tty = getattr(stream, "isatty", None)
+        return bool(callable(is_tty) and is_tty())
 
     @staticmethod
     def enabled(settings: Settings, stream: object) -> bool:
         """Positive when the stream appears attached to a tty and dashboards are enabled."""
 
-        is_tty = getattr(stream, "isatty", None)
-        return bool(
-            settings.observability.dashboard_enabled and callable(is_tty) and is_tty()
-        )
+        enabled = getattr(settings.observability, "dashboard_enabled", True)
+        return enabled and LiveStatusDashboard.stream_supported(stream)
 
     async def run(self, stop_event: asyncio.Event) -> None:
         """Refresh the live renderable at `refresh_ms` until the stop event fires."""
 
-        with Live(
-            self._render_unavailable(),
-            auto_refresh=False,
-            console=self._console,
-            screen=False,
-            vertical_overflow="ellipsis",
-        ) as live:
-            while True:
-                live.update(await self._snapshot_renderable(), refresh=True)
-                if stop_event.is_set():
+        while not stop_event.is_set():
+            if not self._enabled:
+                if await self._wait_for_stop_or_config(stop_event, timeout=None):
                     return
-                try:
-                    await asyncio.wait_for(
-                        stop_event.wait(), timeout=self._sleep_ms / 1000
-                    )
-                except TimeoutError:
-                    pass
+                continue
+            with Live(
+                self._render_unavailable(),
+                auto_refresh=False,
+                console=self._console,
+                screen=False,
+                vertical_overflow="ellipsis",
+            ) as live:
+                while self._enabled and not stop_event.is_set():
+                    live.update(await self._snapshot_renderable(), refresh=True)
+                    if await self._wait_for_stop_or_config(
+                        stop_event, timeout=self._sleep_ms / 1000
+                    ):
+                        return
 
     async def _snapshot_renderable(self) -> RenderableType:
         """Grab the latest snapshot, then paint the dashboard or a failure notice."""
@@ -98,6 +106,7 @@ class LiveStatusDashboard:
             return self._render_unavailable()
         now_ms = monotonic_ms()
         self._last_snapshot_error = None
+        self._sleep_ms = _dashboard_refresh_ms(snapshot, self._sleep_ms)
         total_tokens = _total_tokens(snapshot)
         # Keep only the samples in the configured lookback so TPS reflects the last few seconds.
         self._samples = [
@@ -128,6 +137,46 @@ class LiveStatusDashboard:
     def _recent_logs(self):
         return self._diagnostics.entries() if self._diagnostics is not None else ()
 
+    async def apply_workflow_snapshot(self, snapshot: WorkflowSnapshot) -> None:
+        self._enabled = bool(
+            getattr(snapshot.settings.observability, "dashboard_enabled", True)
+        )
+        self._sleep_ms = max(
+            250, min(snapshot.settings.observability.refresh_ms, 1_000)
+        )
+        self._config_event.set()
+
+    async def apply_workflow_reload_error(self, _error: Any) -> None:
+        self._config_event.set()
+
+    async def _wait_for_stop_or_config(
+        self, stop_event: asyncio.Event, *, timeout: float | None
+    ) -> bool:
+        if stop_event.is_set():
+            return True
+        if timeout is not None:
+            try:
+                await asyncio.wait_for(self._config_event.wait(), timeout=timeout)
+            except TimeoutError:
+                return stop_event.is_set()
+            self._config_event.clear()
+            return stop_event.is_set()
+        stop_waiter = asyncio.create_task(stop_event.wait())
+        config_waiter = asyncio.create_task(self._config_event.wait())
+        try:
+            done, pending = await asyncio.wait(
+                {stop_waiter, config_waiter},
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for task in (stop_waiter, config_waiter):
+                if not task.done():
+                    task.cancel()
+        if config_waiter in done:
+            self._config_event.clear()
+        return stop_waiter in done or stop_event.is_set()
+
 
 def _total_tokens(snapshot: dict[str, object]) -> int:
     """Safely extract the total tokens field from the dashboard snapshot."""
@@ -155,3 +204,16 @@ def _rolling_tps(
     if elapsed_ms <= 0:
         return 0.0
     return max(0, current_tokens - start_tokens) / (elapsed_ms / 1000)
+
+
+def _dashboard_refresh_ms(snapshot: dict[str, object], current_ms: int) -> int:
+    workflow = snapshot.get("workflow")
+    if not isinstance(workflow, dict):
+        return current_ms
+    observability = workflow.get("observability")
+    if not isinstance(observability, dict):
+        return current_ms
+    value = observability.get("refresh_ms")
+    if isinstance(value, int):
+        return max(250, min(value, 1_000))
+    return current_ms

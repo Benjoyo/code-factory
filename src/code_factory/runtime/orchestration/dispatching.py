@@ -31,6 +31,7 @@ class DispatchingMixin:
     async def _run_poll_cycle(self: OrchestratorContext) -> None:
         """Execute a poll pass, reset poll flags, and schedule the next run."""
         try:
+            await self._ensure_workflow_current()
             await self._maybe_dispatch()
         finally:
             self.poll_check_in_progress = False

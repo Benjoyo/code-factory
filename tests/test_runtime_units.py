@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -125,6 +126,7 @@ async def test_runtime_policy_and_snapshot_helpers(tmp_path: Path) -> None:
     payload = snapshot_payload(
         {"issue-1": running_entry},
         {"issue-1": retry_entry},
+        workflow_snapshot=actor.workflow_snapshot,
         agent_totals={"total_tokens": 3},
         rate_limits={"primary": {}},
         poll_check_in_progress=True,
@@ -134,8 +136,24 @@ async def test_runtime_policy_and_snapshot_helpers(tmp_path: Path) -> None:
     )
     assert payload["running"][0]["issue_id"] == "issue-1"
     assert payload["retrying"][0]["attempt"] == 2
+    assert payload["workflow"]["agent"]["max_concurrent_agents"] == 2
     assert payload["polling"]["next_poll_in_ms"] == 400
     assert actor.snapshot_now()["polling"]["poll_interval_ms"] == 30_000
+    assert actor.snapshot_now()["workflow"]["version"] == 1
+    assert (
+        snapshot_payload(
+            {},
+            {},
+            workflow_snapshot=None,
+            agent_totals={},
+            rate_limits=None,
+            poll_check_in_progress=False,
+            next_poll_due_at_ms=None,
+            poll_interval_ms=200,
+            now_ms=100,
+        )["workflow"]["reload_error"]
+        is None
+    )
 
 
 def test_runtime_token_helpers() -> None:
@@ -446,3 +464,45 @@ async def test_orchestrator_message_and_refresh_paths(tmp_path: Path) -> None:
 
     await actor._handle_message(WorkflowReloadError("boom"))
     assert actor.workflow_reload_error == "'boom'"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_refresh_applies_reloaded_snapshot_immediately(
+    tmp_path: Path,
+) -> None:
+    original = make_snapshot(write_workflow_file(tmp_path / "WORKFLOW.md"))
+    updated = replace(
+        make_snapshot(
+            write_workflow_file(
+                tmp_path / "UPDATED_WORKFLOW.md",
+                agent={"max_concurrent_agents": 2},
+            )
+        ),
+        version=2,
+    )
+
+    async def fake_reload() -> Any:
+        return updated
+
+    actor = OrchestratorActor(
+        original,
+        tracker_factory=lambda settings: MemoryTracker([]),
+        reload_workflow_if_changed=fake_reload,
+    )
+    future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+    await actor._handle_message(RefreshRequest(future))
+    assert future.result()["queued"] is True
+    assert actor.workflow_snapshot.version == 2
+    assert actor.settings.agent.max_concurrent_agents == 2
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_replace_workflow_ignores_identical_snapshot(
+    tmp_path: Path,
+) -> None:
+    actor = make_actor(tmp_path)
+    current = actor.workflow_snapshot
+    original_tracker = actor.tracker
+    await actor._replace_workflow(current)
+    assert actor.workflow_snapshot is current
+    assert actor.tracker is original_tracker
