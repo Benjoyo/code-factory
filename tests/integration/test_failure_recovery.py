@@ -381,10 +381,8 @@ async def test_integration_reconciliation_refresh_failure_non_active_and_missing
         monkeypatch=monkeypatch,
         issues=[issue_one],
         workflow_overrides={
-            "tracker": {
-                "active_states": ["Todo"],
-                "terminal_states": ["Done", "Canceled"],
-            },
+            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "states": {"Todo": {"prompt": "default"}},
             "codex": {"stall_timeout_ms": 0},
         },
         plans_by_identifier={

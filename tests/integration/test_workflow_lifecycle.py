@@ -25,9 +25,11 @@ async def test_integration_worker_driven_lifecycle_runs_hooks_and_cleans_workspa
         monkeypatch=monkeypatch,
         issues=[issue],
         workflow_overrides={
-            "tracker": {
-                "active_states": ["Todo", "Review", "Merging"],
-                "terminal_states": ["Done", "Canceled"],
+            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "states": {
+                "Todo": {"prompt": "default"},
+                "Review": {"prompt": "default"},
+                "Merging": {"prompt": "default"},
             },
             "hooks": {
                 "after_create": hook_script(hook_log, "after_create"),
@@ -106,9 +108,11 @@ async def test_integration_review_to_rework_spans_multiple_worker_lifetimes(
         monkeypatch=monkeypatch,
         issues=[issue],
         workflow_overrides={
-            "tracker": {
-                "active_states": ["Todo", "Review", "Rework"],
-                "terminal_states": ["Done", "Canceled"],
+            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "states": {
+                "Todo": {"prompt": "default"},
+                "Review": {"prompt": "default"},
+                "Rework": {"prompt": "default"},
             },
             "hooks": {
                 "after_create": hook_script(hook_log, "after_create"),
@@ -144,6 +148,55 @@ async def test_integration_review_to_rework_spans_multiple_worker_lifetimes(
         assert len(prompts) == 3
         assert prompts[1].startswith("Continuation guidance")
         assert not prompts[2].startswith("Continuation guidance")
+
+
+@pytest.mark.asyncio
+async def test_integration_multi_state_profiles_restart_only_on_profile_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    issue = make_issue(id="issue-203", identifier="ENG-203", state="Todo")
+
+    async with IntegrationHarness(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        issues=[issue],
+        workflow_overrides={
+            "prompt": (
+                "# prompt: default\n"
+                "Execution prompt for {{ issue.state }}.\n\n"
+                "# prompt: merge\n"
+                "Merge prompt for {{ issue.state }}.\n"
+            ),
+            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "states": {
+                "Todo": {"prompt": "default"},
+                "In Progress": {"prompt": "default"},
+                "Merging": {
+                    "prompt": "merge",
+                    "codex": {"model": "gpt-5.4-mini", "reasoning_effort": "low"},
+                },
+            },
+            "agent": {"max_turns": 5},
+        },
+        plans_by_identifier={
+            "ENG-203": [
+                TurnPlan(state="In Progress", comment="started"),
+                TurnPlan(state="Merging", comment="ready to merge"),
+                TurnPlan(state="Done", comment="merged"),
+            ]
+        },
+    ) as harness:
+        await harness.refresh()
+        await harness.wait_until(lambda: issue_state(harness, "issue-203") == "Done")
+
+        prompts = harness.controller.prompt_log["ENG-203"]
+        workspace = str(tmp_path / "workspaces" / "ENG-203")
+        assert len(prompts) == 3
+        assert "Execution prompt for Todo." in prompts[0]
+        assert prompts[1].startswith("Continuation guidance")
+        assert "Merge prompt for Merging." in prompts[2]
+        assert not prompts[2].startswith("Continuation guidance")
+        assert harness.controller.started_workspaces == [workspace, workspace]
 
 
 @pytest.mark.asyncio
@@ -199,9 +252,10 @@ async def test_integration_global_and_state_concurrency_limits(
         monkeypatch=monkeypatch,
         issues=issues,
         workflow_overrides={
-            "tracker": {
-                "active_states": ["Todo", "Review"],
-                "terminal_states": ["Done", "Canceled"],
+            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "states": {
+                "Todo": {"prompt": "default"},
+                "Review": {"prompt": "default"},
             },
             "agent": {
                 "max_concurrent_agents": 2,
@@ -324,11 +378,8 @@ async def test_integration_workflow_reload_applies_new_config_and_invalid_reload
     def rewrite(before_run_label: str, active_states: list[str]) -> None:
         write_workflow_file(
             tmp_path / "WORKFLOW.md",
-            tracker={
-                "kind": "memory",
-                "active_states": active_states,
-                "terminal_states": ["Done", "Canceled"],
-            },
+            tracker={"kind": "memory", "terminal_states": ["Done", "Canceled"]},
+            states={state: {"prompt": "default"} for state in active_states},
             polling={"interval_ms": 25},
             workspace={"root": str(tmp_path / "workspaces")},
             codex={"command": "dummy-agent"},
@@ -341,10 +392,8 @@ async def test_integration_workflow_reload_applies_new_config_and_invalid_reload
         issues=[issue_one, issue_two],
         run_workflow_store=True,
         workflow_overrides={
-            "tracker": {
-                "active_states": ["Todo"],
-                "terminal_states": ["Done", "Canceled"],
-            },
+            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "states": {"Todo": {"prompt": "default"}},
             "hooks": {"before_run": hook_script(hook_log, "v1")},
         },
         plans_by_identifier={

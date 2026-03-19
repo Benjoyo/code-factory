@@ -45,7 +45,7 @@ def render_default_workflow(values: WorkflowTemplateValues) -> str:
         "TRACKER_KIND": yaml_string(values.tracker_kind),
         "PROJECT_SLUG": yaml_string(values.project_slug),
         "GIT_REPO": shlex.quote(values.git_repo),
-        "ACTIVE_STATES": yaml_list(values.active_states),
+        "STATE_PROFILES": yaml_state_profiles(values.active_states),
         "TERMINAL_STATES": yaml_list(values.terminal_states),
         "WORKSPACE_ROOT": yaml_string(values.workspace_root),
         "MAX_CONCURRENT_AGENTS": str(values.max_concurrent_agents),
@@ -80,6 +80,14 @@ def yaml_list(values: tuple[str, ...]) -> str:
     """Render a sequence as an indented YAML list fragment."""
 
     return "\n".join(f"    - {yaml_string(value)}" for value in values)
+
+
+def yaml_state_profiles(values: tuple[str, ...]) -> str:
+    """Render the starter state-profile mapping that points to one shared prompt."""
+
+    return "\n".join(
+        f"  {yaml_string(value)}:\n    prompt: default" for value in values
+    )
 
 
 def yaml_string(value: str) -> str:

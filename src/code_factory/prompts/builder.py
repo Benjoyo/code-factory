@@ -16,7 +16,9 @@ def build_prompt(
     *,
     attempt: int | None = None,
 ) -> str:
-    prompt_template = workflow_prompt(workflow_snapshot.prompt_template)
+    prompt_template = workflow_prompt(
+        workflow_snapshot.prompt_template_for_state(issue.state)
+    )
     try:
         template = LIQUID_ENV.from_string(prompt_template)
     except Exception as exc:

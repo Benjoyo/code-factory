@@ -308,11 +308,17 @@ Parsing rules:
 - If front matter is absent, treat the entire file as prompt body and use an empty config map.
 - YAML front matter must decode to a map/object; non-map YAML is an error.
 - Prompt body is trimmed before use.
+- If front matter contains `states`, the prompt body switches to named-section mode:
+  - Prompt sections are declared with level-1 headings matching `# prompt: <id>`.
+  - Section content is the body until the next prompt heading.
+  - Non-empty content outside prompt sections is invalid.
+  - Duplicate prompt ids are invalid.
 
 Returned workflow object:
 
 - `config`: front matter root object (not nested under a `config` key).
-- `prompt_template`: trimmed Markdown body.
+- `prompt_template`: empty string after prompt sections are extracted.
+- `prompt_sections`: prompt-section map.
 
 ### 5.3 Front Matter Schema
 
@@ -324,6 +330,7 @@ Top-level keys:
 - `hooks`
 - `agent`
 - `codex`
+- `states`
 
 Unknown keys should be ignored for forward compatibility.
 
@@ -455,6 +462,9 @@ fields locally if they want stricter startup checks.
 
 The Markdown body of `WORKFLOW.md` is the per-issue prompt template.
 
+If `states` is present, the body becomes a set of named prompt sections instead
+of one monolithic prompt.
+
 Rendering requirements:
 
 - Use a strict template engine (Liquid-compatible semantics are sufficient).
@@ -563,8 +573,11 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `tracker.endpoint`: string, default `https://api.linear.app/graphql` when `tracker.kind=linear`
 - `tracker.api_key`: string or `$VAR`, canonical env `LINEAR_API_KEY` when `tracker.kind=linear`
 - `tracker.project_slug`: string, required when `tracker.kind=linear`
-- `tracker.active_states`: list of strings, default `["Todo", "In Progress"]`
 - `tracker.terminal_states`: list of strings, default `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]`
+- `states`: object mapping tracker state names to state profiles, required
+- `states.<state>.prompt`: string or non-empty list of strings referencing prompt section ids
+- `states.<state>.codex.model`: string or null, optional
+- `states.<state>.codex.reasoning_effort`: string or null, optional
 - `polling.interval_ms`: integer, default `30000`
 - `workspace.root`: path, default `<system-temp>/code-factory-workspaces`
 - `hooks.after_create`: shell script or null
@@ -1237,7 +1250,7 @@ Symphony does not require first-class tracker write APIs in the orchestrator.
 
 Inputs to prompt rendering:
 
-- `workflow.prompt_template`
+- the composed prompt for the active state
 - normalized `issue` object
 - optional `attempt` integer (retry/continuation metadata)
 
@@ -1256,6 +1269,11 @@ instructions for:
 - first run (`attempt` null or absent)
 - continuation run after a successful prior session
 - retry after error/timeout/stall
+
+If an issue remains active but its effective state profile changes between turns
+(prompt content or allowed per-state codex model/reasoning settings), the
+current worker should stop after the completed turn and the normal continuation
+retry should start a fresh session in the same workspace.
 
 ### 12.4 Failure Semantics
 

@@ -56,8 +56,9 @@ def test_render_default_workflow_replaces_template_tokens() -> None:
     assert '"demo-project"' in rendered
     assert "git clone --depth 1 git@github.com:example/demo.git ." in rendered
     assert "make setup" not in rendered
-    assert '    - "Todo"' in rendered
+    assert '  "Todo":\n    prompt: default' in rendered
     assert "  max_concurrent_agents: 2" in rendered
+    assert "# prompt: default" in rendered
     assert "{{ issue.identifier }}" in rendered
 
 
@@ -65,7 +66,7 @@ def test_default_workflow_template_contains_meta_tokens() -> None:
     template = default_workflow_template()
 
     assert token("PROJECT_SLUG") in template
-    assert token("ACTIVE_STATES") in template
+    assert token("STATE_PROFILES") in template
 
 
 def test_initialize_workflow_writes_rendered_template(tmp_path: Path) -> None:

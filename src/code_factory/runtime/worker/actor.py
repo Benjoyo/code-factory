@@ -45,9 +45,7 @@ class IssueWorker:
         self.stop_event = asyncio.Event()
         self.workspace_path: str | None = None
         self._session: CodingAgentSession | None = None
-        self._agent_runtime: CodingAgentRuntime = build_coding_agent_runtime(
-            workflow_snapshot.settings, self.tracker
-        )
+        self._agent_runtime: CodingAgentRuntime | None = None
 
     async def stop(self, _reason: str | None = None) -> None:
         """Request the worker to halt and stop the active agent session if running."""
@@ -67,7 +65,12 @@ class IssueWorker:
                 normal = True
                 reason = "stopped"
                 return
-            session = await self._agent_runtime.start_session(workspace.path)
+            if self._agent_runtime is None:
+                self._agent_runtime = build_coding_agent_runtime(
+                    self.workflow_snapshot.settings_for_state(self.issue.state),
+                    self.tracker,
+                )
+            session = await self._require_agent_runtime().start_session(workspace.path)
             self._session = session
             try:
                 await self._run_turns(session)
@@ -109,7 +112,7 @@ class IssueWorker:
             if self.stop_event.is_set():
                 return
             prompt = self._turn_prompt(current_issue, turn_number, max_turns)
-            await self._agent_runtime.run_turn(
+            await self._require_agent_runtime().run_turn(
                 session, prompt, current_issue, on_message=self._on_agent_message
             )
             if self.stop_event.is_set():
@@ -118,6 +121,8 @@ class IssueWorker:
             if refreshed_issue is None or not tracker_state_is_active(
                 self.workflow_snapshot.settings, refreshed_issue.state
             ):
+                return
+            if self._state_profile_changed(current_issue, refreshed_issue):
                 return
             # Always base the next turn on the tracker-reported issue rather than the previous copy.
             current_issue = refreshed_issue
@@ -137,3 +142,16 @@ class IssueWorker:
         """Forward agent messages back to the orchestrator queue for metrics."""
         if self.issue.id:
             await self.queue.put(AgentWorkerUpdate(self.issue.id, message))
+
+    def _state_profile_changed(
+        self, current_issue: Issue, refreshed_issue: Issue
+    ) -> bool:
+        """Return True when the effective prompt/runtime profile changed mid-run."""
+
+        return self.workflow_snapshot.state_profile_fingerprint(
+            current_issue.state
+        ) != self.workflow_snapshot.state_profile_fingerprint(refreshed_issue.state)
+
+    def _require_agent_runtime(self) -> CodingAgentRuntime:
+        assert self._agent_runtime is not None
+        return self._agent_runtime

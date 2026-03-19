@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
 from ..config.models import Settings
+from ..issues import normalize_issue_state
+from .state_profiles import WorkflowStateProfile
 
 
 def utc_now() -> datetime:
@@ -30,6 +32,7 @@ class WorkflowDefinition:
 
     config: dict[str, Any]
     prompt_template: str
+    prompt_sections: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +44,7 @@ class WorkflowSnapshot:
     stamp: FileStamp
     definition: WorkflowDefinition
     settings: Settings
+    state_profiles: dict[str, WorkflowStateProfile] = field(default_factory=dict)
     loaded_at: datetime = field(default_factory=utc_now)
 
     @property
@@ -48,6 +52,47 @@ class WorkflowSnapshot:
         """Expose the prompt directly so callers do not reach into `definition`."""
 
         return self.definition.prompt_template
+
+    def prompt_template_for_state(self, state_name: str | None) -> str:
+        """Resolve the state-specific prompt body when the workflow defines profiles."""
+
+        profile = self._state_profile(state_name)
+        if profile is None:
+            return self.definition.prompt_template
+        return "\n\n".join(
+            self.definition.prompt_sections[prompt_ref]
+            for prompt_ref in profile.prompt_refs
+        ).strip()
+
+    def settings_for_state(self, state_name: str | None) -> Settings:
+        """Return the effective settings for the provided tracker state."""
+
+        profile = self._state_profile(state_name)
+        if profile is None:
+            return self.settings
+        return replace(
+            self.settings,
+            coding_agent=replace(
+                self.settings.coding_agent,
+                model=profile.codex_model(self.settings.coding_agent.model),
+                reasoning_effort=profile.codex_reasoning_effort(
+                    self.settings.coding_agent.reasoning_effort
+                ),
+            ),
+        )
+
+    def state_profile_fingerprint(self, state_name: str | None) -> tuple[str, ...]:
+        """Describe the effective prompt/runtime profile for change detection."""
+
+        settings = self.settings_for_state(state_name)
+        return (
+            self.prompt_template_for_state(state_name),
+            settings.coding_agent.model or "",
+            settings.coding_agent.reasoning_effort or "",
+        )
+
+    def _state_profile(self, state_name: str | None) -> WorkflowStateProfile | None:
+        return self.state_profiles.get(normalize_issue_state(state_name))
 
 
 @dataclass(slots=True)

@@ -15,7 +15,7 @@ class TrackerSettings:
     api_key: str | None = None
     project_slug: str | None = None
     assignee: str | None = None
-    active_states: tuple[str, ...] = ("Todo", "In Progress")
+    active_states: tuple[str, ...] = ()
     terminal_states: tuple[str, ...] = (
         "Closed",
         "Cancelled",

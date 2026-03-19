@@ -102,7 +102,9 @@ def test_tracker_base_build_validate_and_parse(
     validate_tracker_settings(linear_settings)
     assert validate_calls == [linear_settings]
 
-    tracker = parse_tracker_settings({"tracker": {"kind": "memory"}})
+    tracker = parse_tracker_settings(
+        {"tracker": {"kind": "memory"}, "states": {"Todo": {"prompt": "default"}}}
+    )
     assert tracker.kind == "memory"
     parsed_linear_tracker = linear_settings.tracker
 
@@ -110,7 +112,9 @@ def test_tracker_base_build_validate_and_parse(
         "code_factory.trackers.linear.config.parse_tracker_settings",
         lambda config: parse_calls.append(config) or parsed_linear_tracker,
     )
-    parse_tracker_settings({"tracker": {"kind": "linear"}})
+    parse_tracker_settings(
+        {"tracker": {"kind": "linear"}, "states": {"Todo": {"prompt": "default"}}}
+    )
     assert parse_calls
 
 
@@ -119,7 +123,9 @@ def test_linear_config_defaults_env_and_validation(
 ) -> None:
     monkeypatch.setenv("LINEAR_API_KEY", "env-token")
     monkeypatch.setenv("LINEAR_ASSIGNEE", "user-1")
-    tracker = parse_linear_tracker_settings({"tracker": {"kind": "linear"}})
+    tracker = parse_linear_tracker_settings(
+        {"tracker": {"kind": "linear"}, "states": {"Todo": {"prompt": "default"}}}
+    )
     assert tracker.kind == "linear"
     assert tracker.api_key == "env-token"
     assert tracker.assignee == "user-1"

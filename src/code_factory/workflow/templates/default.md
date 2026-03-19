@@ -2,10 +2,10 @@
 tracker:
   kind: [[CF_TRACKER_KIND]]
   project_slug: [[CF_PROJECT_SLUG]]
-  active_states:
-[[CF_ACTIVE_STATES]]
   terminal_states:
 [[CF_TERMINAL_STATES]]
+states:
+[[CF_STATE_PROFILES]]
 polling:
   interval_ms: 5000
 workspace:
@@ -34,6 +34,8 @@ codex:
 observability:
   dashboard_enabled: true
 ---
+
+# prompt: default
 
 You are working on a Linear ticket `{{ issue.identifier }}`
 

@@ -22,8 +22,10 @@ uv run cf init
 
 `cf init` now walks you through the starter values with Rich prompts, renders a
 project-specific `WORKFLOW.md`, and copies this repo's bundled skills into
-`./.agents/skills`. Re-run with `--force` if you want to overwrite an existing
-workflow or skills bundle.
+`./.agents/skills`. The starter workflow now uses the optional `states` mapping
+plus a shared `# prompt: default` section so it preserves the current monolithic
+behavior while making state-specific prompts easy to split later. Re-run with
+`--force` if you want to overwrite an existing workflow or skills bundle.
 
 ## Running the Service
 
@@ -55,8 +57,8 @@ cf serve [OPTIONS] [WORKFLOW]
 
 - Prompts for tracker kind, project slug, git repo, state lists, workspace
   root, and max concurrent agents.
-- Renders `./WORKFLOW.md` from the bundled meta-template and keeps the rest of
-  the workflow on the shipped defaults.
+- Renders `./WORKFLOW.md` from the bundled meta-template, using the new
+  `states` frontmatter mapping and one shared `# prompt: default` body section.
 - Copies the packaged skill directories to `./.agents/skills`.
 - Refuses to overwrite an existing workflow or skills bundle unless `--force`
   is passed.
@@ -126,8 +128,22 @@ curl http://127.0.0.1:4000/api/v1/state
 - Active and terminal states
 - Workspace root and lifecycle hooks
 - Codex app-server command, model selection, and sandbox settings
-- Prompt template used for the first turn of each worker attempt
+- State-specific prompt sections used for the first turn of each worker attempt
 - Optional HTTP server host/port
+
+`WORKFLOW.md` uses the top-level `states` mapping as the source of truth for
+active workflow states:
+
+- Active states are derived from `states.keys()`.
+- The Markdown body must be split into named `# prompt: <id>` sections.
+- Each state maps to a prompt section id or list of ids.
+- Only `codex.model` and `codex.reasoning_effort` can be overridden per state.
+
+When an issue stays active across turns, the worker keeps the same live session
+only if the effective state profile is unchanged. If the prompt or allowed
+per-state codex settings change, the current worker ends after the completed
+turn and the existing continuation retry starts a fresh session in the same
+workspace.
 
 If you want parity with the reference behavior, start from the shipped Elixir workflow and adjust only the repo-specific pieces such as `tracker.project_slug`, workspace hooks, and any local paths.
 

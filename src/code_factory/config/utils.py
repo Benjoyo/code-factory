@@ -103,6 +103,27 @@ def string_list(
     return tuple(items)
 
 
+def configured_active_states(
+    config: Mapping[str, Any], tracker_raw: Mapping[str, Any]
+) -> tuple[str, ...]:
+    """Resolve active states from the required top-level `states` mapping."""
+
+    raw_states = config.get("states")
+    if raw_states is None:
+        raise ConfigValidationError("states is required")
+    if not isinstance(raw_states, Mapping):
+        raise ConfigValidationError("states must be an object")
+    active_states: list[str] = []
+    for raw_state_name in raw_states.keys():
+        state_name = str(raw_state_name).strip()
+        if not state_name:
+            raise ConfigValidationError("states keys must not be blank")
+        active_states.append(state_name)
+    if not active_states:
+        raise ConfigValidationError("states must define at least one active state")
+    return tuple(active_states)
+
+
 def normalize_state_limits(value: Any, field_name: str) -> dict[str, int]:
     if value is None:
         return {}

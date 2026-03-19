@@ -13,6 +13,7 @@ from watchfiles import awatch
 from ..config import parse_settings
 from .loader import current_stamp, load_workflow
 from .models import WorkflowSnapshot, WorkflowStoreState
+from .state_profiles import parse_state_profiles
 
 LOGGER = logging.getLogger(__name__)
 
@@ -61,6 +62,9 @@ class WorkflowStoreActor:
 
         definition = load_workflow(self.path)
         settings = parse_settings(definition.config)
+        state_profiles = parse_state_profiles(
+            definition.config, definition.prompt_sections
+        )
         stamp = current_stamp(self.path)
         self._state = WorkflowStoreState(
             path=self.path, stamp=stamp, workflow=definition, version=1
@@ -71,6 +75,7 @@ class WorkflowStoreActor:
             stamp=stamp,
             definition=definition,
             settings=settings,
+            state_profiles=state_profiles,
         )
         return self._snapshot
 
@@ -110,6 +115,9 @@ class WorkflowStoreActor:
         try:
             definition = load_workflow(self.path)
             settings = parse_settings(definition.config)
+            state_profiles = parse_state_profiles(
+                definition.config, definition.prompt_sections
+            )
         except Exception as exc:
             await self._handle_reload_error(exc)
             return None
@@ -128,6 +136,7 @@ class WorkflowStoreActor:
             stamp=stamp,
             definition=definition,
             settings=settings,
+            state_profiles=state_profiles,
         )
         await self._publish_snapshot(self._snapshot)
         return self._snapshot

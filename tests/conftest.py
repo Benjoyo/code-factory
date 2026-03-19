@@ -11,8 +11,9 @@ import yaml
 from code_factory.config import parse_settings
 from code_factory.issues import Issue
 from code_factory.workflow import WorkflowSnapshot, current_stamp, load_workflow
+from code_factory.workflow.state_profiles import parse_state_profiles
 
-DEFAULT_PROMPT = "You are an agent for this repository."
+DEFAULT_PROMPT = "# prompt: default\nYou are an agent for this repository."
 
 
 def default_workflow_config() -> dict[str, Any]:
@@ -23,8 +24,11 @@ def default_workflow_config() -> dict[str, Any]:
             "api_key": "token",
             "project_slug": "project",
             "assignee": None,
-            "active_states": ["Todo", "In Progress"],
             "terminal_states": ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
+        },
+        "states": {
+            "Todo": {"prompt": "default"},
+            "In Progress": {"prompt": "default"},
         },
         "polling": {"interval_ms": 30_000},
         "workspace": {"root": os.path.join("/tmp", "code-factory-workspaces")},
@@ -76,19 +80,26 @@ def write_workflow_file(
 ) -> Path:
     config = deep_merge(default_workflow_config(), overrides)
     yaml_body = yaml.safe_dump(config, sort_keys=False)
-    path.write_text(f"---\n{yaml_body}---\n{prompt}\n", encoding="utf-8")
+    rendered_prompt = (
+        prompt
+        if "# prompt:" in prompt
+        else f"# prompt: default\n{prompt}".rstrip() + "\n"
+    )
+    path.write_text(f"---\n{yaml_body}---\n{rendered_prompt}\n", encoding="utf-8")
     return path
 
 
 def make_snapshot(workflow_path: Path) -> WorkflowSnapshot:
     definition = load_workflow(str(workflow_path))
     settings = parse_settings(definition.config)
+    state_profiles = parse_state_profiles(definition.config, definition.prompt_sections)
     return WorkflowSnapshot(
         version=1,
         path=str(workflow_path),
         stamp=current_stamp(str(workflow_path)),
         definition=definition,
         settings=settings,
+        state_profiles=state_profiles,
     )
 
 

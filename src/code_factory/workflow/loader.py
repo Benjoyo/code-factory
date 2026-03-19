@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from ..errors import WorkflowLoadError
 from .models import FileStamp, WorkflowDefinition
 
 DEFAULT_WORKFLOW_FILENAME = "WORKFLOW.md"
+PROMPT_SECTION_HEADING = re.compile(r"^#\s+prompt:\s*(.+?)\s*$")
 
 
 def workflow_file_path(selected_path: str | None = None) -> str:
@@ -39,10 +41,13 @@ def parse_workflow(content: str) -> WorkflowDefinition:
     """Split the markdown document into config front matter and prompt template."""
 
     front_matter_lines, prompt_lines = split_front_matter(content)
+    config = front_matter_yaml_to_map(front_matter_lines)
     prompt = "\n".join(prompt_lines).strip()
+    prompt_sections = parse_prompt_sections(prompt_lines) if "states" in config else {}
     return WorkflowDefinition(
-        config=front_matter_yaml_to_map(front_matter_lines),
-        prompt_template=prompt,
+        config=config,
+        prompt_template="" if prompt_sections else prompt,
+        prompt_sections=prompt_sections,
     )
 
 
@@ -78,6 +83,51 @@ def front_matter_yaml_to_map(lines: list[str]) -> dict[str, Any]:
     if not isinstance(decoded, dict):
         raise WorkflowLoadError("workflow_front_matter_not_a_map")
     return decoded
+
+
+def parse_prompt_sections(lines: list[str]) -> dict[str, str]:
+    """Parse named prompt sections for multi-state workflows."""
+
+    sections: dict[str, str] = {}
+    current_name: str | None = None
+    current_lines: list[str] = []
+    for line in lines:
+        section_match = PROMPT_SECTION_HEADING.match(line)
+        if section_match is not None:
+            current_name = finalize_prompt_section(
+                sections, current_name, current_lines
+            )
+            current_lines = []
+            prompt_name = section_match.group(1).strip()
+            if not prompt_name:
+                raise WorkflowLoadError("workflow_prompt_section_name_blank")
+            if prompt_name in sections or prompt_name == current_name:
+                raise WorkflowLoadError(
+                    ("workflow_prompt_section_duplicate", prompt_name)
+                )
+            current_name = prompt_name
+            continue
+        if current_name is None:
+            if line.strip():
+                raise WorkflowLoadError("workflow_prompt_section_stray_content")
+            continue
+        current_lines.append(line)
+
+    finalize_prompt_section(sections, current_name, current_lines)
+    if not sections:
+        raise WorkflowLoadError("workflow_prompt_sections_missing")
+    return sections
+
+
+def finalize_prompt_section(
+    sections: dict[str, str], current_name: str | None, current_lines: list[str]
+) -> str | None:
+    """Write the current prompt section back into the parsed section map."""
+
+    if current_name is None:
+        return None
+    sections[current_name] = "\n".join(current_lines).strip()
+    return None
 
 
 def current_stamp(path: str) -> FileStamp:

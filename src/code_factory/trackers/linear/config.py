@@ -8,6 +8,7 @@ from typing import Any
 
 from ...config.models import Settings, TrackerSettings
 from ...config.utils import (
+    configured_active_states,
     optional_string,
     require_mapping,
     resolve_secret_setting,
@@ -60,11 +61,7 @@ def parse_tracker_settings(config: Mapping[str, Any] | Any) -> TrackerSettings:
             os.getenv("LINEAR_ASSIGNEE"),
             "tracker.assignee",
         ),
-        active_states=string_list(
-            tracker_raw.get("active_states"),
-            "tracker.active_states",
-            ("Todo", "In Progress"),
-        ),
+        active_states=configured_active_states(config, tracker_raw),
         terminal_states=string_list(
             tracker_raw.get("terminal_states"),
             "tracker.terminal_states",

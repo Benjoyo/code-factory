@@ -53,6 +53,101 @@ def test_config_defaults_and_env_resolution(
         parse_settings(load_workflow(str(workflow)).config)
 
 
+def test_multi_state_workflow_parses_sections_and_derives_active_states(
+    tmp_path: Path,
+) -> None:
+    workflow = write_workflow_file(
+        tmp_path / "WORKFLOW.md",
+        prompt=(
+            "# prompt: default\n"
+            "Shared instructions for {{ issue.state }}.\n\n"
+            "# prompt: merge\n"
+            "Merge-only instructions.\n"
+        ),
+        codex={"model": "gpt-5.4", "reasoning_effort": "high"},
+        states={
+            "Todo": {"prompt": "default"},
+            "In Progress": {"prompt": "default"},
+            "Merging": {
+                "prompt": ["default", "merge"],
+                "codex": {
+                    "model": "gpt-5.4-mini",
+                    "reasoning_effort": "low",
+                },
+            },
+        },
+    )
+
+    loaded = load_workflow(str(workflow))
+    settings = parse_settings(loaded.config)
+    snapshot = make_snapshot(workflow)
+
+    assert loaded.prompt_template == ""
+    assert loaded.prompt_sections == {
+        "default": "Shared instructions for {{ issue.state }}.",
+        "merge": "Merge-only instructions.",
+    }
+    assert snapshot.prompt_template == ""
+    assert settings.tracker.active_states == ("Todo", "In Progress", "Merging")
+    assert (
+        snapshot.settings_for_state("Todo").coding_agent.model
+        == snapshot.settings.coding_agent.model
+    )
+    assert snapshot.settings_for_state("Merging").coding_agent.model == "gpt-5.4-mini"
+    assert snapshot.settings_for_state("Merging").coding_agent.reasoning_effort == "low"
+    prompt = build_prompt(make_issue(state="Merging"), snapshot)
+    assert "Shared instructions for Merging." in prompt
+    assert "Merge-only instructions." in prompt
+
+
+def test_multi_state_workflow_rejects_stray_body_content(tmp_path: Path) -> None:
+    workflow = tmp_path / "WORKFLOW.md"
+    workflow.write_text(
+        "---\ntracker:\n  kind: linear\nstates:\n  Todo:\n    prompt: default\n---\n"
+        "stray content\n\n# prompt: default\nShared prompt.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        WorkflowLoadError, match="workflow_prompt_section_stray_content"
+    ):
+        load_workflow(str(workflow))
+
+
+def test_multi_state_workflow_rejects_missing_prompt_ref(tmp_path: Path) -> None:
+    workflow = write_workflow_file(
+        tmp_path / "WORKFLOW.md",
+        prompt="# prompt: default\nShared prompt.\n",
+        states={"Todo": {"prompt": "missing"}},
+    )
+
+    with pytest.raises(
+        ConfigValidationError, match="references missing prompt section 'missing'"
+    ):
+        make_snapshot(workflow)
+
+
+def test_settings_require_states_mapping(tmp_path: Path) -> None:
+    workflow = tmp_path / "WORKFLOW.md"
+    workflow.write_text(
+        "---\ntracker:\n  kind: linear\n  project_slug: project\n---\n# prompt: default\nBody\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="states is required"):
+        parse_settings(load_workflow(str(workflow)).config)
+
+
+def test_snapshot_state_profile_helpers_fall_back_without_profile(
+    tmp_path: Path,
+) -> None:
+    workflow = write_workflow_file(tmp_path / "WORKFLOW.md", prompt="Shared prompt.")
+    snapshot = make_snapshot(workflow)
+
+    assert snapshot.prompt_template_for_state("Review") == snapshot.prompt_template
+    assert snapshot.settings_for_state("Review") == snapshot.settings
+
+
 @pytest.mark.asyncio
 async def test_workspace_is_deterministic_and_rejects_symlink_escape(
     tmp_path: Path,

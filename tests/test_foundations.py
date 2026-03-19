@@ -37,6 +37,7 @@ from code_factory.config import (
 from code_factory.config.utils import (
     boolean,
     coerce_int,
+    configured_active_states,
     env_reference_name,
     non_negative_int,
     normalize_keys,
@@ -62,10 +63,13 @@ from code_factory.runtime.support import maybe_aclose
 from code_factory.workflow.loader import (
     DEFAULT_WORKFLOW_FILENAME,
     current_stamp,
+    finalize_prompt_section,
     front_matter_yaml_to_map,
+    parse_prompt_sections,
     split_front_matter,
     workflow_file_path,
 )
+from code_factory.workflow.state_profiles import parse_state_profiles
 from code_factory.workflow.store import WorkflowStoreActor
 from code_factory.workflow.template import (
     WorkflowTemplateValues,
@@ -925,6 +929,100 @@ def test_workflow_loader_helpers_and_current_stamp(
         current_stamp(str(tmp_path / "missing.md"))
 
 
+def test_multi_state_workflow_helper_validation_paths() -> None:
+    assert configured_active_states(
+        {"states": {"Todo": {"prompt": "default"}}},
+        {},
+    ) == ("Todo",)
+    assert parse_state_profiles({}, {}) == {}
+    assert parse_prompt_sections(["", "# prompt: default", "Body"]) == {
+        "default": "Body"
+    }
+    assert finalize_prompt_section({}, None, []) is None
+
+    with pytest.raises(ConfigValidationError, match="states is required"):
+        configured_active_states({}, {})
+    with pytest.raises(ConfigValidationError, match="states must be an object"):
+        configured_active_states({"states": []}, {})
+    with pytest.raises(ConfigValidationError, match="states keys must not be blank"):
+        configured_active_states({"states": {"   ": {"prompt": "default"}}}, {})
+    with pytest.raises(
+        ConfigValidationError, match="states must define at least one active state"
+    ):
+        configured_active_states({"states": {}}, {})
+    with pytest.raises(WorkflowLoadError, match="workflow_prompt_section_name_blank"):
+        parse_prompt_sections(["# prompt:   "])
+    with pytest.raises(WorkflowLoadError, match="workflow_prompt_section_duplicate"):
+        parse_prompt_sections(["# prompt: default", "One", "# prompt: default", "Two"])
+    with pytest.raises(WorkflowLoadError, match="workflow_prompt_sections_missing"):
+        parse_prompt_sections(["", "   "])
+
+
+@pytest.mark.parametrize(
+    ("config", "prompt_sections", "message"),
+    [
+        ({"states": []}, {"default": "Body"}, "states must be an object"),
+        (
+            {"states": {"Todo": {"prompt": "default"}}},
+            {},
+            "requires named `# prompt:` sections",
+        ),
+        (
+            {"states": {"   ": {"prompt": "default"}}},
+            {"default": "Body"},
+            "states keys must not be blank",
+        ),
+        (
+            {
+                "states": {
+                    "Todo": {"prompt": "default"},
+                    " todo ": {"prompt": "default"},
+                }
+            },
+            {"default": "Body"},
+            "duplicate normalized state",
+        ),
+        (
+            {"states": {"Todo": {"prompt": "default", "agent": {}}}},
+            {"default": "Body"},
+            "unsupported keys",
+        ),
+        (
+            {"states": {"Todo": {"prompt": []}}},
+            {"default": "Body"},
+            "must not be empty",
+        ),
+        (
+            {"states": {"Todo": {"prompt": 1}}},
+            {"default": "Body"},
+            "must be a string or list of strings",
+        ),
+        (
+            {"states": {"Todo": {"prompt": [1]}}},
+            {"default": "Body"},
+            "must be a string or list of strings",
+        ),
+        (
+            {"states": {"Todo": {"prompt": ["   "]}}},
+            {"default": "Body"},
+            "entries must not be blank",
+        ),
+        (
+            {"states": {"Todo": {"prompt": "default", "codex": {"sandbox": "x"}}}},
+            {"default": "Body"},
+            "unsupported keys",
+        ),
+    ],
+)
+def test_parse_state_profiles_validation_paths(
+    config: dict[str, Any],
+    prompt_sections: dict[str, str],
+    message: str,
+) -> None:
+    with pytest.raises(ConfigValidationError, match=message):
+        parse_state_profiles(config, prompt_sections)
+
+
 @pytest.mark.asyncio
 async def test_workflow_store_reload_run_and_error_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -946,7 +1044,8 @@ async def test_workflow_store_reload_run_and_error_paths(
     assert snapshots == []
 
     workflow.write_text(
-        "---\ntracker:\n  kind: linear\n  api_key: token\n  project_slug: next\n---\nnew\n",
+        "---\ntracker:\n  kind: linear\n  api_key: token\n  project_slug: next\n"
+        "states:\n  Todo:\n    prompt: default\n---\n# prompt: default\nnew\n",
         encoding="utf-8",
     )
     await actor._reload_if_changed()
