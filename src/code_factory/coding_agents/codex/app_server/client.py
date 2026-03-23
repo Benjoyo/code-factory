@@ -15,7 +15,8 @@ from ....workspace.paths import canonicalize, validate_workspace_path
 from ..config import build_launch_command
 from ..tools import DynamicToolExecutor
 from .messages import default_on_message, emit_message
-from .protocol import send_initialize, start_thread, start_turn
+from .protocol import send_initialize, start_thread, start_turn, steer_turn
+from .routing import route_stdout
 from .session import AppServerSession
 from .streams import stderr_reader, stdout_reader, wait_for_exit
 from .turns import await_turn_completion
@@ -109,11 +110,18 @@ class AppServerClient:
             )
             raise
 
+    async def steer(self, session: AppServerSession, message: str) -> str:
+        """Forward a steering message to the active in-flight turn."""
+
+        return await steer_turn(session, message)
+
     async def _bootstrap_session(
         self, process_tree: ProcessTree, workspace: str
     ) -> AppServerSession:
         """Wire stdout/stderr readers and register the new thread with Codex."""
         stdout_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+        event_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+        pending_requests: dict[int, asyncio.Future[dict[str, Any]]] = {}
         assert process_tree.process.stdout is not None
         assert process_tree.process.stderr is not None
         stdout_task = asyncio.create_task(
@@ -144,6 +152,9 @@ class AppServerClient:
             stderr_task.cancel()
             wait_task.cancel()
             raise
+        routing_task = asyncio.create_task(
+            route_stdout(stdout_queue, event_queue, pending_requests)
+        )
         return AppServerSession(
             process_tree=process_tree,
             workspace=workspace,
@@ -155,9 +166,12 @@ class AppServerClient:
             turn_timeout_ms=self._coding_agent.turn_timeout_ms,
             auto_approve_requests=approval_policy == "never",
             stdout_queue=stdout_queue,
+            event_queue=event_queue,
+            pending_requests=pending_requests,
             stdout_task=stdout_task,
             stderr_task=stderr_task,
             wait_task=wait_task,
+            routing_task=routing_task,
         )
 
     def _build_tool_executor(self, workspace: str) -> DynamicToolExecutor:

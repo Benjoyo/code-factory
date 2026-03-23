@@ -51,6 +51,7 @@ Top-level commands:
 ```bash
 cf init [--force]
 cf serve [OPTIONS] [WORKFLOW]
+cf steer ISSUE MESSAGE [--workflow WORKFLOW] [--port PORT]
 ```
 
 `cf init`
@@ -70,23 +71,35 @@ cf serve [OPTIONS] [WORKFLOW]
 - `--logs-root <path>`
   Enables a rotating log file at `<path>/log/code-factory.log`.
 - `--port <port>`
-  Enables the observability API on that port and overrides `server.port` from `WORKFLOW.md`.
+  Overrides the default local control/observability port. `server.port` in `WORKFLOW.md` is the config-level override and the CLI flag still wins.
   `0` is allowed if you want the OS to choose an ephemeral port.
 - `path-to-WORKFLOW.md`
   Explicit workflow file path. If omitted, the CLI uses `WORKFLOW.md` in the current working directory.
 
-Use `cf --help`, `cf init --help`, and `cf serve --help` for the full generated Typer help output.
+`cf steer`
+
+- `ISSUE`
+  Human issue identifier to steer, for example `ENG-123`.
+- `MESSAGE`
+  Steering text appended to the active in-flight Codex turn.
+- `--workflow <path>`
+  Workflow path used to discover the running service metadata. Defaults to `./WORKFLOW.md`.
+- `--port <port>`
+  Override discovery and target a specific local control-plane port directly.
+
+Use `cf --help`, `cf init --help`, `cf serve --help`, and `cf steer --help` for the full generated Typer help output.
 
 ## Observability API
 
 The Python port currently ships a JSON API, not a full dashboard UI.
 
-The API is disabled unless one of these is true:
+The API starts by default on `127.0.0.1:4000`.
 
-- `server.port` is set in `WORKFLOW.md`
-- `--port` is passed on the CLI
+- `server.port` in `WORKFLOW.md` overrides the default port.
+- `cf serve --port` overrides both the default and `server.port`.
+- If the chosen startup port is already in use, `cf serve` exits and tells you to rerun with a different `--port`.
 
-When enabled, the service logs the listening URL during startup.
+The service logs the listening URL during startup and writes a small runtime metadata file so `cf steer` can discover custom or ephemeral ports for the current workflow.
 
 Available routes:
 
@@ -96,13 +109,14 @@ Available routes:
   Returns the current runtime view for a single issue if that issue is running or queued for retry.
 - `POST /api/v1/refresh`
   Triggers an immediate reconcile/poll request and returns whether the request was queued or coalesced.
+- `POST /api/v1/{issue_identifier}/steer`
+  Appends more user input to the active in-flight Codex turn for that issue. Request body: `{ "message": "..." }`.
 
 Example:
 
 ```bash
 uv run cf serve \
   --no-guardrails \
-  --port 4000 \
   /path/to/WORKFLOW.md
 ```
 
@@ -112,12 +126,18 @@ Then query:
 curl http://127.0.0.1:4000/api/v1/state
 ```
 
+Or steer a running issue:
+
+```bash
+uv run cf steer ENG-901 "Focus on failing tests first."
+```
+
 ## What to Expect at Runtime
 
 - Startup validates the workflow and required dispatch settings before the scheduler loop begins.
 - `WORKFLOW.md` is hot-reloaded automatically; valid changes affect future dispatches without restarting the service.
 - Only issues in active workflow states are dispatched.
-- If the observability API is not enabled, startup now logs that explicitly.
+- The local control/observability API is always started unless startup fails to bind the selected port.
 - Polling Linear is normal service behavior; routine transport-level request logs are suppressed so the service's own logs stay readable.
 
 ## Workflow Notes

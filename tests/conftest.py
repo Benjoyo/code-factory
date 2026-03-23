@@ -60,7 +60,7 @@ def default_workflow_config() -> dict[str, Any]:
             "refresh_ms": 1_000,
             "render_interval_ms": 16,
         },
-        "server": {"port": None, "host": "127.0.0.1"},
+        "server": {"port": 4000, "host": "127.0.0.1"},
     }
 
 

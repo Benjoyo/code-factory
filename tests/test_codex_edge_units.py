@@ -126,6 +126,7 @@ def make_session(
         turn_timeout_ms=50,
         auto_approve_requests=auto_approve_requests,
         stdout_queue=asyncio.Queue(),
+        event_queue=asyncio.Queue(),
         stdout_task=stdout_task,  # type: ignore[arg-type]
         stderr_task=stderr_task,  # type: ignore[arg-type]
         wait_task=wait_task,  # type: ignore[arg-type]
@@ -418,9 +419,9 @@ async def test_turn_handlers_cover_stream_and_input_edge_paths(
 
     session = make_session()
     messages: list[dict[str, Any]] = []
-    await session.stdout_queue.put(("stderr", "ignored"))
-    await session.stdout_queue.put(("line", "not-json"))
-    await session.stdout_queue.put(
+    await session.event_queue.put(("stderr", "ignored"))
+    await session.event_queue.put(("line", "not-json"))
+    await session.event_queue.put(
         (
             "line",
             json.dumps(
@@ -442,7 +443,7 @@ async def test_turn_handlers_cover_stream_and_input_edge_paths(
             ),
         )
     )
-    await session.stdout_queue.put(
+    await session.event_queue.put(
         (
             "line",
             json.dumps(
@@ -467,7 +468,7 @@ async def test_turn_handlers_cover_stream_and_input_edge_paths(
     ]
 
     exit_session = make_session()
-    await exit_session.stdout_queue.put(("exit", 9))
+    await exit_session.event_queue.put(("exit", 9))
     with pytest.raises(AppServerError, match="port_exit"):
         await await_turn_completion(
             exit_session,
@@ -648,10 +649,11 @@ async def test_protocol_and_client_bootstrap_edge_paths(
             default_timeout_ms=10,
         )
 
-    queue = asyncio.Queue()
     session = make_session()
-    session.stdout_queue = queue
-    await queue.put(("line", json.dumps({"id": 3, "result": {"turn": {}}})))
+    monkeypatch.setattr(
+        "code_factory.coding_agents.codex.app_server.protocol.session_request",
+        lambda *_args, **_kwargs: asyncio.sleep(0, result={"turn": {}}),
+    )
     with pytest.raises(AppServerError, match="invalid_turn_payload"):
         await start_turn(session, "prompt", make_issue())
 

@@ -31,7 +31,7 @@ async def await_turn_completion(
     timeout = session.turn_timeout_ms / 1000
     structured_result: StructuredTurnResult | None = None
     while True:
-        kind, payload = await asyncio.wait_for(session.stdout_queue.get(), timeout)
+        kind, payload = await asyncio.wait_for(session.event_queue.get(), timeout)
         if kind == "exit":
             raise AppServerError(("port_exit", payload))
         if kind != "line":
@@ -73,6 +73,7 @@ async def handle_turn_message(
     if method == "turn/completed":
         turn = turn_payload(message)
         status = turn.get("status")
+        session.current_turn_id = None
         if status == "failed":
             await emit_message(
                 on_message,
@@ -99,6 +100,7 @@ async def handle_turn_message(
         )
         return "turn_completed"
     if method == "turn/failed":
+        session.current_turn_id = None
         await emit_message(
             on_message,
             "turn_failed",
@@ -107,6 +109,7 @@ async def handle_turn_message(
         )
         raise AppServerError(("turn_failed", message.get("params")))
     if method == "turn/cancelled":
+        session.current_turn_id = None
         await emit_message(
             on_message,
             "turn_cancelled",

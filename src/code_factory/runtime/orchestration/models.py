@@ -34,6 +34,8 @@ class RunningEntry:
     started_at: datetime
     retry_attempt: int = 0
     session_id: str | None = None
+    thread_id: str | None = None
+    turn_id: str | None = None
     last_agent_message: Any = None
     last_agent_timestamp: datetime | None = None
     last_agent_event: str | None = None

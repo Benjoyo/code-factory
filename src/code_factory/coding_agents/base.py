@@ -20,6 +20,8 @@ class CodingAgentSession(Protocol):
 class CodingAgentRuntime(Protocol):
     async def start_session(self, workspace: str) -> CodingAgentSession: ...
 
+    async def steer(self, session: CodingAgentSession, message: str) -> str | None: ...
+
     async def run_turn(
         self,
         session: CodingAgentSession,

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .defaults import DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT
+
 
 @dataclass(frozen=True, slots=True)
 class TrackerSettings:
@@ -95,8 +97,8 @@ class ObservabilitySettings:
 class ServerSettings:
     """HTTP settings for exposing the observability API."""
 
-    port: int | None = None
-    host: str = "127.0.0.1"
+    port: int | None = DEFAULT_SERVER_PORT
+    host: str = DEFAULT_SERVER_HOST
 
 
 @dataclass(frozen=True, slots=True)

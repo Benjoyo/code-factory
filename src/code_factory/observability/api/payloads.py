@@ -74,6 +74,8 @@ def running_entry_payload(entry: dict[str, Any]) -> dict[str, Any]:
         "issue_identifier": entry["identifier"],
         "state": entry["state"],
         "session_id": entry["session_id"],
+        "thread_id": entry.get("thread_id"),
+        "turn_id": entry.get("turn_id"),
         "turn_count": entry["turn_count"],
         "last_event": entry["last_agent_event"],
         "last_message": humanize_agent_message(entry["last_agent_message"]),
@@ -108,6 +110,8 @@ def running_issue_payload(entry: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "session_id": entry["session_id"],
+        "thread_id": entry.get("thread_id"),
+        "turn_id": entry.get("turn_id"),
         "turn_count": entry["turn_count"],
         "state": entry["state"],
         "started_at": iso8601(entry["started_at"]),

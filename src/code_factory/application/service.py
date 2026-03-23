@@ -131,7 +131,7 @@ class CodeFactoryService:
         )
         if not isinstance(effective_port, int):
             LOGGER.info(
-                "Observability API disabled; set `server.port` in WORKFLOW.md or pass `--port` to enable it"
+                "Observability API disabled; this should no longer happen with default server settings"
             )
         else:
             LOGGER.info(
@@ -145,6 +145,8 @@ class CodeFactoryService:
                 host=initial_snapshot.settings.server.host,
                 port=initial_snapshot.settings.server.port,
                 port_override=self.port_override,
+                workflow_path=self.workflow_path,
+                fail_fast_on_startup=True,
             )
         except TypeError as exc:
             if "unexpected keyword argument 'port_override'" not in str(exc):

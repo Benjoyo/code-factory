@@ -96,6 +96,8 @@ def running_entry_payload(
         "identifier": entry.identifier,
         "state": entry.issue.state,
         "session_id": entry.session_id,
+        "thread_id": entry.thread_id,
+        "turn_id": entry.turn_id,
         "runtime_pid": entry.agent_runtime_pid,
         "input_tokens": entry.agent_input_tokens,
         "output_tokens": entry.agent_output_tokens,

@@ -29,6 +29,11 @@ class CodexRuntime:
     async def start_session(self, workspace: str) -> AppServerSession:
         return await self._client.start_session(workspace)
 
+    async def steer(self, session: CodingAgentSession, message: str) -> str | None:
+        if not isinstance(session, AppServerSession):
+            raise TypeError(f"Unsupported session type: {type(session)!r}")
+        return await self._client.steer(session, message)
+
     async def run_turn(
         self,
         session: CodingAgentSession,

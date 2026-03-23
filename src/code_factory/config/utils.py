@@ -50,9 +50,11 @@ def non_negative_int(value: Any, field_name: str, default: int) -> int:
     return parsed
 
 
-def optional_non_negative_int(value: Any, field_name: str) -> int | None:
+def optional_non_negative_int(
+    value: Any, field_name: str, default: int | None = None
+) -> int | None:
     if value is None:
-        return None
+        return default
     return non_negative_int(value, field_name, 0)
 
 

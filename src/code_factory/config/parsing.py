@@ -8,7 +8,12 @@ from typing import Any
 from ..coding_agents.base import parse_coding_agent_settings
 from ..errors import ConfigValidationError
 from ..trackers.base import parse_tracker_settings
-from .defaults import DEFAULT_PROMPT_TEMPLATE, DEFAULT_WORKSPACE_ROOT
+from .defaults import (
+    DEFAULT_PROMPT_TEMPLATE,
+    DEFAULT_SERVER_HOST,
+    DEFAULT_SERVER_PORT,
+    DEFAULT_WORKSPACE_ROOT,
+)
 from .models import (
     AgentSettings,
     HooksSettings,
@@ -108,9 +113,11 @@ def parse_settings(config: Mapping[str, Any]) -> Settings:
             ),
         ),
         server=ServerSettings(
-            port=optional_non_negative_int(server_raw.get("port"), "server.port"),
+            port=optional_non_negative_int(
+                server_raw.get("port"), "server.port", DEFAULT_SERVER_PORT
+            ),
             host=string_with_default(
-                server_raw.get("host"), "server.host", "127.0.0.1"
+                server_raw.get("host"), "server.host", DEFAULT_SERVER_HOST
             ),
         ),
     )

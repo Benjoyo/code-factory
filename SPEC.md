@@ -341,8 +341,8 @@ Note:
   (for example `server`) without changing the core schema above.
 - Extensions should document their field schema, defaults, validation rules, and whether changes
   apply dynamically or require restart.
-- Common extension: `server.port` (integer) enables the optional HTTP server described in Section
-  13.7.
+- Common extension: `server.port` (integer) overrides the default local HTTP control-plane port
+  described in Section 13.7.
 
 #### 5.3.1 `tracker` (object)
 
@@ -598,8 +598,8 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `codex.turn_timeout_ms`: integer, default `3600000`
 - `codex.read_timeout_ms`: integer, default `5000`
 - `codex.stall_timeout_ms`: integer, default `300000`
-- `server.port` (extension): integer, optional; enables the optional HTTP server, `0` may be used
-  for ephemeral local bind, and CLI `--port` overrides it
+- `server.port` (extension): integer, optional; overrides the default local HTTP control-plane
+  port, `0` may be used for ephemeral local bind, and CLI `--port` overrides it
 
 ## 7. Orchestration State Machine
 
@@ -1377,10 +1377,12 @@ If implemented:
 Enablement (extension):
 
 - Start the HTTP server when a CLI `--port` argument is provided.
-- Start the HTTP server when `server.port` is present in `WORKFLOW.md` front matter.
+- Start the HTTP server by default on a safe loopback bind.
 - `server.port` is extension configuration and is intentionally not part of the core front-matter
   schema in Section 5.3.
-- Precedence: CLI `--port` overrides `server.port` when both are present.
+- Default bind should be loopback (`127.0.0.1` or host equivalent) on an implementation-defined
+  default port suitable for local control.
+- Precedence: CLI `--port` overrides `server.port` which overrides the implementation default.
 - `server.port` must be an integer. Positive values bind that port. `0` may be used to request an
   ephemeral port for local development and tests.
 - Implementations should bind loopback by default (`127.0.0.1` or host equivalent) unless explicitly
@@ -1522,11 +1524,36 @@ Minimum endpoints:
     }
     ```
 
+- `POST /api/v1/<issue_identifier>/steer`
+  - Appends additional user input to the active in-flight coding-agent turn for the identified
+    running issue.
+  - Suggested request body:
+
+    ```json
+    { "message": "Actually focus on failing tests first." }
+    ```
+
+  - Suggested response (`202 Accepted`) shape:
+
+    ```json
+    {
+      "accepted": true,
+      "issue_identifier": "MT-649",
+      "thread_id": "thread-1",
+      "turn_id": "turn-1",
+      "accepted_at": "2026-02-24T20:15:31Z"
+    }
+    ```
+
+  - Return `409 Conflict` when the issue exists in current runtime state but is not actively
+    steerable (for example retrying, stopping, or without an active turn).
+
 API design notes:
 
 - The JSON shapes above are the recommended baseline for interoperability and debugging ergonomics.
 - Implementations may add fields, but should avoid breaking existing fields within a version.
-- Endpoints should be read-only except for operational triggers like `/refresh`.
+- Endpoints should be read-only except for operational triggers like `/refresh` and active-turn
+  steering via `/steer`.
 - Unsupported methods on defined routes should return `405 Method Not Allowed`.
 - API errors should use a JSON envelope such as `{"error":{"code":"...","message":"..."}}`.
 - If the dashboard is a client-side app, it should consume this API rather than duplicating state

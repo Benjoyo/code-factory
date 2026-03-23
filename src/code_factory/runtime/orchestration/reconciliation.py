@@ -231,7 +231,13 @@ class ReconciliationMixin:
                 else entry.turn_count + 1
             )
             entry.session_id = update["session_id"]
+        if isinstance(update.get("thread_id"), str):
+            entry.thread_id = update["thread_id"]
+        if isinstance(update.get("turn_id"), str):
+            entry.turn_id = update["turn_id"]
         entry.last_agent_event = update.get("event")
+        if update.get("event") in {"turn_completed", "turn_failed", "turn_cancelled"}:
+            entry.turn_id = None
         if update.get("runtime_pid") is not None:
             entry.agent_runtime_pid = str(update["runtime_pid"])
         entry.agent_input_tokens += token_delta["input_tokens"]

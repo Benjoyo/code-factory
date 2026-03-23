@@ -104,14 +104,17 @@ class TurnPlan:
     rate_limits: dict[str, Any] | None = None
     messages: tuple[dict[str, Any], ...] = ()
     result: StructuredTurnResult | None = None
+    steers: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
 class DummySession:
     workspace: str
     thread_id: str
+    issue_identifier: str | None = None
     stop_event: asyncio.Event = field(default_factory=asyncio.Event)
     turn_count: int = 0
+    current_turn_id: str | None = None
 
     async def stop(self) -> None:
         self.stop_event.set()
@@ -134,6 +137,7 @@ class DummyAgentController:
         self._thread_ids = itertools.count(1)
         self.prompt_log: dict[str, list[str]] = {}
         self.started_workspaces: list[str] = []
+        self.active_plans: dict[str, TurnPlan] = {}
 
     def next_plan(self, identifier: str | None) -> TurnPlan:
         if not isinstance(identifier, str):
@@ -157,6 +161,19 @@ class DummyAgentController:
 
     def new_thread_id(self) -> str:
         return f"dummy-thread-{next(self._thread_ids)}"
+
+    def set_active_plan(self, identifier: str | None, plan: TurnPlan | None) -> None:
+        if not isinstance(identifier, str):
+            return
+        if plan is None:
+            self.active_plans.pop(identifier, None)
+            return
+        self.active_plans[identifier] = plan
+
+    def active_plan(self, identifier: str | None) -> TurnPlan | None:
+        if not isinstance(identifier, str):
+            return None
+        return self.active_plans.get(identifier)
 
 
 class DummyRuntime:
@@ -187,12 +204,16 @@ class DummyRuntime:
         session.turn_count += 1
         self._controller.record_prompt(issue.identifier, prompt)
         plan = self._controller.next_plan(issue.identifier)
+        session.issue_identifier = issue.identifier
+        self._controller.set_active_plan(issue.identifier, plan)
         session_id = f"{session.thread_id}-turn-{session.turn_count}"
+        session.current_turn_id = session_id
         updates = [
             {
                 "event": "session_started",
                 "timestamp": self._timestamp(),
                 "thread_id": session.thread_id,
+                "turn_id": session_id,
                 "session_id": session_id,
                 "runtime_pid": "dummy-runtime",
                 "message_summary": "session_started",
@@ -201,6 +222,7 @@ class DummyRuntime:
                 "event": "notification",
                 "timestamp": self._timestamp(),
                 "thread_id": session.thread_id,
+                "turn_id": session_id,
                 "session_id": session_id,
                 "runtime_pid": "dummy-runtime",
                 "message_summary": plan.message_summary or "dummy-turn",
@@ -218,14 +240,29 @@ class DummyRuntime:
                 )
         if plan.pause_until_stopped:
             await session.stop_event.wait()
+            session.current_turn_id = None
+            self._controller.set_active_plan(issue.identifier, None)
             return StructuredTurnResult(decision="blocked", summary="stopped")
         if plan.sleep_ms > 0:
             await asyncio.sleep(plan.sleep_ms / 1000)
         if plan.error is not None:
+            session.current_turn_id = None
+            self._controller.set_active_plan(issue.identifier, None)
             raise plan.error
+        session.current_turn_id = None
+        self._controller.set_active_plan(issue.identifier, None)
         if plan.result is None:
             raise RuntimeError("missing_turn_plan_result")
         return plan.result
+
+    async def steer(self, session: DummySession, message: str) -> str | None:
+        if session.current_turn_id is None:
+            raise RuntimeError("no_active_turn")
+        plan = self._controller.active_plan(session.issue_identifier)
+        if plan is None:
+            raise RuntimeError("no_active_turn")
+        plan.steers.append(message)
+        return session.current_turn_id
 
     @staticmethod
     def _timestamp():

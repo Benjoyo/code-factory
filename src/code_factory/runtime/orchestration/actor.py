@@ -18,12 +18,14 @@ from ..messages import (
     RefreshRequest,
     Shutdown,
     SnapshotRequest,
+    SteerIssueRequest,
     WorkerCleanupComplete,
     WorkerExited,
     WorkflowReloadError,
     WorkflowUpdated,
 )
 from ..support import maybe_aclose, monotonic_ms
+from .control import ControlMixin
 from .dispatching import DispatchingMixin
 from .models import RetryEntry, RunningEntry
 from .reconciliation import ReconciliationMixin
@@ -31,7 +33,7 @@ from .reconciliation import ReconciliationMixin
 LOGGER = logging.getLogger(__name__)
 
 
-class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
+class OrchestratorActor(DispatchingMixin, ReconciliationMixin, ControlMixin):
     """Actor responsible for synchronizing tracker data, dispatching workers, and replying to clients."""
 
     FAILURE_RETRY_BASE_MS: ClassVar[int] = 10_000
@@ -160,6 +162,8 @@ class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
         elif isinstance(message, RefreshRequest):
             await self._ensure_workflow_current()
             message.future.set_result(self._queue_refresh())
+        elif isinstance(message, SteerIssueRequest):
+            await self._handle_steer_issue(message)
         elif isinstance(
             message, Shutdown
         ):  # pragma: no branch - terminal branch in dispatch chain
@@ -186,7 +190,6 @@ class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
             isinstance(self.next_poll_due_at_ms, int)
             and self.next_poll_due_at_ms <= now_ms
         )
-        # Coalesce requests already in progress so we do not duplicate work.
         coalesced = self.poll_check_in_progress or already_due
         if not coalesced:
             self.next_poll_due_at_ms = now_ms
@@ -219,7 +222,6 @@ class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
         await self._run_due_retries(now_ms)
 
     def _next_timeout_seconds(self) -> float | None:
-        """Choose how long to wait for the next queue message based on upcoming deadlines."""
         deadlines = [
             deadline
             for deadline in (self.next_poll_due_at_ms, self.poll_run_due_at_ms)

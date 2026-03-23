@@ -53,6 +53,15 @@ class IssueWorker:
         if self._session is not None:
             await asyncio.shield(self._session.stop())
 
+    async def steer(self, message: str) -> str | None:
+        """Forward operator steering to the live coding-agent session."""
+
+        if self._session is None:
+            raise RuntimeError("worker_has_no_active_session")
+        if self._agent_runtime is None:
+            raise RuntimeError("worker_has_no_agent_runtime")
+        return await self._agent_runtime.steer(self._session, message)
+
     async def run(self) -> None:
         normal = False
         completed = False

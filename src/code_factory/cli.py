@@ -12,11 +12,15 @@ from rich.console import Console
 
 from .application import CodeFactoryService
 from .application.bootstrap import initialize_project, prompt_project_init
+from .config.defaults import DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT
+from .errors import ControlRequestError
+from .observability.api.client import ControlEndpoint, steer_issue
+from .observability.runtime_metadata import read_runtime_metadata
 from .workflow.loader import DEFAULT_WORKFLOW_FILENAME, workflow_file_path
 
 ACK_FLAG = "--no-guardrails"
 _HELP_FLAGS = frozenset({"-h", "--help"})
-_CLI_COMMANDS = frozenset({"init", "serve"})
+_CLI_COMMANDS = frozenset({"init", "serve", "steer"})
 
 app = typer.Typer(
     add_completion=False,
@@ -80,6 +84,23 @@ def build_cli_config(
         logs_root=resolved_logs_root,
         port=port,
     )
+
+
+def resolve_control_endpoint(
+    workflow_path: Path | None, port: int | None
+) -> tuple[ControlEndpoint, str]:
+    """Locate the local control-plane endpoint for a workflow."""
+
+    resolved_workflow = build_cli_config(workflow_path, None, None).workflow_path
+    if isinstance(port, int):
+        return ControlEndpoint(DEFAULT_SERVER_HOST, port), resolved_workflow
+    metadata = read_runtime_metadata(resolved_workflow)
+    if isinstance(metadata, dict):
+        host = metadata.get("host")
+        bound_port = metadata.get("port")
+        if isinstance(host, str) and isinstance(bound_port, int):
+            return ControlEndpoint(host, bound_port), resolved_workflow
+    return ControlEndpoint(DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT), resolved_workflow
 
 
 def run_service(config: CLIConfig) -> int:
@@ -185,6 +206,53 @@ def init_command(
             "[yellow]The bundled prompt body still contains Linear-specific guidance. "
             "Review WORKFLOW.md before first use.[/yellow]"
         )
+
+
+@app.command("steer")
+def steer_command(
+    issue_identifier: Annotated[
+        str,
+        typer.Argument(
+            help="Tracked issue identifier to steer, for example `ENG-123`."
+        ),
+    ],
+    message: Annotated[
+        str,
+        typer.Argument(help="Steering text to append to the active turn."),
+    ],
+    workflow_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--workflow",
+            help=(
+                "Workflow used to discover the running service metadata. "
+                "Defaults to `./WORKFLOW.md`."
+            ),
+        ),
+    ] = None,
+    port: Annotated[
+        int | None,
+        typer.Option(
+            "--port",
+            min=0,
+            help="Override the target control-plane port instead of using discovery.",
+        ),
+    ] = None,
+) -> None:
+    """Send an operator steering message to a running issue turn."""
+
+    endpoint, resolved_workflow = resolve_control_endpoint(workflow_path, port)
+    try:
+        result = steer_issue(endpoint, issue_identifier, message)
+    except ControlRequestError as exc:
+        raise click.ClickException(
+            f"{exc.message} (workflow={resolved_workflow}, endpoint={endpoint.base_url})"
+        ) from exc
+    typer.echo(
+        "Steering accepted for "
+        f"{result['issue_identifier']} on {result.get('thread_id')}/{result.get('turn_id')} "
+        f"via {endpoint.base_url}"
+    )
 
 
 def written_path_label(path: Path) -> str:

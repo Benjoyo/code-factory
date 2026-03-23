@@ -132,12 +132,13 @@ def test_build_cli_config_resolves_logs_root_port_and_default_path(
     )
 
 
-def test_cli_help_lists_init_and_serve() -> None:
+def test_cli_help_lists_init_serve_and_steer() -> None:
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
     assert "init" in result.output
     assert "serve" in result.output
+    assert "steer" in result.output
     assert "create a starter workflow" in result.output.lower()
 
 
@@ -728,7 +729,7 @@ def test_service_build_http_server_and_signal_handlers(
         disabled_snapshot, cast(Any, object())
     )
     assert isinstance(disabled_server, FakeServer)
-    assert calls[-1] == ("127.0.0.1", None)
+    assert calls[-1] == ("127.0.0.1", 4000)
 
     recorded: list[Any] = []
 

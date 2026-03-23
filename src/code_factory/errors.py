@@ -57,3 +57,15 @@ class AppServerError(CodeFactoryError):
 
     def __str__(self) -> str:
         return repr(self.reason)
+
+
+@dataclass(slots=True)
+class ControlRequestError(CodeFactoryError):
+    """Operator-facing control-plane error with a stable HTTP status/code."""
+
+    code: str
+    message: str
+    status: int
+
+    def __str__(self) -> str:
+        return self.message

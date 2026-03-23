@@ -160,6 +160,7 @@ def make_session() -> AppServerSession:
         turn_timeout_ms=100,
         auto_approve_requests=True,
         stdout_queue=asyncio.Queue(),
+        event_queue=asyncio.Queue(),
         stdout_task=stdout_task,  # type: ignore[arg-type]
         stderr_task=stderr_task,  # type: ignore[arg-type]
         wait_task=wait_task,  # type: ignore[arg-type]
@@ -432,9 +433,13 @@ async def test_protocol_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
         request_id = args[1]
         if request_id == THREAD_START_ID:
             return {"thread": {"id": "thread-1"}}
-        if request_id == TURN_START_ID:
-            return {"turn": {"id": "turn-1"}}
         return {}
+
+    async def fake_session_request(
+        _session: Any, method: str, params: dict[str, Any], *, timeout_ms: int | None
+    ) -> dict[str, Any]:
+        sent.append({"method": method, "params": params, "timeout_ms": timeout_ms})
+        return {"turn": {"id": "turn-1"}}
 
     monkeypatch.setattr(
         "code_factory.coding_agents.codex.app_server.protocol.send_message",
@@ -443,6 +448,10 @@ async def test_protocol_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "code_factory.coding_agents.codex.app_server.protocol.await_response",
         fake_await_response,
+    )
+    monkeypatch.setattr(
+        "code_factory.coding_agents.codex.app_server.protocol.session_request",
+        fake_session_request,
     )
     process_tree = ProcessTree(
         process=cast(
@@ -644,8 +653,8 @@ async def test_turn_helpers() -> None:
         )
         assert events[-1] == "tool_call_failed"
 
-        session.stdout_queue.put_nowait(("line", "not-json"))
-        session.stdout_queue.put_nowait(
+        session.event_queue.put_nowait(("line", "not-json"))
+        session.event_queue.put_nowait(
             (
                 "line",
                 json.dumps(
@@ -667,7 +676,7 @@ async def test_turn_helpers() -> None:
                 ),
             )
         )
-        session.stdout_queue.put_nowait(
+        session.event_queue.put_nowait(
             (
                 "line",
                 json.dumps(
@@ -1210,7 +1219,7 @@ async def test_turn_completion_reports_missing_and_terminal_status_failures() ->
     async def on_message(_message: dict[str, Any]) -> None:
         return None
 
-    session.stdout_queue.put_nowait(
+    session.event_queue.put_nowait(
         (
             "line",
             json.dumps(
@@ -1222,7 +1231,7 @@ async def test_turn_completion_reports_missing_and_terminal_status_failures() ->
         await await_turn_completion(session, on_message, executor)
 
     session = make_session()
-    session.stdout_queue.put_nowait(
+    session.event_queue.put_nowait(
         (
             "line",
             json.dumps(

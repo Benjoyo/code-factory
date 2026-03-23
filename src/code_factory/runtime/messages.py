@@ -67,6 +67,15 @@ class RefreshRequest:
 
 
 @dataclass(slots=True)
+class SteerIssueRequest:
+    """Request/response envelope that asks the orchestrator to steer a running issue."""
+
+    future: asyncio.Future[Any]
+    issue_identifier: str
+    message: str
+
+
+@dataclass(slots=True)
 class Shutdown:
     """Request/response envelope used to stop the orchestrator loop."""
 
