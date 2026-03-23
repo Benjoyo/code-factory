@@ -60,6 +60,7 @@ def test_render_default_workflow_replaces_template_tokens() -> None:
     assert "  max_concurrent_agents: 2" in rendered
     assert "# prompt: default" in rendered
     assert "{{ issue.identifier }}" in rendered
+    assert "Blocked-by tickets:" in rendered
 
 
 def test_default_workflow_template_contains_meta_tokens() -> None:

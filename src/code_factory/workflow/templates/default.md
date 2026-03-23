@@ -61,6 +61,20 @@ Description:
 No description provided.
 {% endif %}
 
+{% if issue.upstream_tickets != blank %}
+Blocked-by tickets:
+{% for upstream in issue.upstream_tickets %}
+- {{ upstream.identifier }}{% if upstream.title %}: {{ upstream.title }}{% endif %}{% if upstream.id %} [id: {{ upstream.id }}]{% endif %}{% if upstream.state %} ({{ upstream.state }}){% endif %}
+{% if upstream.results_by_state != blank %}
+{% for state_result in upstream.results_by_state %}
+  - {{ state_result[0] }} summary: {{ state_result[1].summary }}
+{% endfor %}
+{% else %}
+  - No persisted state summaries yet.
+{% endif %}
+{% endfor %}
+{% endif %}
+
 Instructions:
 
 1. This is an unattended orchestration session. Never ask a human to perform follow-up actions.

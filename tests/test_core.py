@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -191,8 +192,28 @@ def test_prompt_builder_is_strict_and_uses_default_template(tmp_path: Path) -> N
 
     blank = write_workflow_file(tmp_path / "BLANK.md", prompt="   \n")
     snapshot = make_snapshot(blank)
-    prompt = build_prompt(make_issue(description=None), snapshot)
+    issue = make_issue(description=None)
+    issue_data = asdict(issue) | {
+        "upstream_tickets": [
+            {
+                "id": "upstream-1",
+                "identifier": "ENG-UP-1",
+                "title": "Build pipeline",
+                "state": "Done",
+                "results_by_state": {
+                    "Build": {
+                        "decision": "transition",
+                        "next_state": "Done",
+                        "summary": "artifact ready",
+                    }
+                },
+            }
+        ]
+    }
+    prompt = build_prompt(issue, snapshot, issue_data=issue_data)
     assert "You are working on a tracked issue." in prompt
+    assert "ENG-UP-1: Build pipeline [id: upstream-1] (Done)" in prompt
+    assert "Build summary: artifact ready" in prompt
     assert "No description provided." in prompt
 
 
