@@ -1,20 +1,30 @@
 # Workflow Docs
 
-This directory documents the two user-facing parts of `WORKFLOW.md`:
+This directory documents the user-facing parts of `WORKFLOW.md`:
 
-- [Prompt templates](/Users/bennet/git/code-factory/docs/workflow/prompt-template.md): how the Markdown body is rendered, which variables exist, and what makes a template robust.
+- [Prompt templates](/Users/bennet/git/code-factory/docs/workflow/prompt-template.md): how named prompt sections are declared, composed, and rendered with Liquid.
 - [Frontmatter](/Users/bennet/git/code-factory/docs/workflow/frontmatter.md): the YAML schema, defaults, validation rules, supported enum values, and implementation notes.
 
-`WORKFLOW.md` always has the same high-level shape:
+A runnable `WORKFLOW.md` now has this high-level shape:
 
 ```md
 ---
-# YAML frontmatter
 tracker:
   kind: linear
+states:
+  "Todo":
+    prompt: default
+  "In Progress":
+    prompt: default
 ---
-# Markdown prompt template
+# prompt: default
 You are working issue {{ issue.identifier }}.
 ```
 
-If the file does not start with `---`, the whole file is treated as the prompt template and the config map is empty.
+Key ideas:
+
+- `states` is required for runnable workflows.
+- Active states are derived from `states` keys.
+- The Markdown body is split into named `# prompt: <id>` sections.
+- `states.<state>.prompt` selects one section or a list of sections for that state.
+- Several states can share the same section, so the old monolithic behavior is still expressible by pointing every active state at the same prompt section.

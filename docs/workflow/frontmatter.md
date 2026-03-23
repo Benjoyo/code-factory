@@ -10,8 +10,12 @@ The workflow file may begin with YAML frontmatter:
 ---
 tracker:
   kind: linear
+states:
+  "Todo":
+    prompt: default
 ---
-Your Markdown prompt template goes here.
+# prompt: default
+Your prompt section goes here.
 ```
 
 Parsing rules:
@@ -19,14 +23,16 @@ Parsing rules:
 - Frontmatter is only parsed when the file starts with a line that is exactly `---`.
 - Parsing stops at the next line that is exactly `---`.
 - The YAML root must be an object/map.
-- If frontmatter is absent, the whole file becomes the prompt template and the config map is empty.
+- If frontmatter is absent, the whole file becomes the raw prompt body and the config map is empty.
 - Unknown top-level keys are ignored.
+- A runnable workflow must define top-level `states`.
 
 ## Top-level keys
 
 Core keys used by this runtime:
 
 - `tracker`
+- `states`
 - `polling`
 - `workspace`
 - `agent`
@@ -53,7 +59,6 @@ Tracker configuration controls how issues are discovered and updated.
 | `tracker.api_key` | string or `$VAR_NAME` | `LINEAR_API_KEY` env fallback | Empty string is treated as missing. |
 | `tracker.project_slug` | string or `null` | `null` | Required for `linear`. |
 | `tracker.assignee` | string or `$VAR_NAME` or `null` | `LINEAR_ASSIGNEE` env fallback | Optional routing filter. |
-| `tracker.active_states` | list of strings | `["Todo", "In Progress"]` | Issues in these states are dispatch candidates. |
 | `tracker.terminal_states` | list of strings | `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]` | These states are treated as terminal. |
 
 ### `tracker.kind` values
@@ -81,6 +86,52 @@ For `tracker.api_key` and `tracker.assignee`:
 - a full `$VAR_NAME` token loads from the environment
 - if the environment variable is unset, the configured fallback is used
 - if the resolved value is `""`, the setting becomes `null`
+
+## `states`
+
+`states` defines the active workflow states, selects prompt sections for each
+state, and optionally applies a small set of per-state Codex overrides.
+
+### Fields
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `states` | object | none | Required. Keys are active tracker states. |
+| `states.<state>.prompt` | string or non-empty list of strings | none | Required. References named `# prompt: <id>` sections from the Markdown body. |
+| `states.<state>.codex.model` | string or `null` | inherit global `codex.model` | Optional per-state Codex model override. |
+| `states.<state>.codex.reasoning_effort` | string or `null` | inherit global `codex.reasoning_effort` | Optional per-state reasoning override. |
+
+Rules:
+
+- `states` must be an object with at least one entry.
+- State names are trimmed and matched case-insensitively at runtime.
+- Duplicate normalized state names are invalid.
+- `states.<state>.prompt` may reference one prompt section or several prompt sections.
+- Prompt references are matched exactly after trimming.
+- Referencing a missing prompt section is invalid.
+- Only `codex.model` and `codex.reasoning_effort` may be overridden per state.
+- Other per-state keys are rejected.
+
+Runtime behavior:
+
+- Active states are derived from `states` keys.
+- The effective first-turn prompt for a state is the referenced prompt section bodies concatenated with a blank line between sections, in listed order.
+- If an issue stays active but its effective prompt or allowed per-state Codex overrides change between turns, the current worker exits after the completed turn and the normal continuation retry starts a fresh session.
+
+Minimal example:
+
+```yaml
+states:
+  "Todo":
+    prompt: default
+  "In Progress":
+    prompt: default
+  "Merging":
+    prompt: merge
+    codex:
+      model: gpt-5.4-mini
+      reasoning_effort: low
+```
 
 ## `polling`
 
@@ -327,15 +378,23 @@ tracker:
   api_key: $LINEAR_API_KEY
   project_slug: code-factory
   assignee: me
-  active_states:
-    - Todo
-    - In Progress
   terminal_states:
     - Closed
     - Cancelled
     - Canceled
     - Duplicate
     - Done
+
+states:
+  "Todo":
+    prompt: default
+  "In Progress":
+    prompt: default
+  "Merging":
+    prompt: merge
+    codex:
+      model: gpt-5.4-mini
+      reasoning_effort: low
 
 polling:
   interval_ms: 30000

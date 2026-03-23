@@ -1,14 +1,34 @@
 # Workflow Prompt Templates
 
-The Markdown body of `WORKFLOW.md` is the prompt template for the first turn of each worker attempt.
+For runnable workflows, the Markdown body of `WORKFLOW.md` is a set of named
+prompt sections. The runtime selects and composes sections based on the current
+issue state before rendering the first turn of a worker attempt.
+
+Sections are declared with level-1 headings:
+
+```md
+# prompt: default
+Shared instructions.
+
+# prompt: merge
+Merge-only instructions.
+```
+
+`states.<state>.prompt` in frontmatter may reference one section or a list of
+sections. The effective prompt is the referenced section bodies joined with a
+blank line between them, in order.
 
 ## How rendering works
 
-- The body is rendered with a strict [Liquid](https://liquidtemplater.com/)-compatible engine (`python-liquid` with `StrictUndefined`).
+- When top-level `states` is present, the body is first parsed into named `# prompt: <id>` sections.
+- In stateful workflows, every non-empty line in the body must belong to a named prompt section.
+- Duplicate prompt section ids are invalid.
+- The effective prompt for the current state is composed before rendering.
+- The composed prompt is rendered with a strict [Liquid](https://liquidtemplater.com/)-compatible engine (`python-liquid` with `StrictUndefined`).
 - Unknown variables fail rendering.
 - Unknown filters fail rendering.
-- The template body is trimmed before use.
-- If the body is blank after trimming, Code Factory falls back to its built-in default prompt.
+- The composed prompt is trimmed before use.
+- If the composed prompt is blank after trimming, Code Factory falls back to its built-in default prompt.
 - The workflow template is only used for turn 1 of an attempt. Turns 2..`agent.max_turns` use Code Factory's built-in continuation prompt instead.
 
 That means a good template should fully set up the task for a fresh attempt, but it should not try to manage continuation-turn behavior itself.
@@ -93,7 +113,8 @@ Common mistakes:
 - Referencing variables that do not exist, such as `ticket`, `issue.body`, or `workflow`.
 - Using an unknown filter or custom helper that the Liquid engine does not provide.
 - Assuming `attempt` is always an integer.
-- Writing a blank prompt body and expecting repository-specific instructions to appear automatically.
+- Leaving stray non-empty body content outside `# prompt: <id>` sections in a stateful workflow.
+- Writing a blank effective prompt and expecting repository-specific instructions to appear automatically.
 
 ## Writing a good template
 
@@ -116,6 +137,7 @@ Practical guidance:
 ## Example template
 
 ```liquid
+# prompt: default
 You are the coding agent for this repository.
 
 Work the tracked issue below from the current workspace.
@@ -160,9 +182,34 @@ Expectations:
 - If blocked, explain the blocker precisely and stop after collecting the evidence needed to unblock.
 ```
 
+Example with composition:
+
+```md
+---
+states:
+  "Todo":
+    prompt:
+      - base
+      - execute
+  "Merging":
+    prompt:
+      - base
+      - merge
+---
+
+# prompt: base
+You are working issue {{ issue.identifier }}.
+
+# prompt: execute
+Implement and validate the requested change.
+
+# prompt: merge
+Land the attached PR and move the issue to Done.
+```
+
 ## Built-in fallback prompt
 
-If the template body is empty, Code Factory uses the default prompt from
+If the effective composed prompt is empty, Code Factory uses the default prompt from
 [`src/code_factory/config/defaults.py`](/Users/bennet/git/code-factory/src/code_factory/config/defaults.py).
 
-That fallback is intentionally minimal. For real workflows, define an explicit prompt template in `WORKFLOW.md`.
+That fallback is intentionally minimal. For real workflows, define explicit prompt sections in `WORKFLOW.md`.
