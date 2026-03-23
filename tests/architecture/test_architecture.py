@@ -19,6 +19,7 @@ ALLOWED_TOP_LEVEL_ENTRIES = {
     "observability",
     "prompts",
     "runtime",
+    "structured_results.py",
     "trackers",
     "workflow",
     "workspace",

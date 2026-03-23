@@ -53,6 +53,13 @@ from code_factory.coding_agents.codex.app_server.streams import (
     stdout_reader,
     wait_for_exit,
 )
+from code_factory.coding_agents.codex.app_server.structured_output import (
+    extract_structured_turn_result,
+    message_item,
+    parse_json_string,
+    structured_result_candidates,
+    turn_payload,
+)
 from code_factory.coding_agents.codex.app_server.tool_response import (
     build_tool_response,
 )
@@ -92,6 +99,7 @@ from code_factory.observability.api.server import (
     site_bound_port,
 )
 from code_factory.runtime.subprocess.process_tree import ProcessTree
+from code_factory.structured_results import StructuredTurnResult
 from code_factory.trackers.memory import MemoryTracker
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
@@ -464,6 +472,10 @@ async def test_protocol_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     session = make_session()
     assert await start_turn(session, "prompt", make_issue()) == "turn-1"
+    assert sent[-1]["params"]["outputSchema"]["properties"]["decision"]["enum"] == [
+        "transition",
+        "blocked",
+    ]
 
 
 @pytest.mark.asyncio
@@ -505,7 +517,10 @@ async def test_turn_helpers() -> None:
                 session,
                 on_message,
                 executor,
-                {"method": "turn/completed", "params": {}},
+                {
+                    "method": "turn/completed",
+                    "params": {"turn": {"status": "completed"}},
+                },
                 "{}",
             )
             == "turn_completed"
@@ -615,12 +630,41 @@ async def test_turn_helpers() -> None:
 
         session.stdout_queue.put_nowait(("line", "not-json"))
         session.stdout_queue.put_nowait(
-            ("line", json.dumps({"method": "turn/completed"}))
+            (
+                "line",
+                json.dumps(
+                    {
+                        "method": "item/completed",
+                        "params": {
+                            "item": {
+                                "type": "agentMessage",
+                                "text": json.dumps(
+                                    {
+                                        "decision": "transition",
+                                        "summary": "done",
+                                        "next_state": "Done",
+                                    }
+                                ),
+                            }
+                        },
+                    }
+                ),
+            )
         )
-        assert (
-            await await_turn_completion(session, on_message, executor)
-            == "turn_completed"
+        session.stdout_queue.put_nowait(
+            (
+                "line",
+                json.dumps(
+                    {
+                        "method": "turn/completed",
+                        "params": {"turn": {"status": "completed"}},
+                    }
+                ),
+            )
         )
+        result = await await_turn_completion(session, on_message, executor)
+        assert result.decision == "transition"
+        assert result.next_state == "Done"
     finally:
         import code_factory.coding_agents.codex.app_server.turns as turns_module
 
@@ -676,10 +720,18 @@ async def test_client_runtime_and_observability_behaviors(
     )
     monkeypatch.setattr(
         "code_factory.coding_agents.codex.app_server.client.await_turn_completion",
-        lambda session, handler, executor: asyncio.sleep(0, result="turn_completed"),
+        lambda session, handler, executor: asyncio.sleep(
+            0,
+            result=StructuredTurnResult(
+                decision="transition",
+                summary="done",
+                next_state="Done",
+            ),
+        ),
     )
     result = await client.run_turn(session, "prompt", issue, on_message=on_message)
-    assert result["session_id"] == "thread-1-turn-1"
+    assert result.decision == "transition"
+    assert result.next_state == "Done"
     assert emitted[0] == "session_started"
 
     monkeypatch.setattr(
@@ -1044,3 +1096,141 @@ async def test_observability_server_run_retries_loop_when_started_wait_is_not_te
     finally:
         monkeypatch.undo()
     assert events == ["started", "cleanup"]
+
+
+@pytest.mark.asyncio
+async def test_app_server_structured_output_edge_paths() -> None:
+    assert parse_json_string("") is None
+    assert parse_json_string("not-json") is None
+    assert message_item({"params": {"item": "bad"}}) is None
+    assert turn_payload({"params": {"turn": "bad"}}) == {}
+    assert extract_structured_turn_result({"method": "notification"}) is None
+    assert (
+        structured_result_candidates(
+            {"method": "item/completed", "params": {"item": "bad"}}
+        )
+        == []
+    )
+    assert (
+        structured_result_candidates(
+            {"method": "item/completed", "params": {"item": {"type": "note"}}}
+        )
+        == []
+    )
+    assert (
+        structured_result_candidates(
+            {
+                "method": "item/completed",
+                "params": {"item": {"type": "agentMessage", "text": None}},
+            }
+        )
+        == []
+    )
+    assert (
+        structured_result_candidates(
+            {
+                "method": "item/completed",
+                "params": {"item": {"type": "agentMessage", "text": "not-json"}},
+            }
+        )
+        == []
+    )
+    assert (
+        extract_structured_turn_result(
+            {
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "type": "agentMessage",
+                        "text": '{"decision":"invalid","summary":"done"}',
+                    }
+                },
+            }
+        )
+        is None
+    )
+    candidates = structured_result_candidates(
+        {
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "agentMessage",
+                    "text": '{"decision":"blocked","summary":"need input","next_state":"Todo"}',
+                }
+            },
+        }
+    )
+    assert any(
+        isinstance(candidate, dict) and candidate.get("decision") == "blocked"
+        for candidate in candidates
+    )
+    parsed = extract_structured_turn_result(
+        {
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "agentMessage",
+                    "text": '{"decision":"transition","summary":"done","next_state":"Done"}',
+                }
+            },
+        }
+    )
+    assert parsed == StructuredTurnResult(
+        decision="transition",
+        summary="done",
+        next_state="Done",
+    )
+
+
+@pytest.mark.asyncio
+async def test_turn_completion_reports_missing_and_terminal_status_failures() -> None:
+    session = make_session()
+    executor = DynamicToolExecutor(
+        lambda query, variables: asyncio.sleep(0, result={"ok": True})
+    )
+
+    async def on_message(_message: dict[str, Any]) -> None:
+        return None
+
+    session.stdout_queue.put_nowait(
+        (
+            "line",
+            json.dumps(
+                {"method": "turn/completed", "params": {"turn": {"status": "ok"}}}
+            ),
+        )
+    )
+    with pytest.raises(AppServerError, match="invalid_turn_status"):
+        await await_turn_completion(session, on_message, executor)
+
+    session = make_session()
+    session.stdout_queue.put_nowait(
+        (
+            "line",
+            json.dumps(
+                {
+                    "method": "turn/completed",
+                    "params": {"turn": {"status": "completed"}},
+                }
+            ),
+        )
+    )
+    with pytest.raises(AppServerError, match="missing_structured_turn_result"):
+        await await_turn_completion(session, on_message, executor)
+
+    with pytest.raises(AppServerError, match="turn_failed"):
+        await handle_turn_message(
+            session,
+            on_message,
+            executor,
+            {"method": "turn/completed", "params": {"turn": {"status": "failed"}}},
+            "{}",
+        )
+    with pytest.raises(AppServerError, match="turn_cancelled"):
+        await handle_turn_message(
+            session,
+            on_message,
+            executor,
+            {"method": "turn/completed", "params": {"turn": {"status": "interrupted"}}},
+            "{}",
+        )

@@ -34,7 +34,6 @@ LOGGER = logging.getLogger(__name__)
 class OrchestratorActor(DispatchingMixin, ReconciliationMixin):
     """Actor responsible for synchronizing tracker data, dispatching workers, and replying to clients."""
 
-    CONTINUATION_RETRY_DELAY_MS: ClassVar[int] = 1_000
     FAILURE_RETRY_BASE_MS: ClassVar[int] = 10_000
     POLL_TRANSITION_RENDER_DELAY_MS: ClassVar[int] = 20
     EMPTY_AGENT_TOTALS: ClassVar[dict[str, int]] = {

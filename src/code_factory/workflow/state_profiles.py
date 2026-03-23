@@ -21,11 +21,22 @@ class StateCodexOverride:
 
 @dataclass(frozen=True, slots=True)
 class WorkflowStateProfile:
-    """Prompt and codex settings selected for a specific tracker state."""
+    """Prompt and transition settings selected for a specific tracker state."""
 
     state_name: str
-    prompt_refs: tuple[str, ...]
-    codex: StateCodexOverride
+    prompt_refs: tuple[str, ...] = ()
+    codex: StateCodexOverride = StateCodexOverride()
+    allowed_next_states: tuple[str, ...] = ()
+    failure_state: str | None = None
+    auto_next_state: str | None = None
+
+    @property
+    def is_auto(self) -> bool:
+        return self.auto_next_state is not None
+
+    @property
+    def is_agent_run(self) -> bool:
+        return not self.is_auto
 
     def codex_model(self, default: str | None) -> str | None:
         return self.codex.model if self.codex.model is not None else default
@@ -36,6 +47,14 @@ class WorkflowStateProfile:
             if self.codex.reasoning_effort is not None
             else default
         )
+
+    def allows_next_state(self, state_name: str) -> bool:
+        if not self.allowed_next_states:
+            return True
+        normalized_candidate = normalize_issue_state(state_name)
+        return normalized_candidate in {
+            normalize_issue_state(allowed) for allowed in self.allowed_next_states
+        }
 
 
 def parse_state_profiles(
@@ -48,10 +67,6 @@ def parse_state_profiles(
         return {}
     if not isinstance(raw_states, Mapping):
         raise ConfigValidationError("states must be an object")
-    if not prompt_sections:
-        raise ConfigValidationError(
-            "states requires named `# prompt:` sections in the workflow body"
-        )
 
     profiles: dict[str, WorkflowStateProfile] = {}
     for raw_state_name, raw_profile in raw_states.items():
@@ -65,17 +80,60 @@ def parse_state_profiles(
                 f"states contains duplicate normalized state {state_name!r}"
             )
         profile = require_mapping(raw_profile, field_name)
-        unexpected_keys = set(profile.keys()) - {"prompt", "codex"}
+        unexpected_keys = set(profile.keys()) - {
+            "prompt",
+            "codex",
+            "allowed_next_states",
+            "failure_state",
+            "auto_next_state",
+        }
         if unexpected_keys:
-            raise ConfigValidationError(
-                f"{field_name} has unsupported keys: {', '.join(sorted(map(str, unexpected_keys)))}"
-            )
-        prompt_refs = _prompt_refs(profile.get("prompt"), field_name, prompt_sections)
+            names = ", ".join(sorted(map(str, unexpected_keys)))
+            raise ConfigValidationError(f"{field_name} has unsupported keys: {names}")
+        prompt_refs = _prompt_refs(
+            profile.get("prompt"),
+            field_name,
+            prompt_sections,
+        )
+        allowed_next_states = _state_name_list(
+            profile.get("allowed_next_states"),
+            f"{field_name}.allowed_next_states",
+        )
+        failure_state = _optional_state_name(
+            profile.get("failure_state"), f"{field_name}.failure_state"
+        )
+        auto_next_state = _optional_state_name(
+            profile.get("auto_next_state"), f"{field_name}.auto_next_state"
+        )
         codex = _codex_override(profile.get("codex"), field_name)
+        if prompt_refs and auto_next_state is not None:
+            raise ConfigValidationError(
+                f"{field_name} cannot define both prompt and auto_next_state"
+            )
+        if auto_next_state is None and not prompt_refs:
+            raise ConfigValidationError(
+                f"{field_name} must define either prompt or auto_next_state"
+            )
+        if auto_next_state is not None and (
+            codex.model is not None or codex.reasoning_effort is not None
+        ):
+            raise ConfigValidationError(
+                f"{field_name}.codex is not supported for auto states"
+            )
+        if (
+            failure_state is not None
+            and normalize_issue_state(failure_state) == normalized_state
+        ):
+            raise ConfigValidationError(
+                f"{field_name}.failure_state must not equal the current state"
+            )
         profiles[normalized_state] = WorkflowStateProfile(
             state_name=state_name,
             prompt_refs=prompt_refs,
             codex=codex,
+            allowed_next_states=allowed_next_states,
+            failure_state=failure_state,
+            auto_next_state=auto_next_state,
         )
     return profiles
 
@@ -87,6 +145,12 @@ def _prompt_refs(
 ) -> tuple[str, ...]:
     prompt_field = f"{field_name}.prompt"
     refs: list[str] = []
+    if raw_prompt is None:
+        return ()
+    if not prompt_sections:
+        raise ConfigValidationError(
+            "states requires named `# prompt:` sections in the workflow body"
+        )
     if isinstance(raw_prompt, str):
         refs = [_prompt_ref(raw_prompt, prompt_field)]
     elif isinstance(raw_prompt, list):
@@ -97,7 +161,6 @@ def _prompt_refs(
         raise ConfigValidationError(
             f"{prompt_field} must be a string or list of strings"
         )
-
     for prompt_ref in refs:
         if prompt_ref not in prompt_sections:
             raise ConfigValidationError(
@@ -120,12 +183,45 @@ def _codex_override(raw_codex: Any, field_name: str) -> StateCodexOverride:
     codex = require_mapping(raw_codex, codex_field)
     unexpected_keys = set(codex.keys()) - {"model", "reasoning_effort"}
     if unexpected_keys:
-        raise ConfigValidationError(
-            f"{codex_field} has unsupported keys: {', '.join(sorted(map(str, unexpected_keys)))}"
-        )
+        names = ", ".join(sorted(map(str, unexpected_keys)))
+        raise ConfigValidationError(f"{codex_field} has unsupported keys: {names}")
     return StateCodexOverride(
         model=optional_non_blank_string(codex.get("model"), f"{codex_field}.model"),
         reasoning_effort=optional_non_blank_string(
             codex.get("reasoning_effort"), f"{codex_field}.reasoning_effort"
         ),
     )
+
+
+def _state_name_list(value: Any, field_name: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ConfigValidationError(f"{field_name} must be a list of strings")
+    states: list[str] = []
+    seen: set[str] = set()
+    for raw_state in value:
+        state_name = _required_state_name(raw_state, field_name)
+        normalized = normalize_issue_state(state_name)
+        if normalized in seen:
+            raise ConfigValidationError(
+                f"{field_name} must not contain duplicate normalized states"
+            )
+        seen.add(normalized)
+        states.append(state_name)
+    return tuple(states)
+
+
+def _optional_state_name(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _required_state_name(value, field_name)
+
+
+def _required_state_name(value: Any, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise ConfigValidationError(f"{field_name} must be a string")
+    state_name = value.strip()
+    if not state_name:
+        raise ConfigValidationError(f"{field_name} must not be blank")
+    return state_name

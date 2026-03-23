@@ -8,6 +8,7 @@ from typing import Any
 
 from ....errors import AppServerError
 from ....issues import Issue
+from ....structured_results import structured_turn_output_schema
 from ..tools import tool_specs
 from .session import AppServerSession
 from .streams import log_non_json_stream_line, send_message
@@ -94,6 +95,7 @@ async def start_turn(session: AppServerSession, prompt: str, issue: Issue) -> st
                 "title": f"{issue.identifier}: {issue.title}",
                 "approvalPolicy": session.approval_policy,
                 "sandboxPolicy": session.turn_sandbox_policy,
+                "outputSchema": structured_turn_output_schema(),
             },
         },
     )

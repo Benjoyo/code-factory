@@ -85,9 +85,15 @@ def yaml_list(values: tuple[str, ...]) -> str:
 def yaml_state_profiles(values: tuple[str, ...]) -> str:
     """Render the starter state-profile mapping that points to one shared prompt."""
 
-    return "\n".join(
-        f"  {yaml_string(value)}:\n    prompt: default" for value in values
-    )
+    rendered: list[str] = []
+    for value in values:
+        if value.strip().lower() == "todo":
+            rendered.append(
+                f"  {yaml_string(value)}:\n    auto_next_state: In Progress"
+            )
+            continue
+        rendered.append(f"  {yaml_string(value)}:\n    prompt: default")
+    return "\n".join(rendered)
 
 
 def yaml_string(value: str) -> str:

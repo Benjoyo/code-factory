@@ -141,11 +141,6 @@ class WorkflowStoreActor:
         await self._publish_snapshot(self._snapshot)
         return self._snapshot
 
-    async def _reload_if_changed(self) -> WorkflowSnapshot | None:
-        """Backwards-compatible alias for tests and older callers."""
-
-        return await self.reload_if_changed()
-
     async def _handle_reload_error(self, error: Any) -> None:
         """Record the reload error while keeping the previous workflow version active."""
 
@@ -163,7 +158,7 @@ class WorkflowStoreActor:
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=self._poll_interval_s)
             except TimeoutError:
-                await self._reload_if_changed()
+                await self.reload_if_changed()
 
     async def _watch_loop(self, stop_event: asyncio.Event) -> None:
         watch_root = str(Path(self.path).resolve().parent)

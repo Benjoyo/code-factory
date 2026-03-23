@@ -27,8 +27,9 @@ require stricter approvals or sandboxing.
 Important boundary:
 
 - Symphony is a scheduler/runner and tracker reader.
-- Ticket writes (state transitions, comments, PR links) are typically performed by the coding agent
-  using tools available in the workflow/runtime environment.
+- The harness owns tracker state transitions and persisted structured state-result comments.
+- Coding agents may still manage workpad-style comments, PR metadata, and other workflow-local
+  tracker writes exposed through tools.
 - A successful run may end at a workflow-defined handoff state (for example `Human Review`), not
   necessarily `Done`.
 
@@ -207,7 +208,7 @@ Fields (logical):
 
 - `issue_id`
 - `issue_identifier`
-- `attempt` (integer or null, `null` for first run, `>=1` for retries/continuation)
+- `attempt` (integer or null, `null` for first run, `>=1` for retries after failed runs)
 - `workspace_path`
 - `started_at`
 - `status`
@@ -477,7 +478,7 @@ Template input variables:
   - Includes all normalized issue fields, including labels and blockers.
 - `attempt` (integer or null)
   - `null`/absent on first attempt.
-  - Integer on retry or continuation run.
+  - Integer on retry after a failed run.
 
 Fallback prompt behavior:
 
@@ -586,7 +587,6 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `hooks.before_remove`: shell script or null
 - `hooks.timeout_ms`: integer, default `60000`
 - `agent.max_concurrent_agents`: integer, default `10`
-- `agent.max_turns`: integer, default `20`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
 - `agent.max_concurrent_agents_by_state`: map of positive integers, default `{}`
 - `codex.command`: shell command string, default `codex app-server`
@@ -631,16 +631,11 @@ claim state.
 Important nuance:
 
 - A successful worker exit does not mean the issue is done forever.
-- The worker may continue through multiple back-to-back coding-agent turns before it exits.
-- After each normal turn completion, the worker re-checks the tracker issue state.
-- If the issue is still in an active state, the worker should start another turn on the same live
-  coding-agent thread in the same workspace, up to `agent.max_turns`.
-- The first turn should use the full rendered task prompt.
-- Continuation turns should send only continuation guidance to the existing thread, not resend the
-  original task prompt that is already present in thread history.
-- Once the worker exits normally, the orchestrator still schedules a short continuation retry
-  (about 1 second) so it can re-check whether the issue remains active and needs another worker
-  session.
+- Each worker handles at most one agent-run state transition before it exits.
+- A normal successful worker exit means the agent returned a valid structured result and the
+  harness transitioned the issue or completed cleanup.
+- If the issue remains active in a later state, a later dispatch starts a fresh worker session in
+  the same workspace.
 
 ### 7.2 Run Attempt Lifecycle
 
@@ -671,8 +666,7 @@ Distinct terminal reasons are important because retry logic and logs differ.
 - `Worker Exit (normal)`
   - Remove running entry.
   - Update aggregate runtime totals.
-  - Schedule continuation retry (attempt `1`) after the worker exhausts or finishes its in-process
-    turn loop.
+  - Release the claim unless stop/retry metadata requires follow-up handling.
 
 - `Worker Exit (abnormal)`
   - Remove running entry.
@@ -761,7 +755,6 @@ Retry entry creation:
 
 Backoff formula:
 
-- Normal continuation retries after a clean worker exit use a short fixed delay of `1000` ms.
 - Failure-driven retries use `delay = min(10000 * 2^(attempt - 1), agent.max_retry_backoff_ms)`.
 - Power is capped by the configured max retry backoff (default `300000` / 5m).
 
@@ -958,7 +951,7 @@ semantics):
 {"id":1,"method":"initialize","params":{"clientInfo":{"name":"code-factory","version":"1.0"},"capabilities":{}}}
 {"method":"initialized","params":{}}
 {"id":2,"method":"thread/start","params":{"approvalPolicy":"<implementation-defined>","sandbox":"<implementation-defined>","cwd":"/abs/workspace"}}
-{"id":3,"method":"turn/start","params":{"threadId":"<thread-id>","input":[{"type":"text","text":"<rendered prompt-or-continuation-guidance>"}],"cwd":"/abs/workspace","title":"ABC-123: Example","approvalPolicy":"<implementation-defined>","sandboxPolicy":{"type":"<implementation-defined>"}}}
+{"id":3,"method":"turn/start","params":{"threadId":"<thread-id>","input":[{"type":"text","text":"<rendered state prompt>"}],"cwd":"/abs/workspace","title":"ABC-123: Example","approvalPolicy":"<implementation-defined>","sandboxPolicy":{"type":"<implementation-defined>"}}}
 ```
 
 1. `initialize` request
@@ -979,8 +972,7 @@ semantics):
 4. `turn/start` request
    - Params include:
      - `threadId`
-     - `input` = single text item containing rendered prompt for the first turn, or continuation
-       guidance for later turns on the same thread
+     - `input` = single text item containing the rendered prompt for the current workflow state
      - `cwd`
      - `title` = `<issue.identifier>: <issue.title>`
      - `approvalPolicy` = implementation-defined turn approval policy value
@@ -992,7 +984,6 @@ Session identifiers:
 - Read `thread_id` from `thread/start` result `result.thread.id`
 - Read `turn_id` from each `turn/start` result `result.turn.id`
 - Emit `session_id = "<thread_id>-<turn_id>"`
-- Reuse the same `thread_id` for all continuation turns inside one worker run
 
 ### 10.3 Streaming Turn Processing
 
@@ -1005,13 +996,6 @@ Completion conditions:
 - `turn/cancelled` -> failure
 - turn timeout (`turn_timeout_ms`) -> failure
 - subprocess exit -> failure
-
-Continuation processing:
-
-- If the worker decides to continue after a successful turn, it should issue another `turn/start`
-  on the same live `threadId`.
-- The app-server subprocess should remain alive across those continuation turns and be stopped only
-  when the worker run is ending.
 
 Line handling requirements:
 
@@ -1234,15 +1218,19 @@ Orchestrator behavior on tracker errors:
 
 ### 11.5 Tracker Writes (Important Boundary)
 
-Symphony does not require first-class tracker write APIs in the orchestrator.
+Symphony requires first-class tracker write APIs in the harness for workflow state transitions and
+persisted structured state results.
 
-- Ticket mutations (state transitions, comments, PR metadata) are typically handled by the coding
-  agent using tools defined by the workflow prompt.
-- The service remains a scheduler/runner and tracker reader.
+- Workflow states finish by emitting structured output (`transition` or `blocked`) rather than by
+  mutating tracker state directly from the prompt.
+- The harness validates the requested next state against workflow policy and applies the tracker
+  transition itself.
+- The harness also persists one structured result comment per issue/state so later stages and
+  dependent tickets can consume prior results deterministically.
+- Coding agents may still use workflow-defined tools for workpad comments, PR metadata, and similar
+  task-local writes that are not the authoritative workflow state transition.
 - Workflow-specific success often means "reached the next handoff state" (for example
   `Human Review`) rather than tracker terminal state `Done`.
-- If the optional `linear_graphql` client-side tool extension is implemented, it is still part of
-  the agent toolchain rather than orchestrator business logic.
 
 ## 12. Prompt Construction and Context Assembly
 
@@ -1252,7 +1240,7 @@ Inputs to prompt rendering:
 
 - the composed prompt for the active state
 - normalized `issue` object
-- optional `attempt` integer (retry/continuation metadata)
+- optional `attempt` integer (retry metadata)
 
 ### 12.2 Rendering Rules
 
@@ -1261,19 +1249,13 @@ Inputs to prompt rendering:
 - Convert issue object keys to strings for template compatibility.
 - Preserve nested arrays/maps (labels, blockers) so templates can iterate.
 
-### 12.3 Retry/Continuation Semantics
+### 12.3 Retry Semantics
 
 `attempt` should be passed to the template because the workflow prompt may provide different
 instructions for:
 
 - first run (`attempt` null or absent)
-- continuation run after a successful prior session
 - retry after error/timeout/stall
-
-If an issue remains active but its effective state profile changes between turns
-(prompt content or allowed per-state codex model/reasoning settings), the
-current worker should stop after the completed turn and the normal continuation
-retry should start a fresh session in the same workspace.
 
 ### 12.4 Failure Semantics
 
@@ -1850,43 +1832,26 @@ function run_agent_attempt(issue, attempt, orchestrator_channel):
     run_hook_best_effort("after_run", workspace.path)
     fail_worker("agent session startup error")
 
-  max_turns = config.agent.max_turns
-  turn_number = 1
+  prompt = build_prompt_for_state(workflow_template, issue, attempt)
+  if prompt failed:
+    app_server.stop_session(session)
+    run_hook_best_effort("after_run", workspace.path)
+    fail_worker("prompt error")
 
-  while true:
-    prompt = build_turn_prompt(workflow_template, issue, attempt, turn_number, max_turns)
-    if prompt failed:
-      app_server.stop_session(session)
-      run_hook_best_effort("after_run", workspace.path)
-      fail_worker("prompt error")
+  turn_result = app_server.run_turn(
+    session=session,
+    prompt=prompt,
+    issue=issue,
+    on_message=(msg) -> send(orchestrator_channel, {codex_update, issue.id, msg})
+  )
 
-    turn_result = app_server.run_turn(
-      session=session,
-      prompt=prompt,
-      issue=issue,
-      on_message=(msg) -> send(orchestrator_channel, {codex_update, issue.id, msg})
-    )
+  if turn_result failed:
+    app_server.stop_session(session)
+    run_hook_best_effort("after_run", workspace.path)
+    fail_worker("agent turn error")
 
-    if turn_result failed:
-      app_server.stop_session(session)
-      run_hook_best_effort("after_run", workspace.path)
-      fail_worker("agent turn error")
-
-    refreshed_issue = tracker.fetch_issue_states_by_ids([issue.id])
-    if refreshed_issue failed:
-      app_server.stop_session(session)
-      run_hook_best_effort("after_run", workspace.path)
-      fail_worker("issue state refresh error")
-
-    issue = refreshed_issue[0] or issue
-
-    if issue.state is not active:
-      break
-
-    if turn_number >= max_turns:
-      break
-
-    turn_number = turn_number + 1
+  tracker.persist_state_result(issue.id, issue.state, turn_result)
+  tracker.update_issue_state(issue.id, resolve_next_state(issue.state, turn_result))
 
   app_server.stop_session(session)
   run_hook_best_effort("after_run", workspace.path)
@@ -1901,11 +1866,13 @@ on_worker_exit(issue_id, reason, state):
   running_entry = state.running.remove(issue_id)
   state = add_runtime_seconds_to_totals(state, running_entry)
 
-  if reason == normal:
+  if reason == completed:
     state.completed.add(issue_id)  # bookkeeping only
-    state = schedule_retry(state, issue_id, 1, {
+    state = release_claim(state, issue_id)
+  elif reason == normal:
+    state = schedule_retry(state, issue_id, next_attempt_from(running_entry), {
       identifier: running_entry.identifier,
-      delay_type: continuation
+      error: "worker exited without completing a state transition"
     })
   else:
     state = schedule_retry(state, issue_id, next_attempt_from(running_entry), {
@@ -2019,7 +1986,7 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - Non-active state stops running agent without workspace cleanup
 - Terminal state stops running agent and cleans workspace
 - Reconciliation with no running issues is a no-op
-- Normal worker exit schedules a short continuation retry (attempt 1)
+- Normal worker exit after a completed state transition releases the claim
 - Abnormal worker exit increments retries with 10s-based exponential backoff
 - Retry backoff cap uses configured `agent.max_retry_backoff_ms`
 - Retry queue entries include attempt, due time, identifier, and error
@@ -2113,7 +2080,8 @@ Use the same validation profiles as Section 17:
 - Coding-agent app-server subprocess client with JSON line protocol
 - Codex launch command config (`codex.command`, `codex.model`, `codex.reasoning_effort`)
 - Strict prompt rendering with `issue` and `attempt` variables
-- Exponential retry queue with continuation retries after normal exit
+- Harness-owned structured turn results and state transitions
+- Exponential retry queue for failed runs
 - Configurable retry backoff cap (`agent.max_retry_backoff_ms`, default 5m)
 - Reconciliation that stops runs on terminal/non-active tracker states
 - Workspace cleanup for terminal issues (startup sweep + active transition)
@@ -2129,8 +2097,6 @@ Use the same validation profiles as Section 17:
 - TODO: Persist retry queue and session metadata across process restarts.
 - TODO: Make observability settings configurable in workflow front matter without prescribing UI
   implementation details.
-- TODO: Add first-class tracker write APIs (comments/state transitions) in the orchestrator instead
-  of only via agent tools.
 - TODO: Add pluggable issue tracker adapters beyond Linear.
 
 ### 18.3 Operational Validation Before Production (Recommended)

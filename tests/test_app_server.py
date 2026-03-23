@@ -86,6 +86,11 @@ async def test_app_server_emits_tool_call_failed_for_supported_tool_failures(
     workspace_root = tmp_path / "workspaces"
     workspace = workspace_root / "MT-90B"
     trace_file = tmp_path / "codex-tool-call-failed.trace"
+    structured_result = (
+        '{"method":"item/completed","params":{"item":{"type":"agentMessage",'
+        '"text":"{\\"decision\\":\\"transition\\",\\"summary\\":\\"done\\",'
+        '\\"next_state\\":\\"Done\\"}"}}}'
+    )
     workspace.mkdir(parents=True)
 
     agent_runtime = write_fake_agent(
@@ -101,7 +106,8 @@ while IFS= read -r line; do
     2) printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-90b"}}}}}}' ;;
     3) printf '%s\n' '{{"id":3,"result":{{"turn":{{"id":"turn-90b"}}}}}}'
        printf '%s\n' '{{"id":103,"method":"item/tool/call","params":{{"tool":"linear_graphql","callId":"call-90b","threadId":"thread-90b","turnId":"turn-90b","arguments":{{"query":"query Viewer {{ viewer {{ id }} }}"}}}}}}' ;;
-    4) printf '%s\n' '{{"method":"turn/completed"}}'
+    4) printf '%s\n' '{structured_result}'
+       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"status":"completed"}}}}}}'
        exit 0 ;;
   esac
 done
@@ -130,5 +136,6 @@ done
         tool_executor=None,
     )
 
-    assert result["result"] == "turn_completed"
+    assert result.decision == "transition"
+    assert result.next_state == "Done"
     assert any(message["event"] == "tool_call_failed" for message in messages)

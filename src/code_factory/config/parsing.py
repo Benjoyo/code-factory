@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..coding_agents.base import parse_coding_agent_settings
+from ..errors import ConfigValidationError
 from ..trackers.base import parse_tracker_settings
 from .defaults import DEFAULT_PROMPT_TEMPLATE, DEFAULT_WORKSPACE_ROOT
 from .models import (
@@ -39,6 +40,15 @@ def parse_settings(config: Mapping[str, Any]) -> Settings:
     hooks_raw = require_mapping(config.get("hooks"), "hooks")
     observability_raw = require_mapping(config.get("observability"), "observability")
     server_raw = require_mapping(config.get("server"), "server")
+    _reject_unsupported_keys(
+        agent_raw,
+        "agent",
+        {
+            "max_concurrent_agents",
+            "max_retry_backoff_ms",
+            "max_concurrent_agents_by_state",
+        },
+    )
 
     return Settings(
         tracker=tracker,
@@ -58,7 +68,6 @@ def parse_settings(config: Mapping[str, Any]) -> Settings:
                 "agent.max_concurrent_agents",
                 10,
             ),
-            max_turns=positive_int(agent_raw.get("max_turns"), "agent.max_turns", 20),
             max_retry_backoff_ms=positive_int(
                 agent_raw.get("max_retry_backoff_ms"),
                 "agent.max_retry_backoff_ms",
@@ -111,3 +120,12 @@ def workflow_prompt(prompt_template: str) -> str:
     """Apply sensible defaults when workflows omit a prompt template string."""
 
     return prompt_template.strip() or DEFAULT_PROMPT_TEMPLATE
+
+
+def _reject_unsupported_keys(
+    config: Mapping[str, Any], field_name: str, supported_keys: set[str]
+) -> None:
+    unexpected_keys = set(config.keys()) - supported_keys
+    if unexpected_keys:
+        names = ", ".join(sorted(map(str, unexpected_keys)))
+        raise ConfigValidationError(f"{field_name} has unsupported keys: {names}")

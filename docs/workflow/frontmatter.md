@@ -90,42 +90,58 @@ For `tracker.api_key` and `tracker.assignee`:
 ## `states`
 
 `states` defines the active workflow states, selects prompt sections for each
-state, and optionally applies a small set of per-state Codex overrides.
+agent-run state, and optionally configures harness-owned transitions.
 
 ### Fields
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `states` | object | none | Required. Keys are active tracker states. |
-| `states.<state>.prompt` | string or non-empty list of strings | none | Required. References named `# prompt: <id>` sections from the Markdown body. |
-| `states.<state>.codex.model` | string or `null` | inherit global `codex.model` | Optional per-state Codex model override. |
-| `states.<state>.codex.reasoning_effort` | string or `null` | inherit global `codex.reasoning_effort` | Optional per-state reasoning override. |
+| `states.<state>.prompt` | string or non-empty list of strings | none | Required for agent-run states. References named `# prompt: <id>` sections from the Markdown body. |
+| `states.<state>.codex.model` | string or `null` | inherit global `codex.model` | Optional per-state Codex model override for agent-run states only. |
+| `states.<state>.codex.reasoning_effort` | string or `null` | inherit global `codex.reasoning_effort` | Optional per-state reasoning override for agent-run states only. |
+| `states.<state>.allowed_next_states` | list of strings | unrestricted | Optional allowlist for harness-applied transitions. |
+| `states.<state>.failure_state` | string or `null` | `null` | Optional fallback state for `blocked` results with no explicit `next_state`. |
+| `states.<state>.auto_next_state` | string or `null` | `null` | Makes the state harness-run instead of agent-run. |
 
 Rules:
 
 - `states` must be an object with at least one entry.
 - State names are trimmed and matched case-insensitively at runtime.
 - Duplicate normalized state names are invalid.
+- Every state must define exactly one mode:
+  - agent-run via `prompt`
+  - harness-run via `auto_next_state`
 - `states.<state>.prompt` may reference one prompt section or several prompt sections.
 - Prompt references are matched exactly after trimming.
 - Referencing a missing prompt section is invalid.
 - Only `codex.model` and `codex.reasoning_effort` may be overridden per state.
+- `prompt` and `auto_next_state` are mutually exclusive.
+- `codex` overrides are rejected for auto states.
+- `allowed_next_states` must be a list of non-blank state names with no duplicate normalized values.
+- `failure_state` and `auto_next_state` must be non-blank strings when present.
+- `failure_state` must not equal the current state.
 - Other per-state keys are rejected.
 
 Runtime behavior:
 
 - Active states are derived from `states` keys.
-- The effective first-turn prompt for a state is the referenced prompt section bodies concatenated with a blank line between sections, in listed order.
-- If an issue stays active but its effective prompt or allowed per-state Codex overrides change between turns, the current worker exits after the completed turn and the normal continuation retry starts a fresh session.
+- Agent-run states start a fresh coding-agent session and render the referenced prompt section bodies concatenated with a blank line between sections, in listed order.
+- Auto states do not start an agent. The harness moves the issue directly to `auto_next_state`.
+- Successful agent turns return structured output with `decision`, `summary`, and optional `next_state`, and the harness performs the validated state transition.
 
 Minimal example:
 
 ```yaml
 states:
   "Todo":
-    prompt: default
+    auto_next_state: In Progress
   "In Progress":
     prompt: default
+    allowed_next_states:
+      - Review
+      - Blocked
+    failure_state: Blocked
   "Merging":
     prompt: merge
     codex:
@@ -163,7 +179,6 @@ Agent settings control orchestration concurrency and retry behavior.
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `agent.max_concurrent_agents` | positive integer or string integer | `10` | Global concurrent worker limit. |
-| `agent.max_turns` | positive integer or string integer | `20` | Maximum turns per worker attempt. |
 | `agent.max_retry_backoff_ms` | positive integer or string integer | `300000` | Upper bound for retry backoff. |
 | `agent.max_concurrent_agents_by_state` | object of `state_name -> positive integer` | `{}` | Per-state concurrency overrides. |
 
@@ -404,7 +419,6 @@ workspace:
 
 agent:
   max_concurrent_agents: 10
-  max_turns: 20
   max_retry_backoff_ms: 300000
   max_concurrent_agents_by_state:
     in progress: 5

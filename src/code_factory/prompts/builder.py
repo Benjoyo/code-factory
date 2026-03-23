@@ -15,6 +15,7 @@ def build_prompt(
     workflow_snapshot: WorkflowSnapshot,
     *,
     attempt: int | None = None,
+    issue_data: dict[str, object] | None = None,
 ) -> str:
     prompt_template = workflow_prompt(
         workflow_snapshot.prompt_template_for_state(issue.state)
@@ -27,18 +28,9 @@ def build_prompt(
         ) from exc
 
     try:
-        return template.render(attempt=attempt, issue=to_liquid_value(issue))
+        return template.render(
+            attempt=attempt,
+            issue=to_liquid_value(issue_data if issue_data is not None else issue),
+        )
     except Exception as exc:
         raise RuntimeError(f"template_render_error: {exc}") from exc
-
-
-def continuation_prompt(turn_number: int, max_turns: int) -> str:
-    return f"""
-Continuation guidance:
-
-- The previous agent turn completed normally, but the tracked issue is still in an active state.
-- This is continuation turn #{turn_number} of {max_turns} for the current agent run.
-- Resume from the current workspace and workpad state instead of restarting from scratch.
-- The original task instructions and prior turn context are already present in this thread, so do not restate them before acting.
-- Focus on the remaining ticket work and do not end the turn while the issue stays active unless you are truly blocked.
-""".strip()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Tracks the runtime metadata required to keep a Codex thread alive."""
+"""Tracks the runtime metadata for one live Codex app-server session."""
 
 import asyncio
 import contextlib

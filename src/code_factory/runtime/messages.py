@@ -40,6 +40,7 @@ class WorkerExited:
     workspace_path: str | None
     normal: bool
     reason: str | None = None
+    completed: bool = False
 
 
 @dataclass(slots=True)

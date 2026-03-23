@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from ..config.models import Settings, TrackerSettings
 from ..errors import ConfigValidationError
-from ..issues import Issue
+from ..issues import Issue, IssueComment
 
 
 class Tracker(Protocol):
@@ -18,7 +18,11 @@ class Tracker(Protocol):
 
     async def fetch_issue_states_by_ids(self, issue_ids: list[str]) -> list[Issue]: ...
 
+    async def fetch_issue_comments(self, issue_id: str) -> list[IssueComment]: ...
+
     async def create_comment(self, issue_id: str, body: str) -> None: ...
+
+    async def update_comment(self, comment_id: str, body: str) -> None: ...
 
     async def update_issue_state(self, issue_id: str, state_name: str) -> None: ...
 

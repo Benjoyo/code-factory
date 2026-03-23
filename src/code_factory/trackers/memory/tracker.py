@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any
 
-from ...issues import Issue, normalize_issue_state
+from ...errors import TrackerClientError
+from ...issues import Issue, IssueComment, normalize_issue_state
 
 
 class MemoryTracker:
@@ -20,6 +22,9 @@ class MemoryTracker:
     ) -> None:
         self._issues = list(issues or [])
         self._recipient = recipient
+        self._comments_by_issue: dict[str, list[IssueComment]] = {}
+        self._comment_issue_ids: dict[str, str] = {}
+        self._comment_counter = 0
 
     def replace_issues(self, issues: list[Issue]) -> None:
         """Replace the full issue snapshot, primarily for tests that mutate inputs."""
@@ -42,9 +47,36 @@ class MemoryTracker:
         wanted = set(issue_ids)
         return [issue for issue in self._issues if issue.id in wanted]
 
+    async def fetch_issue_comments(self, issue_id: str) -> list[IssueComment]:
+        return list(self._comments_by_issue.get(issue_id, ()))
+
     async def create_comment(self, issue_id: str, body: str) -> None:
         if self._recipient is not None:
             await self._recipient.put(("memory_tracker_comment", issue_id, body))
+        self._comment_counter += 1
+        now = datetime.now(UTC)
+        comment = IssueComment(
+            id=f"memory-comment-{self._comment_counter}",
+            body=body,
+            created_at=now,
+            updated_at=now,
+        )
+        self._comments_by_issue.setdefault(issue_id, []).append(comment)
+        assert comment.id is not None
+        self._comment_issue_ids[comment.id] = issue_id
+
+    async def update_comment(self, comment_id: str, body: str) -> None:
+        issue_id = self._comment_issue_ids.get(comment_id)
+        if issue_id is None:
+            raise TrackerClientError("comment_update_failed")
+        comments = self._comments_by_issue.get(issue_id, [])
+        now = datetime.now(UTC)
+        self._comments_by_issue[issue_id] = [
+            replace(comment, body=body, updated_at=now)
+            if comment.id == comment_id
+            else comment
+            for comment in comments
+        ]
 
     async def update_issue_state(self, issue_id: str, state_name: str) -> None:
         if self._recipient is not None:
@@ -59,6 +91,6 @@ class MemoryTracker:
 
 
 def build_tracker(_settings, **kwargs: Any) -> MemoryTracker:
-    """Keep the constructor signature compatible with the real tracker entrypoints."""
+    """Build an in-memory tracker using the shared tracker-factory signature."""
 
     return MemoryTracker(**kwargs)

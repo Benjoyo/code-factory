@@ -7,6 +7,7 @@ from typing import Any, Protocol
 
 from ..config.models import CodingAgentSettings, Settings
 from ..issues import Issue
+from ..structured_results import StructuredTurnResult
 from ..trackers.base import Tracker
 
 AgentMessageHandler = Callable[[dict[str, Any]], Awaitable[None]]
@@ -26,7 +27,7 @@ class CodingAgentRuntime(Protocol):
         issue: Issue,
         *,
         on_message: AgentMessageHandler | None = None,
-    ) -> dict[str, Any]: ...
+    ) -> StructuredTurnResult: ...
 
 
 def build_coding_agent_runtime(

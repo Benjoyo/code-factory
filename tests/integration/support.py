@@ -13,6 +13,7 @@ from code_factory.observability.api.server import (
     site_bound_port,
 )
 from code_factory.runtime.orchestration import OrchestratorActor
+from code_factory.structured_results import StructuredTurnResult
 from code_factory.trackers.memory import MemoryTracker
 from code_factory.workflow.store import WorkflowStoreActor
 
@@ -66,9 +67,17 @@ class RecordingMemoryTracker(MemoryTracker):
         self.events.append(("fetch_issue_states_by_ids", tuple(issue_ids)))
         return await super().fetch_issue_states_by_ids(issue_ids)
 
+    async def fetch_issue_comments(self, issue_id: str):
+        self.events.append(("fetch_issue_comments", issue_id))
+        return await super().fetch_issue_comments(issue_id)
+
     async def create_comment(self, issue_id: str, body: str) -> None:
         self.events.append(("create_comment", issue_id, body))
         await super().create_comment(issue_id, body)
+
+    async def update_comment(self, comment_id: str, body: str) -> None:
+        self.events.append(("update_comment", comment_id, body))
+        await super().update_comment(comment_id, body)
 
     async def update_issue_state(self, issue_id: str, state_name: str) -> None:
         self.events.append(("update_issue_state", issue_id, state_name))
@@ -87,8 +96,6 @@ class RecordingMemoryTracker(MemoryTracker):
 
 @dataclass(slots=True)
 class TurnPlan:
-    state: str | None = None
-    comment: str | None = None
     sleep_ms: int = 0
     pause_until_stopped: bool = False
     error: BaseException | None = None
@@ -96,7 +103,7 @@ class TurnPlan:
     token_usage: dict[str, int] | None = None
     rate_limits: dict[str, Any] | None = None
     messages: tuple[dict[str, Any], ...] = ()
-    result: dict[str, Any] = field(default_factory=dict)
+    result: StructuredTurnResult | None = None
 
 
 @dataclass(slots=True)
@@ -175,7 +182,7 @@ class DummyRuntime:
         issue: Issue,
         *,
         on_message=None,
-    ) -> dict[str, Any]:
+    ) -> StructuredTurnResult:
         session.turn_count += 1
         self._controller.record_prompt(issue.identifier, prompt)
         plan = self._controller.next_plan(issue.identifier)
@@ -210,22 +217,33 @@ class DummyRuntime:
                 )
         if plan.pause_until_stopped:
             await session.stop_event.wait()
-            return {"stopped": True}
+            return StructuredTurnResult(decision="blocked", summary="stopped")
         if plan.sleep_ms > 0:
             await asyncio.sleep(plan.sleep_ms / 1000)
-        if plan.comment and issue.id:
-            await self._tracker.create_comment(issue.id, plan.comment)
-        if plan.state and issue.id:
-            await self._tracker.update_issue_state(issue.id, plan.state)
         if plan.error is not None:
             raise plan.error
-        return dict(plan.result)
+        if plan.result is None:
+            raise RuntimeError("missing_turn_plan_result")
+        return plan.result
 
     @staticmethod
     def _timestamp():
         from datetime import UTC, datetime
 
         return datetime.now(UTC)
+
+
+def transition_result(
+    next_state: str,
+    *,
+    summary: str = "completed",
+    decision: str = "transition",
+) -> StructuredTurnResult:
+    return StructuredTurnResult(
+        decision=decision,
+        summary=summary,
+        next_state=next_state,
+    )
 
 
 class IntegrationHarness:
@@ -259,7 +277,6 @@ class IntegrationHarness:
         self.http_port: int | None = None
 
     async def __aenter__(self) -> IntegrationHarness:
-        self.monkeypatch.setattr(OrchestratorActor, "CONTINUATION_RETRY_DELAY_MS", 25)
         self.monkeypatch.setattr(OrchestratorActor, "FAILURE_RETRY_BASE_MS", 25)
         self.monkeypatch.setattr(
             OrchestratorActor, "POLL_TRANSITION_RENDER_DELAY_MS", 5

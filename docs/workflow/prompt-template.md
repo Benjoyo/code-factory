@@ -2,7 +2,7 @@
 
 For runnable workflows, the Markdown body of `WORKFLOW.md` is a set of named
 prompt sections. The runtime selects and composes sections based on the current
-issue state before rendering the first turn of a worker attempt.
+issue state before rendering the worker turn for that state.
 
 Sections are declared with level-1 headings:
 
@@ -15,7 +15,7 @@ Merge-only instructions.
 ```
 
 `states.<state>.prompt` in frontmatter may reference one section or a list of
-sections. The effective prompt is the referenced section bodies joined with a
+sections. The effective prompt for that state is the referenced section bodies joined with a
 blank line between them, in order.
 
 ## How rendering works
@@ -29,9 +29,9 @@ blank line between them, in order.
 - Unknown filters fail rendering.
 - The composed prompt is trimmed before use.
 - If the composed prompt is blank after trimming, Code Factory falls back to its built-in default prompt.
-- The workflow template is only used for turn 1 of an attempt. Turns 2..`agent.max_turns` use Code Factory's built-in continuation prompt instead.
+- Each agent-run state dispatch renders its own prompt and starts a fresh coding-agent session.
 
-That means a good template should fully set up the task for a fresh attempt, but it should not try to manage continuation-turn behavior itself.
+That means a good template should fully set up the task for the current state without assuming prior thread history.
 
 ## Available variables
 
@@ -40,7 +40,7 @@ Only these top-level variables are available:
 | Variable | Type | Description |
 | --- | --- | --- |
 | `issue` | object | The normalized issue snapshot passed to the worker. |
-| `attempt` | integer or `nil` | `nil` on the first attempt, `1` on the first retry/continuation redispatch, then incrementing for later retries. |
+| `attempt` | integer or `nil` | `nil` on the first dispatch for the current state, `1` on the first retry after a failed run, then incrementing for later retries. |
 
 There are no other top-level template variables.
 
@@ -64,6 +64,7 @@ There are no other top-level template variables.
 | `issue.assigned_to_worker` | boolean | Whether the issue is considered assigned to the worker route. |
 | `issue.created_at` | string or `nil` | Issue creation time serialized as ISO 8601. UTC datetimes end with `Z`. |
 | `issue.updated_at` | string or `nil` | Issue update time serialized as ISO 8601. UTC datetimes end with `Z`. |
+| `issue.upstream_tickets` | array | Immediate blocker tickets enriched with parsed state-result summaries. Empty if there are no blockers with ids. |
 
 ### `issue.blocked_by[]` object reference
 
@@ -85,6 +86,28 @@ Blocking issues:
 {% endfor %}
 {% endif %}
 ```
+
+### `issue.upstream_tickets[]` object reference
+
+Each upstream ticket is fetched from the immediate `issue.blocked_by` ids and
+enriched with any persisted Code Factory result comments found on that ticket.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `upstream.id` | string or `nil` | Tracker-specific issue id. |
+| `upstream.identifier` | string or `nil` | Human-facing issue key. |
+| `upstream.title` | string or `nil` | Upstream issue title. |
+| `upstream.state` | string or `nil` | Current upstream issue state. |
+| `upstream.url` | string or `nil` | Canonical upstream issue URL. |
+| `upstream.results_by_state` | object | Parsed structured results keyed by the human state name. Empty if none were found. |
+
+Each `upstream.results_by_state["<State Name>"]` entry has:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `decision` | string | `transition` or `blocked`. |
+| `next_state` | string or `nil` | The state requested by the agent result, if present. |
+| `summary` | string | The persisted summary for that state result. |
 
 ## Value conversion rules
 
@@ -130,9 +153,9 @@ Practical guidance:
 - Prefer direct instructions over long meta-prompting.
 - Keep repository policy in the prompt, not in the issue body.
 - Treat the issue description as input data, not as the only source of truth.
-- Be explicit about required tests, linting, review notes, or state transitions.
+- Be explicit about required tests, linting, review notes, or structured state results.
 - If your workflow relies on labels, blockers, priorities, or branch names, reference them conditionally so missing data does not crash the render.
-- Avoid adding custom "continuation" instructions for later turns; Code Factory already injects a continuation prompt after the first turn.
+- If you use `attempt`, treat it as retry metadata for a fresh session rather than as a signal that prior thread history is available.
 
 ## Example template
 
@@ -172,7 +195,7 @@ No issue description was provided. Inspect the repository and tracker context be
 {% endif %}
 
 {% if attempt %}
-This is retry attempt {{ attempt }}. Reuse prior workspace context if it is still relevant.
+This is retry attempt {{ attempt }}. Rebuild context from the repository and tracker state before continuing.
 {% endif %}
 
 Expectations:

@@ -22,7 +22,6 @@ hooks:
     fi
 agent:
   max_concurrent_agents: [[CF_MAX_CONCURRENT_AGENTS]]
-  max_turns: 20
 codex:
   command: codex --config shell_environment_policy.inherit=all app-server
   model: gpt-5.4
@@ -40,12 +39,12 @@ observability:
 You are working on a Linear ticket `{{ issue.identifier }}`
 
 {% if attempt %}
-Continuation context:
+Retry context:
 
-- This is retry attempt #{{ attempt }} because the ticket is still in an active state.
+- This is retry attempt #{{ attempt }} after a failed prior run for this workflow state.
 - Resume from the current workspace state instead of restarting from scratch.
 - Do not repeat already-completed investigation or validation unless needed for new code changes.
-- Do not end the turn while the issue remains in an active state unless you are blocked by missing required permissions/secrets.
+- Finish the current workflow state in this turn and end only when you can emit the required structured result.
   {% endif %}
 
 Issue context:
@@ -65,10 +64,17 @@ No description provided.
 Instructions:
 
 1. This is an unattended orchestration session. Never ask a human to perform follow-up actions.
-2. Only stop early for a true blocker (missing required auth/permissions/secrets). If blocked, record it in the workpad and move the issue according to workflow.
-3. Final message must report completed actions and blockers only. Do not include "next steps for user".
+2. Complete the current workflow state in this turn. Only report `blocked` for a true external blocker (missing required auth/permissions/secrets/tools).
+3. The harness owns tracker state transitions. Do not mutate ticket state directly. Finish by emitting the required structured result only.
 
 Work only in the provided repository copy. Do not touch any other path.
+
+## Structured result contract
+
+- End every turn by emitting the required structured result.
+- Use `decision: "transition"` when the current workflow state is complete and the harness should move the ticket to `next_state`.
+- Use `decision: "blocked"` only for true external blockers; include a concise `summary` of what was completed, what blocked progress, and the exact missing requirement.
+- `summary` should be concise, factual, and useful to later workflow stages or dependent tickets.
 
 ## Prerequisite: `linear_graphql` tool is available
 
@@ -80,7 +86,7 @@ The agent talks to Linear via the `linear_graphql` tool injected by Code Factory
 - Start every task by opening the tracking workpad comment and bringing it up to date before doing new implementation work.
 - Spend extra effort up front on planning and verification design before implementation.
 - Reproduce first: always confirm the current behavior/issue signal before changing code so the fix target is explicit.
-- Keep ticket metadata current (state, checklist, acceptance criteria, links).
+- Keep the workpad and linked PR metadata current; the harness owns ticket state transitions.
 - Treat a single persistent Linear comment as the source of truth for progress.
 - Use that single workpad comment for all progress and handoff notes; do not post separate "done"/summary comments.
 - Treat any ticket-authored `Validation`, `Test Plan`, or `Testing` section as non-negotiable acceptance input: mirror it in the workpad and execute it before considering the work complete.
@@ -90,7 +96,6 @@ The agent talks to Linear via the `linear_graphql` tool injected by Code Factory
   `Backlog`, be assigned to the same project as the current issue, link the
   current issue as `related`, and use `blockedBy` when the follow-up depends on
   the current issue.
-- Move status only when the matching quality bar is met.
 - Operate autonomously end-to-end unless blocked by missing requirements, secrets, or permissions.
 - Use the blocked-access escape hatch only for true external blockers (missing required tools/auth) after exhausting documented fallbacks.
 
@@ -105,10 +110,10 @@ The agent talks to Linear via the `linear_graphql` tool injected by Code Factory
 ## Status map
 
 - `Backlog` -> out of scope for this workflow; do not modify.
-- `Todo` -> queued; immediately transition to `In Progress` before active work.
+- `Todo` -> queued bootstrap state handled by the harness; you should not normally see this state in an agent run.
   - Special case: if a PR is already attached, treat as feedback/rework loop (run full PR feedback sweep, address or explicitly push back, revalidate, return to `Human Review`).
 - `In Progress` -> implementation actively underway.
-- `Human Review` -> PR is attached and validated; waiting on human approval.
+- `Human Review` -> inactive handoff state; the harness moves tickets here when implementation is complete, then a human reviews and later moves the ticket to `Merging` or `Rework`.
 - `Merging` -> approved by human; execute the `land` skill flow (do not call `gh pr merge` directly).
 - `Rework` -> reviewer requested changes; planning + implementation required.
 - `Done` -> terminal state; no further action required.
@@ -118,24 +123,20 @@ The agent talks to Linear via the `linear_graphql` tool injected by Code Factory
 1. Fetch the issue by explicit ticket ID.
 2. Read the current state.
 3. Route to the matching flow:
-   - `Backlog` -> do not modify issue content/state; stop and wait for human to move it to `Todo`.
-   - `Todo` -> immediately move to `In Progress`, then ensure bootstrap workpad comment exists (create if missing), then start execution flow.
-     - If PR is already attached, start by reviewing all open PR comments and deciding required changes vs explicit pushback responses.
+   - `Backlog` -> do not modify issue content/state; stop and wait for human intervention.
+   - `Todo` -> if encountered, treat it as a workflow misconfiguration or stale tracker state; do not transition it yourself.
    - `In Progress` -> continue execution flow from current scratchpad comment.
-   - `Human Review` -> wait and poll for decision/review updates.
+   - `Human Review` -> inactive handoff state; do nothing.
    - `Merging` -> on entry, use the `land` skill; do not call `gh pr merge` directly.
    - `Rework` -> run rework flow.
    - `Done` -> do nothing and shut down.
 4. Check whether a PR already exists for the current branch and whether it is closed.
    - If a branch PR exists and is `CLOSED` or `MERGED`, treat prior branch work as non-reusable for this run.
    - Create a fresh branch from `origin/main` and restart execution flow as a new attempt.
-5. For `Todo` tickets, do startup sequencing in this exact order:
-   - `update_issue(..., state: "In Progress")`
-   - find/create `## Codex Workpad` bootstrap comment
-   - only then begin analysis/planning/implementation work.
+5. Ensure there is a single persistent `## Codex Workpad` comment before analysis/planning/implementation work begins.
 6. Add a short comment if state and issue content are inconsistent, then proceed with the safest flow.
 
-## Step 1: Start/continue execution (Todo or In Progress)
+## Step 1: Start/continue execution (In Progress or Rework)
 
 1.  Find or create a single persistent scratchpad comment for the issue:
     - Search existing comments for a marker header: `## Codex Workpad`.
@@ -143,7 +144,7 @@ The agent talks to Linear via the `linear_graphql` tool injected by Code Factory
     - If found, reuse that comment; do not create a new workpad comment.
     - If not found, create one workpad comment and use it for all updates.
     - Persist the workpad comment ID and only write progress updates to that ID.
-2.  If arriving from `Todo`, do not delay on additional status transitions: the issue should already be `In Progress` before this step begins.
+2.  Do not perform tracker state transitions yourself; the harness applies the state move from your structured result.
 3.  Immediately reconcile the workpad before new edits:
     - Check off items that are already done.
     - Expand/fix the plan so it is comprehensive for current scope.
@@ -194,10 +195,10 @@ Use this only when completion is blocked by missing required tools or missing au
   - exact human action needed to unblock.
 - Keep the brief concise and action-oriented; do not add extra top-level comments outside the workpad.
 
-## Step 2: Execution phase (Todo -> In Progress -> Human Review)
+## Step 2: Execution phase (In Progress/Rework -> Human Review)
 
 1.  Determine current repo state (`branch`, `git status`, `HEAD`) and verify the kickoff `pull` sync result is already recorded in the workpad before implementation continues.
-2.  If current issue state is `Todo`, move it to `In Progress`; otherwise leave the current state unchanged.
+2.  Work within the current active implementation state and leave tracker state transitions to the harness.
 3.  Load the existing workpad comment and treat it as the active execution checklist.
     - Edit it liberally whenever reality changes (scope, risks, validation approach, discovered tasks).
 4.  Implement against the hierarchical TODOs and keep the comment current:
@@ -232,21 +233,19 @@ Use this only when completion is blocked by missing required tools or missing au
     - Confirm every required ticket-provided validation/test-plan item is explicitly marked complete in the workpad.
     - Repeat this check-address-verify loop until no outstanding comments remain and checks are fully passing.
     - Re-open and refresh the workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
-12. Only then move issue to `Human Review`.
-    - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `Human Review` with the blocker brief and explicit unblock actions.
+12. Only then finish the turn with a structured result that transitions the ticket to `Human Review`.
+    - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, finish the turn with a structured `blocked` result targeting `Human Review`.
 13. For `Todo` tickets that already had a PR attached at kickoff:
     - Ensure all existing PR feedback was reviewed and resolved, including inline review comments (code changes or explicit, justified pushback response).
     - Ensure branch was pushed with any required updates.
-    - Then move to `Human Review`.
+    - Then finish the turn with a structured result targeting `Human Review`.
 
 ## Step 3: Human Review and merge handling
 
-1. When the issue is in `Human Review`, do not code or change ticket content.
-2. Poll for updates as needed, including GitHub PR review comments from humans and bots.
-3. If review feedback requires changes, move the issue to `Rework` and follow the rework flow.
-4. If approved, human moves the issue to `Merging`.
-5. When the issue is in `Merging`, use the `land` skill and run it in a loop until the PR is merged. Do not call `gh pr merge` directly.
-6. After merge is complete, move the issue to `Done`.
+1. `Human Review` is not an active agent state in the default workflow.
+2. A human reviews there and moves the ticket to `Merging` or `Rework`.
+3. When the issue is in `Merging`, use the `land` skill and run it in a loop until the PR is merged. Do not call `gh pr merge` directly.
+4. After merge is complete, finish the turn with a structured result targeting `Done`.
 
 ## Step 4: Rework handling
 
@@ -256,7 +255,7 @@ Use this only when completion is blocked by missing required tools or missing au
 4. Remove the existing `## Codex Workpad` comment from the issue.
 5. Create a fresh branch from `origin/main`.
 6. Start over from the normal kickoff flow:
-   - If current issue state is `Todo`, move it to `In Progress`; otherwise keep the current state.
+   - Resume in the current active rework state; do not mutate ticket state directly.
    - Create a new bootstrap `## Codex Workpad` comment.
    - Build a fresh plan/checklist and execute end-to-end.
 
@@ -272,7 +271,7 @@ Use this only when completion is blocked by missing required tools or missing au
 
 ## Guardrails
 
-- If the branch PR is already closed/merged, do not reuse that branch or prior implementation state for continuation.
+- If the branch PR is already closed/merged, do not reuse that branch or prior implementation state when restarting work.
 - For closed/merged branch PRs, create a new branch from `origin/main` and restart from reproduction/planning as if starting fresh.
 - If issue state is `Backlog`, do not modify it; wait for human to move to `Todo`.
 - Do not edit the issue body/description for planning or progress tracking.
@@ -284,8 +283,8 @@ Use this only when completion is blocked by missing required tools or missing au
   title/description/acceptance criteria, same-project assignment, a `related`
   link to the current issue, and `blockedBy` when the follow-up depends on the
   current issue.
-- Do not move to `Human Review` unless the `Completion bar before Human Review` is satisfied.
-- In `Human Review`, do not make changes; wait and poll.
+- Do not finish with a transition to `Human Review` unless the `Completion bar before Human Review` is satisfied.
+- `Human Review` is an inactive handoff state in this workflow; do not expect to run there.
 - If state is terminal (`Done`), do nothing and shut down.
 - Keep issue text concise, specific, and reviewer-oriented.
 - If blocked and no workpad exists yet, add one blocker comment describing blocker, impact, and next unblock action.

@@ -18,7 +18,6 @@ from .models import RetryEntry, RunningEntry
 class OrchestratorContext(Protocol):
     """Describes the runtime state and helpers expected by orchestration mixins."""
 
-    CONTINUATION_RETRY_DELAY_MS: ClassVar[int]
     FAILURE_RETRY_BASE_MS: ClassVar[int]
     _logger: logging.Logger
     queue: asyncio.Queue[Any]
@@ -68,6 +67,9 @@ class OrchestratorContext(Protocol):
         attempt: int | None = None,
         workspace_path: str | None = None,
     ) -> None: ...
+    async def _dispatch_auto_issue(
+        self, issue: Issue, attempt: int | None = None
+    ) -> None: ...
     async def _revalidate_issue_for_dispatch(self, issue: Issue) -> Issue | None: ...
     async def _run_due_retries(self, now_ms: int) -> None: ...
     async def _run_poll_cycle(self) -> None: ...
@@ -91,7 +93,6 @@ class OrchestratorContext(Protocol):
         identifier: str | None,
         error: str | None = None,
         workspace_path: str | None = None,
-        continuation: bool = False,
     ) -> None: ...
 
     def _monotonic_ms(self) -> int: ...

@@ -337,7 +337,7 @@ async def test_config_utils_linear_graphql_client_and_worker_edge_paths(
     )
     paused_worker.stop_event.set()
     paused_worker._agent_runtime = FakeRuntime()  # type: ignore[assignment]
-    await paused_worker._run_turns(cast(Any, object()))
+    await paused_worker._run_state(cast(Any, object()))
 
     no_id_worker = IssueWorker(
         issue=make_issue(id=None),

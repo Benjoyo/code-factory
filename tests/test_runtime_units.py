@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import pytest
 
+from code_factory.issues import IssueComment
 from code_factory.runtime.messages import (
     AgentWorkerUpdate,
     RefreshRequest,
@@ -46,7 +47,13 @@ from code_factory.runtime.orchestration.tokens import (
 )
 from code_factory.runtime.subprocess.process_tree import ProcessTree
 from code_factory.runtime.worker.actor import IssueWorker
+from code_factory.runtime.worker.results import (
+    build_prompt_issue_data,
+    parse_results_by_state,
+    persist_state_result,
+)
 from code_factory.runtime.worker.utils import tracker_state_is_active
+from code_factory.structured_results import StructuredTurnResult
 from code_factory.trackers.memory import MemoryTracker
 from code_factory.workspace.manager import WorkspaceManager
 
@@ -266,13 +273,17 @@ async def test_issue_worker_paths(
 
         async def run_turn(
             self, session: Any, prompt: str, issue: Any, *, on_message=None
-        ) -> dict[str, Any]:
+        ) -> StructuredTurnResult:
             self.prompts.append(prompt)
             if on_message is not None:
                 await on_message(
                     {"event": "notification", "timestamp": datetime.now(UTC)}
                 )
-            return {"result": "turn_completed"}
+            return StructuredTurnResult(
+                decision="transition",
+                summary="done",
+                next_state="Done",
+            )
 
     class FakeManager:
         def __init__(self) -> None:
@@ -288,7 +299,7 @@ async def test_issue_worker_paths(
             self.after_run_calls += 1
 
     tracker = MemoryTracker(
-        [make_issue(id="issue-1", identifier="ENG-1", state="Done")]
+        [make_issue(id="issue-1", identifier="ENG-1", state="In Progress")]
     )
     worker = IssueWorker(
         issue=issue,
@@ -305,7 +316,6 @@ async def test_issue_worker_paths(
     assert isinstance(update, AgentWorkerUpdate)
     assert isinstance(exited, WorkerExited)
     assert exited.normal is True
-    assert worker._turn_prompt(issue, 2, 3).startswith("Continuation guidance")
     assert await worker._refresh_issue_state(make_issue(id=None)) is None
 
     stop_worker = IssueWorker(
@@ -326,6 +336,292 @@ async def test_issue_worker_paths(
     )
     await idle_worker.stop("stop")
     assert idle_worker.stop_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_issue_worker_state_edge_paths_and_result_helpers(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "allowed_next_states": ["Done"],
+                    "failure_state": "Blocked",
+                },
+            },
+        )
+    )
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+    tracker = MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")])
+    worker = IssueWorker(
+        issue=make_issue(id="issue-1", identifier="ENG-1"),
+        workflow_snapshot=snapshot,
+        orchestrator_queue=queue,
+        tracker=tracker,
+    )
+
+    class Session:
+        async def stop(self) -> None:
+            return None
+
+    class FakeRuntime:
+        def __init__(self, result: StructuredTurnResult) -> None:
+            self.result = result
+
+        async def start_session(self, workspace: str) -> Session:
+            return Session()
+
+        async def run_turn(
+            self, session: Any, prompt: str, issue: Any, *, on_message=None
+        ) -> StructuredTurnResult:
+            return self.result
+
+    stop_worker = IssueWorker(
+        issue=make_issue(id="issue-2", identifier="ENG-2"),
+        workflow_snapshot=snapshot,
+        orchestrator_queue=asyncio.Queue(),
+        tracker=tracker,
+    )
+    stop_worker.stop_event.set()
+    await stop_worker._run_state(cast(Any, object()))
+
+    auto_worker = IssueWorker(
+        issue=make_issue(id="issue-1", identifier="ENG-1", state="Todo"),
+        workflow_snapshot=snapshot,
+        orchestrator_queue=asyncio.Queue(),
+        tracker=MemoryTracker(
+            [make_issue(id="issue-1", identifier="ENG-1", state="Todo")]
+        ),
+    )
+    with pytest.raises(RuntimeError, match="worker_requires_agent_run_state"):
+        await auto_worker._run_state(cast(Any, object()))
+
+    with pytest.raises(RuntimeError, match="missing_state_profile"):
+        worker._target_state(make_issue(state="Review"), "transition", "Done")
+    with pytest.raises(RuntimeError, match="missing_next_state_for_transition"):
+        worker._target_state(make_issue(), "transition", None)
+    no_failure_snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "NO_FAILURE_WORKFLOW.md",
+            states={"In Progress": {"prompt": "default"}},
+        )
+    )
+    no_failure_worker = IssueWorker(
+        issue=make_issue(id="issue-9", identifier="ENG-9"),
+        workflow_snapshot=no_failure_snapshot,
+        orchestrator_queue=asyncio.Queue(),
+        tracker=tracker,
+    )
+    with pytest.raises(RuntimeError, match="missing_failure_state_for_blocked_result"):
+        no_failure_worker._target_state(make_issue(), "blocked", None)
+    with pytest.raises(RuntimeError, match="unsupported_turn_decision"):
+        worker._target_state(make_issue(), "continue", "Done")
+    with pytest.raises(RuntimeError, match="next_state_must_not_equal_current_state"):
+        worker._target_state(
+            make_issue(state="In Progress"), "transition", "in progress"
+        )
+
+    invalid_worker = IssueWorker(
+        issue=make_issue(id="issue-1", identifier="ENG-1"),
+        workflow_snapshot=snapshot,
+        orchestrator_queue=asyncio.Queue(),
+        tracker=tracker,
+    )
+    invalid_worker._agent_runtime = FakeRuntime(
+        StructuredTurnResult(
+            decision="transition",
+            summary="done",
+            next_state="Review",
+        )
+    )  # type: ignore[assignment]
+    with pytest.raises(RuntimeError, match="invalid_next_state"):
+        await invalid_worker._run_state(Session())
+
+    class MissingIdTracker(MemoryTracker):
+        async def fetch_issue_states_by_ids(self, issue_ids: list[str]) -> list[Any]:
+            return [make_issue(id=None, identifier="ENG-1", state="In Progress")]
+
+    missing_id_worker = IssueWorker(
+        issue=make_issue(id="issue-1", identifier="ENG-1"),
+        workflow_snapshot=snapshot,
+        orchestrator_queue=asyncio.Queue(),
+        tracker=MissingIdTracker([]),
+    )
+    missing_id_worker._agent_runtime = FakeRuntime(
+        StructuredTurnResult(
+            decision="transition",
+            summary="done",
+            next_state="Done",
+        )
+    )  # type: ignore[assignment]
+    with pytest.raises(RuntimeError, match="missing_issue_id_for_state_transition"):
+        await missing_id_worker._run_state(Session())
+    assert worker._target_state(make_issue(), "blocked", "Blocked") == "Blocked"
+
+    stop_after_refresh_worker = IssueWorker(
+        issue=make_issue(id="issue-1", identifier="ENG-1"),
+        workflow_snapshot=snapshot,
+        orchestrator_queue=asyncio.Queue(),
+        tracker=tracker,
+    )
+    stop_after_refresh_worker._agent_runtime = FakeRuntime(
+        StructuredTurnResult(
+            decision="transition",
+            summary="done",
+            next_state="Done",
+        )
+    )  # type: ignore[assignment]
+
+    async def refresh_and_stop(issue: Any) -> Any:
+        stop_after_refresh_worker.stop_event.set()
+        return make_issue(id="issue-1", identifier="ENG-1", state="In Progress")
+
+    stop_after_refresh_worker._refresh_issue_state = refresh_and_stop  # type: ignore[method-assign]
+    await stop_after_refresh_worker._run_state(Session())
+
+    class CleanupManager:
+        async def create_for_issue(self, issue: Any) -> Any:
+            return SimpleNamespace(path=str(tmp_path / "workspace"))
+
+        async def run_before_run_hook(self, workspace: str, issue: Any) -> None:
+            return None
+
+        async def run_after_run_hook(self, workspace: str, issue: Any) -> None:
+            raise RuntimeError("after-run failed")
+
+        async def remove(self, workspace: str) -> list[str]:
+            raise RuntimeError("remove failed")
+
+    cleanup_worker = IssueWorker(
+        issue=make_issue(id="issue-1", identifier="ENG-1"),
+        workflow_snapshot=snapshot,
+        orchestrator_queue=asyncio.Queue(),
+        tracker=MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")]),
+    )
+    cleanup_worker.workspace_manager = CleanupManager()  # type: ignore[assignment]
+    cleanup_worker._agent_runtime = FakeRuntime(
+        StructuredTurnResult(
+            decision="transition",
+            summary="done",
+            next_state="Done",
+        )
+    )  # type: ignore[assignment]
+    with caplog.at_level("ERROR"):
+        await cleanup_worker.run()
+    exited = await cleanup_worker.queue.get()
+    assert isinstance(exited, WorkerExited)
+    assert exited.completed is True
+    assert any(
+        "after_run hook cleanup failed" in record.message for record in caplog.records
+    )
+    assert any(
+        "workspace removal failed" in record.message for record in caplog.records
+    )
+
+    issue_without_id = make_issue(id=None)
+    await persist_state_result(
+        tracker,
+        issue_without_id,
+        "In Progress",
+        StructuredTurnResult(decision="transition", summary="done", next_state="Done"),
+    )
+    assert await tracker.fetch_issue_comments("issue-1") == []
+
+    issue = make_issue(id="issue-1", identifier="ENG-1", blocked_by=())
+    issue_data = await build_prompt_issue_data(tracker, issue)
+    assert issue_data["upstream_tickets"] == []
+
+    upstream = make_issue(id="up-1", identifier="ENG-UP", state="Done")
+    dependent = make_issue(
+        id="dep-1",
+        identifier="ENG-DEP",
+        blocked_by=(
+            replace(upstream, blocked_by=()),
+            make_issue(id=None),
+        ),
+    )
+    tracker = MemoryTracker([upstream])
+    await tracker.create_comment(
+        "up-1",
+        "## Code Factory Result: Review\n\nversion: 1\ndecision: transition\nnext_state: Done\nsummary: |\n  done\n",
+    )
+    await tracker.create_comment(
+        "up-1",
+        "## Code Factory Result: Review\n\nversion: 1\ndecision: nope\nsummary: |\n  bad\n",
+    )
+    with pytest.raises(RuntimeError, match="malformed_state_result_comment"):
+        await build_prompt_issue_data(tracker, dependent)
+    await persist_state_result(
+        tracker,
+        replace(upstream, blocked_by=()),
+        "Review",
+        StructuredTurnResult(
+            decision="transition",
+            summary="updated",
+            next_state="Done",
+        ),
+    )
+    assert len(await tracker.fetch_issue_comments("up-1")) == 2
+    missing_comment_id_tracker = MemoryTracker([upstream])
+    missing_comment_id_tracker._comments_by_issue["up-1"] = [
+        IssueComment(
+            id=None,
+            body="## Code Factory Result: Review\n\nversion: 1\ndecision: transition\nnext_state: Done\nsummary: |\n  ok\n",
+        )
+    ]
+    with pytest.raises(RuntimeError, match="missing_state_result_comment_id"):
+        await persist_state_result(
+            missing_comment_id_tracker,
+            replace(upstream, blocked_by=()),
+            "Review",
+            StructuredTurnResult(
+                decision="transition",
+                summary="updated",
+                next_state="Done",
+            ),
+        )
+
+    class MissingUpstreamIdTracker(MemoryTracker):
+        async def fetch_issue_states_by_ids(self, issue_ids: list[str]) -> list[Any]:
+            return [make_issue(id=None, identifier="ENG-UP", state="Done")]
+
+    missing_upstream_data = await build_prompt_issue_data(
+        MissingUpstreamIdTracker([]),
+        make_issue(
+            id="dep-2",
+            identifier="ENG-DEP-2",
+            blocked_by=(make_issue(id="up-2", identifier="ENG-UP-2"),),
+        ),
+    )
+    assert missing_upstream_data["upstream_tickets"] == []
+
+    parsed_results = parse_results_by_state(
+        [
+            IssueComment(
+                id="1",
+                body="## Code Factory Result: Review\n\nversion: 1\ndecision: transition\nnext_state: Done\nsummary: |\n  ok\n",
+            ),
+            IssueComment(id="3", body="ordinary comment"),
+        ],
+        ticket_label="ENG-UP",
+    )
+    assert parsed_results["Review"]["next_state"] == "Done"
+    with pytest.raises(RuntimeError, match="malformed_state_result_comment"):
+        parse_results_by_state(
+            [
+                IssueComment(
+                    id="2",
+                    body="## Code Factory Result: Review\n\nversion: 1\ndecision: nope\nsummary: |\n  bad\n",
+                )
+            ],
+            ticket_label="ENG-UP",
+        )
+    assert tracker_state_is_active(snapshot.settings, "In Progress") is True
+    assert tracker_state_is_active(snapshot.settings, "Done") is False
 
 
 @pytest.mark.asyncio
@@ -429,6 +725,109 @@ async def test_orchestrator_dispatch_and_reconciliation_paths(
     assert "issue-2" in actor.retry_entries
     actor._release_issue_claim("issue-2")
     assert "issue-2" not in actor.retry_entries
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_auto_dispatch_and_reconciliation_edge_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor = make_actor(tmp_path)
+    actor.tracker = MemoryTracker(
+        [make_issue(id="issue-1", identifier="ENG-1", state="Todo")]
+    )
+    await actor._dispatch_auto_issue(make_issue(id=None, state="Todo"))
+    await actor._dispatch_auto_issue(make_issue(id="issue-2", state="Review"))
+
+    class FailingTracker(MemoryTracker):
+        async def update_issue_state(self, issue_id: str, state_name: str) -> None:
+            raise RuntimeError("boom")
+
+    failing_dir = tmp_path / "failing"
+    failing_dir.mkdir()
+    failing_actor = make_actor(failing_dir)
+    failing_actor.tracker = FailingTracker(
+        [make_issue(id="issue-1", identifier="ENG-1", state="Todo")]
+    )
+    await failing_actor._dispatch_auto_issue(
+        make_issue(id="issue-1", identifier="ENG-1", state="Todo")
+    )
+    assert "issue-1" in failing_actor.retry_entries
+
+    class MissingRefreshTracker(MemoryTracker):
+        async def fetch_issue_states_by_ids(self, issue_ids: list[str]) -> list[Any]:
+            return []
+
+    missing_refresh_dir = tmp_path / "missing-refresh"
+    missing_refresh_dir.mkdir()
+    missing_refresh_actor = make_actor(missing_refresh_dir)
+    missing_refresh_actor.tracker = MissingRefreshTracker(
+        [make_issue(id="issue-1", identifier="ENG-1", state="Todo")]
+    )
+    await missing_refresh_actor._dispatch_auto_issue(
+        make_issue(id="issue-1", identifier="ENG-1", state="Todo")
+    )
+    assert "issue-1" not in missing_refresh_actor.claimed
+
+    blocked_dir = tmp_path / "blocked"
+    blocked_dir.mkdir()
+    blocked_actor = make_actor(blocked_dir)
+    blocked_actor.tracker = MemoryTracker(
+        [make_issue(id="issue-1", identifier="ENG-1", state="Todo")]
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.orchestration.dispatching.available_slots",
+        lambda settings, running: 0,
+    )
+    await blocked_actor._dispatch_auto_issue(
+        make_issue(id="issue-1", identifier="ENG-1", state="Todo")
+    )
+    assert (
+        blocked_actor.retry_entries["issue-1"].error
+        == "no available orchestrator slots"
+    )
+
+    release_dir = tmp_path / "release"
+    release_dir.mkdir()
+    release_actor = make_actor(release_dir)
+    release_actor.tracker = MemoryTracker(
+        [make_issue(id="issue-1", identifier="ENG-1", state="Todo")]
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.orchestration.dispatching.available_slots",
+        lambda settings, running: 1,
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.orchestration.dispatching.candidate_issue",
+        lambda settings, issue: False,
+    )
+    await release_actor._dispatch_auto_issue(
+        make_issue(id="issue-1", identifier="ENG-1", state="Todo")
+    )
+    assert "issue-1" not in release_actor.claimed
+
+    entry = RunningEntry(
+        issue_id="issue-3",
+        identifier="ENG-3",
+        issue=make_issue(id="issue-3", identifier="ENG-3", state="In Progress"),
+        workspace_path="/tmp/workspaces/ENG-3",
+        worker=object(),
+        started_at=datetime.now(UTC),
+    )
+    actor.running["issue-3"] = entry
+    actor.claimed.add("issue-3")
+    await actor._handle_worker_exited(
+        WorkerExited(
+            issue_id="issue-3",
+            identifier="ENG-3",
+            workspace_path="/tmp/workspaces/ENG-3",
+            normal=True,
+            completed=False,
+        )
+    )
+    assert (
+        actor.retry_entries["issue-3"].error
+        == "worker exited without completing a state transition"
+    )
 
 
 @pytest.mark.asyncio

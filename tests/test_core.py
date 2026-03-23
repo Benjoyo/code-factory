@@ -38,18 +38,24 @@ def test_config_defaults_and_env_resolution(
     workflow = write_workflow_file(
         tmp_path / "WORKFLOW.md",
         tracker={"api_key": None, "project_slug": "project"},
-        agent={"max_turns": 5},
+        agent={"max_retry_backoff_ms": 5_000},
     )
     settings = parse_settings(load_workflow(str(workflow)).config)
     assert settings.tracker.api_key == "env-linear-token"
     assert settings.polling.interval_ms == 30_000
     assert settings.tracker.active_states == ("Todo", "In Progress")
-    assert settings.agent.max_turns == 5
+    assert settings.agent.max_retry_backoff_ms == 5_000
 
     workflow = write_workflow_file(
         tmp_path / "BAD_WORKFLOW.md", polling={"interval_ms": "invalid"}
     )
     with pytest.raises(ConfigValidationError):
+        parse_settings(load_workflow(str(workflow)).config)
+
+    workflow = write_workflow_file(
+        tmp_path / "DEPRECATED_AGENT_KEY.md", agent={"max_turns": 5}
+    )
+    with pytest.raises(ConfigValidationError, match="agent has unsupported keys"):
         parse_settings(load_workflow(str(workflow)).config)
 
 

@@ -7,19 +7,22 @@ from typing import Any
 
 from ...config.models import Settings
 from ...errors import TrackerClientError
-from ...issues import Issue
+from ...issues import Issue, IssueComment
 from .decoding import (
     assignee_id,
+    decode_comments_page_response,
     decode_linear_page_response,
     decode_linear_response,
     next_page_cursor,
 )
 from .graphql import LinearGraphQLClient, RequestFunction
 from .queries import (
+    COMMENTS_QUERY,
     CREATE_COMMENT_MUTATION,
     QUERY,
     QUERY_BY_IDS,
     STATE_LOOKUP_QUERY,
+    UPDATE_COMMENT_MUTATION,
     UPDATE_STATE_MUTATION,
     VIEWER_QUERY,
 )
@@ -33,6 +36,7 @@ class LinearClient:
     """GraphQL wrapper that enforces the expected tracker behaviors."""
 
     ISSUE_PAGE_SIZE = 50
+    COMMENT_PAGE_SIZE = 50
 
     def __init__(
         self,
@@ -74,12 +78,38 @@ class LinearClient:
         assignee_filter = await self._routing_assignee_filter()
         return await self._fetch_issue_states(ids, assignee_filter)
 
+    async def fetch_issue_comments(self, issue_id: str) -> list[IssueComment]:
+        self._require_credentials()
+        after_cursor: str | None = None
+        comments: list[IssueComment] = []
+        while True:
+            body = await self.graphql(
+                COMMENTS_QUERY,
+                {
+                    "issueId": issue_id,
+                    "first": self.COMMENT_PAGE_SIZE,
+                    "after": after_cursor,
+                },
+            )
+            page_comments, page_info = decode_comments_page_response(body)
+            comments.extend(page_comments)
+            after_cursor = next_page_cursor(page_info)
+            if after_cursor is None:
+                return comments
+
     async def create_comment(self, issue_id: str, body: str) -> None:
         response = await self.graphql(
             CREATE_COMMENT_MUTATION, {"issueId": issue_id, "body": body}
         )
         if response.get("data", {}).get("commentCreate", {}).get("success") is not True:
             raise TrackerClientError("comment_create_failed")
+
+    async def update_comment(self, comment_id: str, body: str) -> None:
+        response = await self.graphql(
+            UPDATE_COMMENT_MUTATION, {"commentId": comment_id, "body": body}
+        )
+        if response.get("data", {}).get("commentUpdate", {}).get("success") is not True:
+            raise TrackerClientError("comment_update_failed")
 
     async def update_issue_state(self, issue_id: str, state_name: str) -> None:
         state_id = await self._resolve_state_id(issue_id, state_name)

@@ -6,6 +6,7 @@ import asyncio
 import json
 
 from ....errors import AppServerError
+from ....structured_results import StructuredTurnResult
 from ..tools import DynamicToolExecutor
 from .messages import (
     emit_message,
@@ -18,15 +19,17 @@ from .messages import (
 )
 from .session import AppServerSession
 from .streams import log_non_json_stream_line, send_message
+from .structured_output import extract_structured_turn_result, turn_payload
 from .tool_response import build_tool_response
 
 
 async def await_turn_completion(
     session: AppServerSession, on_message, tool_executor: DynamicToolExecutor
-) -> str:
+) -> StructuredTurnResult:
     """Read app-server events until the current turn completes or fails."""
 
     timeout = session.turn_timeout_ms / 1000
+    structured_result: StructuredTurnResult | None = None
     while True:
         kind, payload = await asyncio.wait_for(session.stdout_queue.get(), timeout)
         if kind == "exit":
@@ -44,11 +47,16 @@ async def await_turn_completion(
                 {"runtime_pid": session.runtime_pid},
             )
             continue
+        candidate = extract_structured_turn_result(message)
+        if candidate is not None:
+            structured_result = candidate
         outcome = await handle_turn_message(
             session, on_message, tool_executor, message, payload
         )
-        if outcome != "continue":
-            return outcome
+        if outcome == "turn_completed":
+            if structured_result is None:
+                raise AppServerError("missing_structured_turn_result")
+            return structured_result
 
 
 async def handle_turn_message(
@@ -63,6 +71,26 @@ async def handle_turn_message(
     method = message.get("method")
     metadata = metadata_from_message(session, message)
     if method == "turn/completed":
+        turn = turn_payload(message)
+        status = turn.get("status")
+        if status == "failed":
+            await emit_message(
+                on_message,
+                "turn_failed",
+                {"payload": message, "raw": raw, "details": message.get("params")},
+                metadata,
+            )
+            raise AppServerError(("turn_failed", message.get("params")))
+        if status == "interrupted":
+            await emit_message(
+                on_message,
+                "turn_cancelled",
+                {"payload": message, "raw": raw, "details": message.get("params")},
+                metadata,
+            )
+            raise AppServerError(("turn_cancelled", message.get("params")))
+        if status != "completed":
+            raise AppServerError(("invalid_turn_status", status))
         await emit_message(
             on_message,
             "turn_completed",

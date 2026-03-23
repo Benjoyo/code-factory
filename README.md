@@ -23,9 +23,9 @@ uv run cf init
 `cf init` now walks you through the starter values with Rich prompts, renders a
 project-specific `WORKFLOW.md`, and copies this repo's bundled skills into
 `./.agents/skills`. The starter workflow now uses the optional `states` mapping
-plus a shared `# prompt: default` section so it preserves the current monolithic
-behavior while making state-specific prompts easy to split later. Re-run with
-`--force` if you want to overwrite an existing workflow or skills bundle.
+plus a shared `# prompt: default` section, with `Todo` rendered as a harness-run
+auto-transition to `In Progress` by default. Re-run with `--force` if you want
+to overwrite an existing workflow or skills bundle.
 
 ## Running the Service
 
@@ -128,22 +128,27 @@ curl http://127.0.0.1:4000/api/v1/state
 - Active and terminal states
 - Workspace root and lifecycle hooks
 - Codex app-server command, model selection, and sandbox settings
-- State-specific prompt sections used for the first turn of each worker attempt
+- State-specific prompt sections, transition policies, and harness-run auto transitions
 - Optional HTTP server host/port
 
 `WORKFLOW.md` uses the top-level `states` mapping as the source of truth for
 active workflow states:
 
 - Active states are derived from `states.keys()`.
-- The Markdown body must be split into named `# prompt: <id>` sections.
-- Each state maps to a prompt section id or list of ids.
-- Only `codex.model` and `codex.reasoning_effort` can be overridden per state.
-
-When an issue stays active across turns, the worker keeps the same live session
-only if the effective state profile is unchanged. If the prompt or allowed
-per-state codex settings change, the current worker ends after the completed
-turn and the existing continuation retry starts a fresh session in the same
-workspace.
+- A state is agent-run when it defines `prompt`, or harness-run when it defines
+  `auto_next_state`.
+- Agent-run states may optionally define `allowed_next_states` and
+  `failure_state`.
+- The Markdown body must be split into named `# prompt: <id>` sections for any
+  agent-run states.
+- Only `codex.model` and `codex.reasoning_effort` can be overridden per
+  agent-run state.
+- Agent-run states finish one workflow state per turn using structured output;
+  the harness validates the result, persists a state-result comment, and applies
+  the tracker transition.
+- Auto states do not start an agent session or create a workspace; the harness
+  updates the tracker state directly and can dispatch the next active state in
+  the same refresh cycle.
 
 If you want parity with the reference behavior, start from the shipped Elixir workflow and adjust only the repo-specific pieces such as `tracker.project_slug`, workspace hooks, and any local paths.
 

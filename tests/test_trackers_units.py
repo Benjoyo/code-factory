@@ -27,6 +27,7 @@ from code_factory.trackers.linear.config import (
 from code_factory.trackers.linear.decoding import (
     assigned_to_worker,
     assignee_id,
+    decode_comments_page_response,
     decode_linear_page_response,
     decode_linear_response,
     decode_nodes,
@@ -42,10 +43,12 @@ from code_factory.trackers.linear.graphql import (
     summarize_error_body,
 )
 from code_factory.trackers.linear.queries import (
+    COMMENTS_QUERY,
     CREATE_COMMENT_MUTATION,
     QUERY,
     QUERY_BY_IDS,
     STATE_LOOKUP_QUERY,
+    UPDATE_COMMENT_MUTATION,
     UPDATE_STATE_MUTATION,
     VIEWER_QUERY,
 )
@@ -217,8 +220,18 @@ def test_linear_decoding_behaviors() -> None:
         next_page_cursor({"has_next_page": True, "end_cursor": None})
     with pytest.raises(TrackerClientError, match="linear_graphql_errors"):
         decode_linear_page_response({"errors": ["boom"]}, None)
+    with pytest.raises(TrackerClientError, match="linear_graphql_errors"):
+        decode_comments_page_response({"errors": ["boom"]})
     with pytest.raises(TrackerClientError, match="linear_unknown_payload"):
         decode_linear_response({"data": {}}, None)
+    with pytest.raises(TrackerClientError, match="linear_unknown_payload"):
+        decode_comments_page_response({"data": {"issue": "bad"}})
+    with pytest.raises(TrackerClientError, match="linear_unknown_payload"):
+        decode_comments_page_response({"data": {"issue": {"comments": "bad"}}})
+    with pytest.raises(TrackerClientError, match="linear_unknown_payload"):
+        decode_comments_page_response(
+            {"data": {"issue": {"comments": {"nodes": [], "pageInfo": []}}}}
+        )
 
 
 @pytest.mark.asyncio
@@ -289,6 +302,13 @@ async def test_memory_tracker_behaviors() -> None:
     assert await tracker.fetch_issue_states_by_ids(["b"]) == [issue_b]
 
     await tracker.create_comment("a", "hello")
+    comment = (await tracker.fetch_issue_comments("a"))[0]
+    assert comment.body == "hello"
+    assert comment.id is not None
+    with pytest.raises(TrackerClientError, match="comment_update_failed"):
+        await tracker.update_comment("missing", "ignored")
+    await tracker.update_comment(comment.id, "updated")
+    assert (await tracker.fetch_issue_comments("a"))[0].body == "updated"
     await tracker.update_issue_state("a", "In Progress")
     assert (await tracker.fetch_issue_states_by_ids(["a"]))[0].state == "In Progress"
     assert await queue.get() == ("memory_tracker_comment", "a", "hello")
@@ -350,8 +370,40 @@ async def test_linear_client_core_behaviors(tmp_path: Path) -> None:
                     for issue_id in reversed(payload["ids"])
                 ]
                 return {"data": {"issues": {"nodes": nodes}}}
+            if query == COMMENTS_QUERY:
+                after = payload.get("after")
+                return {
+                    "data": {
+                        "issue": {
+                            "comments": {
+                                "nodes": [
+                                    {
+                                        "id": "comment-1"
+                                        if after is None
+                                        else "comment-2",
+                                        "body": "result body",
+                                        "createdAt": "2024-01-01T00:00:00Z",
+                                        "updatedAt": "2024-01-01T00:00:00Z",
+                                    }
+                                ],
+                                "pageInfo": {
+                                    "hasNextPage": after is None,
+                                    "endCursor": "cursor-2" if after is None else None,
+                                },
+                            }
+                        }
+                    }
+                }
             if query == CREATE_COMMENT_MUTATION:
                 return {"data": {"commentCreate": {"success": payload["body"] == "ok"}}}
+            if query == UPDATE_COMMENT_MUTATION:
+                return {
+                    "data": {
+                        "commentUpdate": {
+                            "success": payload["commentId"] == "comment-1"
+                        }
+                    }
+                }
             if query == STATE_LOOKUP_QUERY:
                 return {
                     "data": {
@@ -385,9 +437,16 @@ async def test_linear_client_core_behaviors(tmp_path: Path) -> None:
         "b",
         "a",
     ]
+    assert [comment.id for comment in await client.fetch_issue_comments("issue-1")] == [
+        "comment-1",
+        "comment-2",
+    ]
     await client.create_comment("issue-1", "ok")
     with pytest.raises(TrackerClientError, match="comment_create_failed"):
         await client.create_comment("issue-1", "bad")
+    await client.update_comment("comment-1", "updated")
+    with pytest.raises(TrackerClientError, match="comment_update_failed"):
+        await client.update_comment("missing", "updated")
     await client.update_issue_state("issue-1", "Done")
     await client.close()
     assert fake_graphql.closed is True

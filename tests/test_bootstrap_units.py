@@ -56,7 +56,7 @@ def test_render_default_workflow_replaces_template_tokens() -> None:
     assert '"demo-project"' in rendered
     assert "git clone --depth 1 git@github.com:example/demo.git ." in rendered
     assert "make setup" not in rendered
-    assert '  "Todo":\n    prompt: default' in rendered
+    assert '  "Todo":\n    auto_next_state: In Progress' in rendered
     assert "  max_concurrent_agents: 2" in rendered
     assert "# prompt: default" in rendered
     assert "{{ issue.identifier }}" in rendered

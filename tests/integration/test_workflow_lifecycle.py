@@ -7,10 +7,11 @@ from pathlib import Path
 import pytest
 
 from code_factory.issues import BlockerRef
+from code_factory.structured_results import parse_result_comment
 
 from ..conftest import make_issue, write_workflow_file
 from .helpers import hook_script, issue_state, read_lines, wait_for_snapshot
-from .support import IntegrationHarness, TurnPlan
+from .support import IntegrationHarness, TurnPlan, transition_result
 
 
 @pytest.mark.asyncio
@@ -37,13 +38,11 @@ async def test_integration_worker_driven_lifecycle_runs_hooks_and_cleans_workspa
                 "after_run": hook_script(hook_log, "after_run", exit_status=8),
                 "before_remove": hook_script(hook_log, "before_remove", exit_status=9),
             },
-            "agent": {"max_turns": 5},
         },
         plans_by_identifier={
             "ENG-101": [
                 TurnPlan(
-                    state="Review",
-                    comment="reviewed",
+                    result=transition_result("Review", summary="reviewed"),
                     token_usage={
                         "inputTokens": 10,
                         "outputTokens": 4,
@@ -51,8 +50,7 @@ async def test_integration_worker_driven_lifecycle_runs_hooks_and_cleans_workspa
                     },
                 ),
                 TurnPlan(
-                    state="Merging",
-                    comment="ready to merge",
+                    result=transition_result("Merging", summary="ready to merge"),
                     token_usage={
                         "inputTokens": 13,
                         "outputTokens": 6,
@@ -60,8 +58,7 @@ async def test_integration_worker_driven_lifecycle_runs_hooks_and_cleans_workspa
                     },
                 ),
                 TurnPlan(
-                    state="Done",
-                    comment="shipped",
+                    result=transition_result("Done", summary="shipped"),
                     token_usage={
                         "inputTokens": 14,
                         "outputTokens": 7,
@@ -77,23 +74,42 @@ async def test_integration_worker_driven_lifecycle_runs_hooks_and_cleans_workspa
         await harness.wait_until(lambda: not workspace.exists())
         await harness.wait_until(lambda: read_lines(hook_log))
 
-        assert [
+        created_comments = [
             event[2] for event in harness.tracker.events if event[0] == "create_comment"
-        ] == ["reviewed", "ready to merge", "shipped"]
+        ]
+        parsed_comments = [parse_result_comment(body) for body in created_comments]
+        assert all(parsed is not None for parsed in parsed_comments)
+        assert [parsed[0] for parsed in parsed_comments if parsed is not None] == [
+            "Todo",
+            "Review",
+            "Merging",
+        ]
+        assert [
+            parsed[1].summary for parsed in parsed_comments if parsed is not None
+        ] == [
+            "reviewed",
+            "ready to merge",
+            "shipped",
+        ]
         assert read_lines(hook_log) == [
             "ENG-101:after_create",
+            "ENG-101:before_run",
+            "ENG-101:after_run",
+            "ENG-101:before_run",
+            "ENG-101:after_run",
             "ENG-101:before_run",
             "ENG-101:after_run",
             "ENG-101:before_remove",
         ]
         prompts = harness.controller.prompt_log["ENG-101"]
         assert len(prompts) == 3
-        assert prompts[1].startswith("Continuation guidance")
-        assert prompts[2].startswith("Continuation guidance")
+        assert all(
+            "You are an agent for this repository." in prompt for prompt in prompts
+        )
         snapshot = await harness.snapshot()
         assert snapshot["running"] == []
         assert snapshot["retrying"] == []
-        assert snapshot["agent_totals"]["total_tokens"] == 21
+        assert snapshot["agent_totals"]["total_tokens"] == 54
 
 
 @pytest.mark.asyncio
@@ -120,13 +136,14 @@ async def test_integration_review_to_rework_spans_multiple_worker_lifetimes(
                 "after_run": hook_script(hook_log, "after_run"),
                 "before_remove": hook_script(hook_log, "before_remove"),
             },
-            "agent": {"max_turns": 2},
         },
         plans_by_identifier={
             "ENG-202": [
-                TurnPlan(state="Review", comment="review ready"),
-                TurnPlan(state="Rework", comment="changes requested"),
-                TurnPlan(state="Done", comment="reworked"),
+                TurnPlan(result=transition_result("Review", summary="review ready")),
+                TurnPlan(
+                    result=transition_result("Rework", summary="changes requested")
+                ),
+                TurnPlan(result=transition_result("Done", summary="reworked")),
             ]
         },
     ) as harness:
@@ -135,9 +152,15 @@ async def test_integration_review_to_rework_spans_multiple_worker_lifetimes(
         workspace = str(tmp_path / "workspaces" / "ENG-202")
         await harness.wait_until(lambda: not Path(workspace).exists())
 
-        assert harness.controller.started_workspaces == [workspace, workspace]
+        assert harness.controller.started_workspaces == [
+            workspace,
+            workspace,
+            workspace,
+        ]
         assert read_lines(hook_log) == [
             "ENG-202:after_create",
+            "ENG-202:before_run",
+            "ENG-202:after_run",
             "ENG-202:before_run",
             "ENG-202:after_run",
             "ENG-202:before_run",
@@ -146,12 +169,13 @@ async def test_integration_review_to_rework_spans_multiple_worker_lifetimes(
         ]
         prompts = harness.controller.prompt_log["ENG-202"]
         assert len(prompts) == 3
-        assert prompts[1].startswith("Continuation guidance")
-        assert not prompts[2].startswith("Continuation guidance")
+        assert all(
+            "You are an agent for this repository." in prompt for prompt in prompts
+        )
 
 
 @pytest.mark.asyncio
-async def test_integration_multi_state_profiles_restart_only_on_profile_change(
+async def test_integration_state_transitions_start_fresh_prompts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     issue = make_issue(id="issue-203", identifier="ENG-203", state="Todo")
@@ -176,13 +200,12 @@ async def test_integration_multi_state_profiles_restart_only_on_profile_change(
                     "codex": {"model": "gpt-5.4-mini", "reasoning_effort": "low"},
                 },
             },
-            "agent": {"max_turns": 5},
         },
         plans_by_identifier={
             "ENG-203": [
-                TurnPlan(state="In Progress", comment="started"),
-                TurnPlan(state="Merging", comment="ready to merge"),
-                TurnPlan(state="Done", comment="merged"),
+                TurnPlan(result=transition_result("In Progress", summary="started")),
+                TurnPlan(result=transition_result("Merging", summary="ready to merge")),
+                TurnPlan(result=transition_result("Done", summary="merged")),
             ]
         },
     ) as harness:
@@ -193,10 +216,13 @@ async def test_integration_multi_state_profiles_restart_only_on_profile_change(
         workspace = str(tmp_path / "workspaces" / "ENG-203")
         assert len(prompts) == 3
         assert "Execution prompt for Todo." in prompts[0]
-        assert prompts[1].startswith("Continuation guidance")
+        assert "Execution prompt for In Progress." in prompts[1]
         assert "Merge prompt for Merging." in prompts[2]
-        assert not prompts[2].startswith("Continuation guidance")
-        assert harness.controller.started_workspaces == [workspace, workspace]
+        assert harness.controller.started_workspaces == [
+            workspace,
+            workspace,
+            workspace,
+        ]
 
 
 @pytest.mark.asyncio
@@ -217,8 +243,17 @@ async def test_integration_todo_blocked_by_non_terminal_issue_waits_until_unbloc
         issues=[blocker, blocked],
         workflow_overrides={"tracker": {"terminal_states": ["Done", "Canceled"]}},
         plans_by_identifier={
-            "ENG-301": [TurnPlan(state="Done", sleep_ms=80, comment="unblocked")],
-            "ENG-302": [TurnPlan(state="Done", comment="completed dependent work")],
+            "ENG-301": [
+                TurnPlan(
+                    sleep_ms=80,
+                    result=transition_result("Done", summary="unblocked"),
+                )
+            ],
+            "ENG-302": [
+                TurnPlan(
+                    result=transition_result("Done", summary="completed dependent work")
+                )
+            ],
         },
     ) as harness:
         await harness.refresh()
@@ -235,6 +270,51 @@ async def test_integration_todo_blocked_by_non_terminal_issue_waits_until_unbloc
             "ENG-301",
             "ENG-302",
         ]
+
+
+@pytest.mark.asyncio
+async def test_integration_upstream_results_are_available_in_prompt_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blocker = make_issue(id="issue-321", identifier="ENG-321", state="Build")
+    blocked = make_issue(
+        id="issue-322",
+        identifier="ENG-322",
+        state="Build",
+        blocked_by=(BlockerRef(id="issue-321", identifier="ENG-321", state="Build"),),
+    )
+
+    async with IntegrationHarness(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        issues=[blocker, blocked],
+        workflow_overrides={
+            "prompt": (
+                "# prompt: default\n"
+                "{% if issue.upstream_tickets.size > 0 %}"
+                "Upstream: {{ issue.upstream_tickets[0].results_by_state.Build.summary }}\n"
+                "{% endif %}"
+                "State: {{ issue.state }}\n"
+            ),
+            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "states": {"Build": {"prompt": "default"}},
+        },
+        plans_by_identifier={
+            "ENG-321": [
+                TurnPlan(result=transition_result("Done", summary="artifact ready"))
+            ],
+            "ENG-322": [
+                TurnPlan(result=transition_result("Done", summary="consumed artifact"))
+            ],
+        },
+    ) as harness:
+        await harness.refresh()
+        await harness.wait_until(lambda: issue_state(harness, "issue-321") == "Done")
+        await harness.wait_until(lambda: issue_state(harness, "issue-322") == "Done")
+
+        prompts = harness.controller.prompt_log["ENG-322"]
+        assert len(prompts) == 1
+        assert "Upstream: artifact ready" in prompts[0]
 
 
 @pytest.mark.asyncio
@@ -263,9 +343,9 @@ async def test_integration_global_and_state_concurrency_limits(
             },
         },
         plans_by_identifier={
-            "ENG-401": [TurnPlan(state="Done", sleep_ms=120)],
-            "ENG-402": [TurnPlan(state="Done", sleep_ms=120)],
-            "ENG-403": [TurnPlan(state="Done", sleep_ms=120)],
+            "ENG-401": [TurnPlan(sleep_ms=120, result=transition_result("Done"))],
+            "ENG-402": [TurnPlan(sleep_ms=120, result=transition_result("Done"))],
+            "ENG-403": [TurnPlan(sleep_ms=120, result=transition_result("Done"))],
         },
     ) as harness:
         await harness.refresh()
@@ -341,7 +421,7 @@ async def test_integration_before_run_timeout_aborts_attempt_and_still_runs_afte
             },
             "agent": {"max_retry_backoff_ms": 60},
         },
-        plans_by_identifier={"ENG-701": [TurnPlan(state="Done")]},
+        plans_by_identifier={"ENG-701": [TurnPlan(result=transition_result("Done"))]},
     ) as harness:
         await harness.refresh()
         retry_entry = await wait_for_snapshot(
@@ -397,9 +477,9 @@ async def test_integration_workflow_reload_applies_new_config_and_invalid_reload
             "hooks": {"before_run": hook_script(hook_log, "v1")},
         },
         plans_by_identifier={
-            "ENG-801": [TurnPlan(state="Done")],
-            "ENG-802": [TurnPlan(state="Done")],
-            "ENG-803": [TurnPlan(state="Done")],
+            "ENG-801": [TurnPlan(result=transition_result("Done"))],
+            "ENG-802": [TurnPlan(result=transition_result("Done"))],
+            "ENG-803": [TurnPlan(result=transition_result("Done"))],
         },
     ) as harness:
         await harness.refresh()

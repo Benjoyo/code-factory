@@ -13,7 +13,7 @@ This package is a long-running automation service that reads tracker work, creat
   - `workflow`: `WORKFLOW.md` loading, front-matter parsing, and workflow snapshot/state handling.
   - `workspace`: workspace path safety, hook execution, and workspace lifecycle management.
   - `observability`: operator-facing API payloads and HTTP server.
-  - `prompts`: workflow prompt rendering and continuation prompt generation.
+  - `prompts`: workflow prompt rendering and prompt data shaping.
 - `tests`: behavior, protocol, integration, and architecture tests; keep new tests close to the layer they protect.
 - `pyproject.toml`: package metadata, lint/type/test tool configuration, and `uv` dependency management.
 - `README.md`: operator-facing usage and API/CLI documentation.

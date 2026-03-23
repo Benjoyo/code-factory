@@ -57,9 +57,14 @@ from code_factory.config.utils import (
 )
 from code_factory.errors import ConfigValidationError, WorkflowLoadError, WorkspaceError
 from code_factory.issues import Issue, normalize_issue_state
-from code_factory.prompts.builder import continuation_prompt
 from code_factory.prompts.values import to_liquid_value
 from code_factory.runtime.support import maybe_aclose
+from code_factory.structured_results import (
+    StructuredTurnResult,
+    normalize_structured_turn_result,
+    parse_result_comment,
+    render_result_comment,
+)
 from code_factory.workflow.loader import (
     DEFAULT_WORKFLOW_FILENAME,
     current_stamp,
@@ -881,7 +886,7 @@ def test_validate_dispatch_settings_and_state_limit_selection(
     assert max_concurrent_agents_for_state(settings, None) == 5
 
 
-def test_prompt_value_serialization_and_continuation_prompt() -> None:
+def test_prompt_value_serialization() -> None:
     @dataclass
     class Payload:
         when: datetime
@@ -904,7 +909,6 @@ def test_prompt_value_serialization_and_continuation_prompt() -> None:
         "at": "03:04:00",
         "tags": ["a", "b"],
     }
-    assert "Continuation guidance" in continuation_prompt(2, 5)
 
 
 def test_workflow_loader_helpers_and_current_stamp(
@@ -1012,6 +1016,58 @@ def test_multi_state_workflow_helper_validation_paths() -> None:
             {"default": "Body"},
             "unsupported keys",
         ),
+        (
+            {"states": {"Todo": {"prompt": "default", "auto_next_state": "Done"}}},
+            {"default": "Body"},
+            "cannot define both prompt and auto_next_state",
+        ),
+        (
+            {"states": {"Todo": {}}},
+            {"default": "Body"},
+            "must define either prompt or auto_next_state",
+        ),
+        (
+            {"states": {"Todo": {"auto_next_state": "Done", "codex": {"model": "x"}}}},
+            {"default": "Body"},
+            "codex is not supported for auto states",
+        ),
+        (
+            {"states": {"Todo": {"prompt": "default", "failure_state": " todo "}}},
+            {"default": "Body"},
+            "failure_state must not equal the current state",
+        ),
+        (
+            {"states": {"Todo": {"prompt": "default", "allowed_next_states": "Done"}}},
+            {"default": "Body"},
+            "allowed_next_states must be a list of strings",
+        ),
+        (
+            {"states": {"Todo": {"prompt": "default", "allowed_next_states": [1]}}},
+            {"default": "Body"},
+            "allowed_next_states must be a string",
+        ),
+        (
+            {
+                "states": {
+                    "Todo": {
+                        "prompt": "default",
+                        "allowed_next_states": ["Done", " done "],
+                    }
+                }
+            },
+            {"default": "Body"},
+            "must not contain duplicate normalized states",
+        ),
+        (
+            {"states": {"Todo": {"prompt": "default", "failure_state": 1}}},
+            {"default": "Body"},
+            "failure_state must be a string",
+        ),
+        (
+            {"states": {"Todo": {"auto_next_state": "   "}}},
+            {"default": "Body"},
+            "auto_next_state must not be blank",
+        ),
     ],
 )
 def test_parse_state_profiles_validation_paths(
@@ -1021,6 +1077,94 @@ def test_parse_state_profiles_validation_paths(
 ) -> None:
     with pytest.raises(ConfigValidationError, match=message):
         parse_state_profiles(config, prompt_sections)
+
+
+def test_state_profiles_and_result_helpers_cover_edge_paths(tmp_path: Path) -> None:
+    profiles = parse_state_profiles(
+        {
+            "states": {
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "allowed_next_states": ["Human Review"],
+                    "failure_state": "Blocked",
+                    "codex": {"reasoning_effort": "high"},
+                },
+            }
+        },
+        {"default": "Body"},
+    )
+    todo_profile = profiles["todo"]
+    progress_profile = profiles["in progress"]
+    assert todo_profile.is_auto is True
+    assert todo_profile.is_agent_run is False
+    assert progress_profile.is_agent_run is True
+    assert progress_profile.codex_model("gpt-5.4") == "gpt-5.4"
+    assert progress_profile.codex_reasoning_effort("low") == "high"
+    assert progress_profile.allows_next_state("Human Review") is True
+    assert progress_profile.allows_next_state("Done") is False
+
+    rendered = render_result_comment(
+        "Review",
+        StructuredTurnResult(
+            decision="transition",
+            summary="Completed review\nWith notes",
+            next_state="Done",
+        ),
+    )
+    parsed = parse_result_comment(rendered)
+    assert parsed is not None
+    assert parsed[0] == "Review"
+    assert parsed[1].summary == "Completed review\nWith notes"
+    assert normalize_structured_turn_result(
+        {"decision": "blocked", "summary": "  waiting  "}
+    ) == StructuredTurnResult(decision="blocked", summary="waiting", next_state=None)
+    assert normalize_structured_turn_result(
+        {"decision": "transition", "summary": "done"}
+    ) == StructuredTurnResult(decision="transition", summary="done", next_state=None)
+    assert normalize_structured_turn_result([]) is None
+    assert (
+        normalize_structured_turn_result({"decision": "nope", "summary": "x"}) is None
+    )
+    assert (
+        normalize_structured_turn_result({"decision": "transition", "summary": " "})
+        is None
+    )
+    assert (
+        normalize_structured_turn_result(
+            {"decision": "transition", "summary": "x", "next_state": ""}
+        )
+        is None
+    )
+    assert parse_result_comment(None) is None
+    assert parse_result_comment("not a result comment") is None
+    assert parse_result_comment("## Code Factory Result: \n\nversion: 1\n") is None
+    assert parse_result_comment("## Code Factory Result: Review\n\n- nope\n") is None
+    assert (
+        parse_result_comment(
+            "## Code Factory Result: Review\n\nversion: 2\ndecision: transition\nsummary: |\n  x\n"
+        )
+        is None
+    )
+    assert (
+        parse_result_comment(
+            "## Code Factory Result: Review\n\nversion: 1\ndecision: invalid\nsummary: |\n  x\n"
+        )
+        is None
+    )
+
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {"prompt": "default"},
+            },
+        )
+    )
+    todo_profile = snapshot.state_profile("Todo")
+    assert todo_profile is not None
+    assert todo_profile.auto_next_state == "In Progress"
 
 
 @pytest.mark.asyncio
@@ -1040,7 +1184,7 @@ async def test_workflow_store_reload_run_and_error_paths(
     initial = await actor.load_initial_snapshot()
     assert initial.version == 1
 
-    await actor._reload_if_changed()
+    await actor.reload_if_changed()
     assert snapshots == []
 
     workflow.write_text(
@@ -1048,14 +1192,14 @@ async def test_workflow_store_reload_run_and_error_paths(
         "states:\n  Todo:\n    prompt: default\n---\n# prompt: default\nnew\n",
         encoding="utf-8",
     )
-    await actor._reload_if_changed()
+    await actor.reload_if_changed()
     assert snapshots[-1].version == 2
 
     monkeypatch.setattr(
         "code_factory.workflow.store.current_stamp",
         lambda _path: (_ for _ in ()).throw(OSError("boom")),
     )
-    await actor._reload_if_changed()
+    await actor.reload_if_changed()
     assert actor._state is not None
     assert actor._state.last_reload_error is not None
     assert errors
@@ -1068,7 +1212,7 @@ async def test_workflow_store_reload_run_and_error_paths(
         runs += 1
         stop_event.set()
 
-    actor._reload_if_changed = fake_reload  # type: ignore[method-assign]
+    actor.reload_if_changed = fake_reload  # type: ignore[method-assign]
     await actor.run(stop_event)
     assert runs == 1
 

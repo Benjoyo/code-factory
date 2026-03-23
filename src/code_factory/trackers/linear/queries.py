@@ -66,6 +66,25 @@ query CodeFactoryLinearIssuesById($ids: [ID!]!, $first: Int!, $relationFirst: In
 }
 """
 
+COMMENTS_QUERY = """
+query CodeFactoryIssueComments($issueId: String!, $first: Int!, $after: String) {
+  issue(id: $issueId) {
+    comments(first: $first, after: $after) {
+      nodes {
+        id
+        body
+        createdAt
+        updatedAt
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+}
+"""
+
 VIEWER_QUERY = """
 query CodeFactoryLinearViewer {
   viewer { id }
@@ -75,6 +94,12 @@ query CodeFactoryLinearViewer {
 CREATE_COMMENT_MUTATION = """
 mutation CodeFactoryCreateComment($issueId: String!, $body: String!) {
   commentCreate(input: {issueId: $issueId, body: $body}) { success }
+}
+"""
+
+UPDATE_COMMENT_MUTATION = """
+mutation CodeFactoryUpdateComment($commentId: String!, $body: String!) {
+  commentUpdate(id: $commentId, input: {body: $body}) { success }
 }
 """
 

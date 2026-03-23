@@ -21,7 +21,7 @@ def write_fake_agent(path: Path, body: str) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_worker_continues_on_same_thread_until_issue_leaves_active_state(
+async def test_worker_completes_one_state_and_updates_tracker(
     tmp_path: Path,
 ) -> None:
     workspace_root = tmp_path / "workspaces"
@@ -32,17 +32,16 @@ async def test_worker_continues_on_same_thread_until_issue_leaves_active_state(
         f"""#!/bin/sh
 trace_file="{trace_file}"
 count=0
-while IFS= read -r line; do
-  count=$((count + 1))
-  printf 'JSON:%s\n' "$line" >> "$trace_file"
-  case "$count" in
-    1) printf '%s\n' '{{"id":1,"result":{{}}}}' ;;
-    2) printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-cont"}}}}}}' ;;
-    3) printf '%s\n' '{{"id":3,"result":{{"turn":{{"id":"turn-cont-1"}}}}}}'
-       printf '%s\n' '{{"method":"turn/completed"}}' ;;
-    4) printf '%s\n' '{{"id":3,"result":{{"turn":{{"id":"turn-cont-2"}}}}}}'
-       printf '%s\n' '{{"method":"turn/completed"}}' ;;
-  esac
+    while IFS= read -r line; do
+      count=$((count + 1))
+      printf 'JSON:%s\n' "$line" >> "$trace_file"
+      case "$count" in
+        1) printf '%s\n' '{{"id":1,"result":{{}}}}' ;;
+        2) printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-cont"}}}}}}' ;;
+        3) printf '%s\n' '{{"id":3,"result":{{"turn":{{"id":"turn-cont-1"}}}}}}'
+           printf '%s\n' '{{"method":"item/completed","params":{{"item":{{"type":"agentMessage","text":"{{\\"decision\\":\\"transition\\",\\"summary\\":\\"done\\",\\"next_state\\":\\"Done\\"}}"}}}}}}'
+           printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"status":"completed"}}}}}}' ;;
+      esac
 done
 """,
     )
@@ -51,7 +50,6 @@ done
         tmp_path / "WORKFLOW.md",
         workspace={"root": str(workspace_root)},
         codex={"command": f"{agent_runtime} app-server"},
-        agent={"max_turns": 3},
     )
     snapshot = make_snapshot(workflow)
     issue = make_issue(id="issue-continue", identifier="MT-247")
@@ -59,13 +57,13 @@ done
 
     class SequenceTracker(MemoryTracker):
         def __init__(self) -> None:
-            super().__init__([])
-            self.calls = 0
-
-        async def fetch_issue_states_by_ids(self, issue_ids: list[str]):
-            self.calls += 1
-            state = "In Progress" if self.calls == 1 else "Done"
-            return [make_issue(id="issue-continue", identifier="MT-247", state=state)]
+            super().__init__(
+                [
+                    make_issue(
+                        id="issue-continue", identifier="MT-247", state="In Progress"
+                    )
+                ]
+            )
 
     tracker = SequenceTracker()
 
@@ -87,15 +85,20 @@ done
         for update in updates
         if getattr(update, "update", {}).get("event") == "session_started"
     ]
-    assert len(session_started) == 2
+    assert len(session_started) == 1
     assert {event.update["thread_id"] for event in session_started} == {"thread-cont"}
+    exited = next(update for update in updates if isinstance(update, WorkerExited))
+    assert exited.completed is True
+    assert (await tracker.fetch_issue_states_by_ids(["issue-continue"]))[
+        0
+    ].state == "Done"
 
     trace = trace_file.read_text(encoding="utf-8")
     assert trace.count('"method": "thread/start"') == 1
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_schedules_continuation_retry_and_tracks_token_totals(
+async def test_orchestrator_releases_claim_on_completed_worker_and_tracks_token_totals(
     tmp_path: Path,
 ) -> None:
     workflow = write_workflow_file(tmp_path / "WORKFLOW.md")
@@ -143,11 +146,12 @@ async def test_orchestrator_schedules_continuation_retry_and_tracks_token_totals
             identifier="MT-201",
             workspace_path="/tmp/workspaces/MT-201",
             normal=True,
+            completed=True,
         )
     )
 
-    retry = actor.retry_entries["issue-usage"]
-    assert retry.attempt == 1
+    assert "issue-usage" not in actor.retry_entries
+    assert "issue-usage" not in actor.claimed
     assert actor.agent_totals["input_tokens"] == 12
     assert actor.agent_totals["output_tokens"] == 4
     assert actor.agent_totals["total_tokens"] == 16

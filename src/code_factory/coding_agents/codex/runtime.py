@@ -8,6 +8,7 @@ from typing import Any
 from ...config.models import Settings
 from ...errors import TrackerClientError
 from ...issues import Issue
+from ...structured_results import StructuredTurnResult
 from ...trackers.base import Tracker
 from ..base import AgentMessageHandler, CodingAgentRuntime, CodingAgentSession
 from .app_server import AppServerClient, AppServerSession
@@ -35,7 +36,7 @@ class CodexRuntime:
         issue: Issue,
         *,
         on_message: AgentMessageHandler | None = None,
-    ) -> dict[str, Any]:
+    ) -> StructuredTurnResult:
         if not isinstance(session, AppServerSession):
             raise TypeError(f"Unsupported session type: {type(session)!r}")
         return await self._client.run_turn(

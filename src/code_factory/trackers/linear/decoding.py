@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from ...errors import TrackerClientError
-from ...issues import BlockerRef, Issue
+from ...issues import BlockerRef, Issue, IssueComment
 
 
 def decode_linear_page_response(
@@ -42,6 +42,43 @@ def decode_linear_response(
     if body.get("errors") is not None:
         raise TrackerClientError(("linear_graphql_errors", body["errors"]))
     raise TrackerClientError("linear_unknown_payload")
+
+
+def decode_comments_page_response(
+    body: dict[str, Any],
+) -> tuple[list[IssueComment], dict[str, Any]]:
+    issue = body.get("data", {}).get("issue")
+    if not isinstance(issue, Mapping):
+        if body.get("errors") is not None:
+            raise TrackerClientError(("linear_graphql_errors", body["errors"]))
+        raise TrackerClientError("linear_unknown_payload")
+    comments_payload = issue.get("comments")
+    if not isinstance(comments_payload, Mapping):
+        raise TrackerClientError("linear_unknown_payload")
+    nodes = comments_payload.get("nodes")
+    page_info = comments_payload.get("pageInfo")
+    if not isinstance(nodes, list) or not isinstance(page_info, Mapping):
+        raise TrackerClientError("linear_unknown_payload")
+    comments = [
+        IssueComment(
+            id=string_or_none(node.get("id")) if isinstance(node, Mapping) else None,
+            body=string_or_none(node.get("body"))
+            if isinstance(node, Mapping)
+            else None,
+            created_at=parse_datetime(node.get("createdAt"))
+            if isinstance(node, Mapping)
+            else None,
+            updated_at=parse_datetime(node.get("updatedAt"))
+            if isinstance(node, Mapping)
+            else None,
+        )
+        for node in nodes
+        if isinstance(node, Mapping)
+    ]
+    return comments, {
+        "has_next_page": page_info.get("hasNextPage") is True,
+        "end_cursor": page_info.get("endCursor"),
+    }
 
 
 def decode_nodes(

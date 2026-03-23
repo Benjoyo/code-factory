@@ -20,6 +20,16 @@ class BlockerRef:
 
 
 @dataclass(frozen=True, slots=True)
+class IssueComment:
+    """Minimal tracker comment payload used for parsing persisted agent results."""
+
+    id: str | None = None
+    body: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Issue:
     """Tracker-agnostic issue snapshot used throughout orchestration code."""
 

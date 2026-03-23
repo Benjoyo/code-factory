@@ -27,14 +27,13 @@ def default_workflow_config() -> dict[str, Any]:
             "terminal_states": ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
         },
         "states": {
-            "Todo": {"prompt": "default"},
+            "Todo": {"auto_next_state": "In Progress"},
             "In Progress": {"prompt": "default"},
         },
         "polling": {"interval_ms": 30_000},
         "workspace": {"root": os.path.join("/tmp", "code-factory-workspaces")},
         "agent": {
             "max_concurrent_agents": 10,
-            "max_turns": 20,
             "max_retry_backoff_ms": 300_000,
             "max_concurrent_agents_by_state": {},
         },
@@ -78,7 +77,12 @@ def deep_merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any
 def write_workflow_file(
     path: Path, *, prompt: str = DEFAULT_PROMPT, **overrides: Any
 ) -> Path:
-    config = deep_merge(default_workflow_config(), overrides)
+    config = deep_merge(
+        default_workflow_config(),
+        {key: value for key, value in overrides.items() if key != "states"},
+    )
+    if "states" in overrides:
+        config["states"] = copy.deepcopy(overrides["states"])
     yaml_body = yaml.safe_dump(config, sort_keys=False)
     rendered_prompt = (
         prompt

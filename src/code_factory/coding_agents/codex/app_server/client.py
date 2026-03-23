@@ -10,6 +10,7 @@ from ....config.models import CodingAgentSettings, WorkspaceSettings
 from ....errors import AppServerError, WorkspaceError
 from ....issues import Issue
 from ....runtime.subprocess import ProcessTree
+from ....structured_results import StructuredTurnResult
 from ....workspace.paths import canonicalize, validate_workspace_path
 from ..config import build_launch_command
 from ..tools import DynamicToolExecutor
@@ -42,7 +43,7 @@ class AppServerClient:
         *,
         on_message=None,
         tool_executor: DynamicToolExecutor | None = None,
-    ) -> dict[str, Any]:
+    ) -> StructuredTurnResult:
         session = await self.start_session(workspace)
         try:
             return await self.run_turn(
@@ -76,7 +77,7 @@ class AppServerClient:
         *,
         on_message=None,
         tool_executor: DynamicToolExecutor | None = None,
-    ) -> dict[str, Any]:
+    ) -> StructuredTurnResult:
         handler = on_message or default_on_message
         executor = tool_executor or self._build_tool_executor(session.workspace)
         turn_id = await start_turn(session, prompt, issue)
@@ -92,7 +93,7 @@ class AppServerClient:
             {"runtime_pid": session.runtime_pid},
         )
         try:
-            result = await await_turn_completion(session, handler, executor)
+            return await await_turn_completion(session, handler, executor)
         except Exception as exc:
             await emit_message(
                 handler,
@@ -101,12 +102,6 @@ class AppServerClient:
                 {"runtime_pid": session.runtime_pid},
             )
             raise
-        return {
-            "result": result,
-            "session_id": session_id,
-            "thread_id": session.thread_id,
-            "turn_id": turn_id,
-        }
 
     async def _bootstrap_session(
         self, process_tree: ProcessTree, workspace: str

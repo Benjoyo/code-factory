@@ -11,7 +11,7 @@ from code_factory.runtime.messages import AgentWorkerUpdate, WorkerExited
 
 from ..conftest import make_issue, make_snapshot, write_workflow_file
 from .helpers import issue_state, request_refresh_and_settle, wait_for_snapshot
-from .support import IntegrationHarness, TurnPlan
+from .support import IntegrationHarness, TurnPlan, transition_result
 
 
 @pytest.mark.asyncio
@@ -33,7 +33,7 @@ async def test_integration_worker_errors_retry_with_capped_backoff_and_recover(
                 TurnPlan(error=RuntimeError("boom-1")),
                 TurnPlan(error=RuntimeError("boom-2")),
                 TurnPlan(error=RuntimeError("boom-3")),
-                TurnPlan(state="Done"),
+                TurnPlan(result=transition_result("Done")),
             ]
         },
     ) as harness:
@@ -72,7 +72,10 @@ async def test_integration_stall_timeout_restarts_worker_and_recovers(
             "agent": {"max_retry_backoff_ms": 60},
         },
         plans_by_identifier={
-            "ENG-601": [TurnPlan(pause_until_stopped=True), TurnPlan(state="Done")]
+            "ENG-601": [
+                TurnPlan(pause_until_stopped=True),
+                TurnPlan(result=transition_result("Done")),
+            ]
         },
     ) as harness:
         await harness.refresh()
@@ -104,7 +107,7 @@ async def test_integration_dispatch_refresh_failures_and_stale_revalidation_do_n
         monkeypatch=monkeypatch,
         issues=[issue],
         workflow_overrides={"tracker": {"terminal_states": ["Done", "Canceled"]}},
-        plans_by_identifier={"ENG-1001": [TurnPlan(state="Done")]},
+        plans_by_identifier={"ENG-1001": [TurnPlan(result=transition_result("Done"))]},
     ) as harness:
         actor = harness.actor
         assert actor is not None
@@ -180,7 +183,10 @@ async def test_integration_retry_poll_failure_then_recovery(
             "agent": {"max_retry_backoff_ms": 60},
         },
         plans_by_identifier={
-            "ENG-1011": [TurnPlan(error=RuntimeError("boom")), TurnPlan(state="Done")]
+            "ENG-1011": [
+                TurnPlan(error=RuntimeError("boom")),
+                TurnPlan(result=transition_result("Done")),
+            ]
         },
     ) as harness:
         await harness.refresh()
@@ -241,7 +247,10 @@ async def test_integration_retry_releases_missing_issue_and_reschedules_when_slo
             "agent": {"max_concurrent_agents": 1, "max_retry_backoff_ms": 60},
         },
         plans_by_identifier={
-            "ENG-001": [TurnPlan(error=RuntimeError("boom")), TurnPlan(state="Done")],
+            "ENG-001": [
+                TurnPlan(error=RuntimeError("boom")),
+                TurnPlan(result=transition_result("Done")),
+            ],
             "ENG-999": [TurnPlan(pause_until_stopped=True)],
         },
     ) as harness:
@@ -284,7 +293,10 @@ async def test_integration_retry_releases_missing_issue_and_reschedules_when_slo
             "agent": {"max_concurrent_agents": 1, "max_retry_backoff_ms": 60},
         },
         plans_by_identifier={
-            "ENG-001": [TurnPlan(error=RuntimeError("boom")), TurnPlan(state="Done")],
+            "ENG-001": [
+                TurnPlan(error=RuntimeError("boom")),
+                TurnPlan(result=transition_result("Done")),
+            ],
             "ENG-999": [TurnPlan(pause_until_stopped=True)],
         },
     ) as harness:

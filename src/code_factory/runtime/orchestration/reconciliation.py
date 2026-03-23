@@ -129,14 +129,16 @@ class ReconciliationMixin:
             await self._handle_stopping_worker_exit(message, entry)
             return
         self.running.pop(message.issue_id, None)
-        if message.normal:
+        if message.completed:
             self.completed.add(message.issue_id)
+            self._release_issue_claim(message.issue_id)
+        elif message.normal:
             self._schedule_issue_retry(
                 message.issue_id,
-                1,
+                next_retry_attempt(entry),
                 identifier=entry.identifier,
+                error="worker exited without completing a state transition",
                 workspace_path=entry.workspace_path,
-                continuation=True,
             )
         else:
             self._schedule_issue_retry(

@@ -59,7 +59,6 @@ def workflow_payload(
         "reload_error": reload_error,
         "agent": {
             "max_concurrent_agents": settings.agent.max_concurrent_agents,
-            "max_turns": settings.agent.max_turns,
             "max_concurrent_agents_by_state": dict(
                 settings.agent.max_concurrent_agents_by_state
             ),

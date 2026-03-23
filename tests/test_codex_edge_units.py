@@ -420,14 +420,51 @@ async def test_turn_handlers_cover_stream_and_input_edge_paths(
     messages: list[dict[str, Any]] = []
     await session.stdout_queue.put(("stderr", "ignored"))
     await session.stdout_queue.put(("line", "not-json"))
-    await session.stdout_queue.put(("line", json.dumps({"method": "turn/completed"})))
+    await session.stdout_queue.put(
+        (
+            "line",
+            json.dumps(
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "type": "agentMessage",
+                            "text": json.dumps(
+                                {
+                                    "decision": "transition",
+                                    "summary": "done",
+                                    "next_state": "Done",
+                                }
+                            ),
+                        }
+                    },
+                }
+            ),
+        )
+    )
+    await session.stdout_queue.put(
+        (
+            "line",
+            json.dumps(
+                {
+                    "method": "turn/completed",
+                    "params": {"turn": {"status": "completed"}},
+                }
+            ),
+        )
+    )
     result = await await_turn_completion(
         session,
         lambda message: collect_messages(message, messages),
         cast(Any, FailingExecutor()),
     )
-    assert result == "turn_completed"
-    assert [message["event"] for message in messages] == ["malformed", "turn_completed"]
+    assert result.decision == "transition"
+    assert result.next_state == "Done"
+    assert [message["event"] for message in messages] == [
+        "malformed",
+        "notification",
+        "turn_completed",
+    ]
 
     exit_session = make_session()
     await exit_session.stdout_queue.put(("exit", 9))

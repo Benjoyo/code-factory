@@ -56,8 +56,8 @@ class WorkflowSnapshot:
     def prompt_template_for_state(self, state_name: str | None) -> str:
         """Resolve the state-specific prompt body when the workflow defines profiles."""
 
-        profile = self._state_profile(state_name)
-        if profile is None:
+        profile = self.state_profile(state_name)
+        if profile is None or not profile.prompt_refs:
             return self.definition.prompt_template
         return "\n\n".join(
             self.definition.prompt_sections[prompt_ref]
@@ -67,7 +67,7 @@ class WorkflowSnapshot:
     def settings_for_state(self, state_name: str | None) -> Settings:
         """Return the effective settings for the provided tracker state."""
 
-        profile = self._state_profile(state_name)
+        profile = self.state_profile(state_name)
         if profile is None:
             return self.settings
         return replace(
@@ -81,17 +81,7 @@ class WorkflowSnapshot:
             ),
         )
 
-    def state_profile_fingerprint(self, state_name: str | None) -> tuple[str, ...]:
-        """Describe the effective prompt/runtime profile for change detection."""
-
-        settings = self.settings_for_state(state_name)
-        return (
-            self.prompt_template_for_state(state_name),
-            settings.coding_agent.model or "",
-            settings.coding_agent.reasoning_effort or "",
-        )
-
-    def _state_profile(self, state_name: str | None) -> WorkflowStateProfile | None:
+    def state_profile(self, state_name: str | None) -> WorkflowStateProfile | None:
         return self.state_profiles.get(normalize_issue_state(state_name))
 
 
