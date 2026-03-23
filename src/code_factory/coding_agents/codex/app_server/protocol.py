@@ -8,7 +8,6 @@ from typing import Any
 
 from ....errors import AppServerError
 from ....issues import Issue
-from ....structured_results import structured_turn_output_schema
 from ..tools import tool_specs
 from .session import AppServerSession
 from .streams import log_non_json_stream_line, send_message
@@ -82,21 +81,29 @@ async def start_thread(
     return thread["id"]
 
 
-async def start_turn(session: AppServerSession, prompt: str, issue: Issue) -> str:
+async def start_turn(
+    session: AppServerSession,
+    prompt: str,
+    issue: Issue,
+    *,
+    output_schema: dict[str, Any] | None = None,
+) -> str:
+    params = {
+        "threadId": session.thread_id,
+        "input": [{"type": "text", "text": prompt}],
+        "cwd": session.workspace,
+        "title": f"{issue.identifier}: {issue.title}",
+        "approvalPolicy": session.approval_policy,
+        "sandboxPolicy": session.turn_sandbox_policy,
+    }
+    if output_schema is not None:
+        params["outputSchema"] = output_schema
     await send_message(
         session.process_tree,
         {
             "method": "turn/start",
             "id": TURN_START_ID,
-            "params": {
-                "threadId": session.thread_id,
-                "input": [{"type": "text", "text": prompt}],
-                "cwd": session.workspace,
-                "title": f"{issue.identifier}: {issue.title}",
-                "approvalPolicy": session.approval_policy,
-                "sandboxPolicy": session.turn_sandbox_policy,
-                "outputSchema": structured_turn_output_schema(),
-            },
+            "params": params,
         },
     )
     result = await await_response(

@@ -100,8 +100,8 @@ agent-run state, and optionally configures harness-owned transitions.
 | `states.<state>.prompt` | string or non-empty list of strings | none | Required for agent-run states. References named `# prompt: <id>` sections from the Markdown body. |
 | `states.<state>.codex.model` | string or `null` | inherit global `codex.model` | Optional per-state Codex model override for agent-run states only. |
 | `states.<state>.codex.reasoning_effort` | string or `null` | inherit global `codex.reasoning_effort` | Optional per-state reasoning override for agent-run states only. |
-| `states.<state>.allowed_next_states` | list of strings | unrestricted | Optional allowlist for harness-applied transitions. |
-| `states.<state>.failure_state` | string or `null` | `null` | Optional fallback state for `blocked` results with no explicit `next_state`. |
+| `states.<state>.allowed_next_states` | list of strings | unrestricted | Optional allowlist for harness-applied transitions. Also constrains the turn schema `next_state` enum when present. |
+| `states.<state>.failure_state` | string or `null` | `null` | Optional deterministic blocked-state target. When set, it overrides any agent-supplied `next_state` for `blocked` results. |
 | `states.<state>.auto_next_state` | string or `null` | `null` | Makes the state harness-run instead of agent-run. |
 
 Rules:
@@ -129,6 +129,8 @@ Runtime behavior:
 - Agent-run states start a fresh coding-agent session and render the referenced prompt section bodies concatenated with a blank line between sections, in listed order.
 - Auto states do not start an agent. The harness moves the issue directly to `auto_next_state`.
 - Successful agent turns return structured output with `decision`, `summary`, and optional `next_state`, and the harness performs the validated state transition.
+- `allowed_next_states` constrains agent-selected `next_state` values in the turn schema when it is configured.
+- `failure_state`, when configured, takes precedence over any agent-selected `next_state` for `blocked` results.
 
 Minimal example:
 

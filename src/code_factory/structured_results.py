@@ -24,9 +24,20 @@ class StructuredTurnResult:
         return asdict(self)
 
 
-def structured_turn_output_schema() -> dict[str, Any]:
+def structured_turn_output_schema(
+    allowed_next_states: tuple[str, ...] = (),
+) -> dict[str, Any]:
     """Return the app-server output schema for workflow state completion."""
 
+    next_state_schema: dict[str, Any]
+    if allowed_next_states:
+        next_state_schema = {
+            "enum": [*allowed_next_states, None],
+        }
+    else:
+        next_state_schema = {
+            "type": ["string", "null"],
+        }
     return {
         "type": "object",
         "additionalProperties": False,
@@ -40,9 +51,7 @@ def structured_turn_output_schema() -> dict[str, Any]:
                 "type": "string",
                 "minLength": 1,
             },
-            "next_state": {
-                "type": ["string", "null"],
-            },
+            "next_state": next_state_schema,
         },
     }
 

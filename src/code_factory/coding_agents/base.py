@@ -27,6 +27,7 @@ class CodingAgentRuntime(Protocol):
         issue: Issue,
         *,
         on_message: AgentMessageHandler | None = None,
+        output_schema: dict[str, Any] | None = None,
     ) -> StructuredTurnResult: ...
 
 

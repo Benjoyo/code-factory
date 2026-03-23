@@ -36,11 +36,16 @@ class CodexRuntime:
         issue: Issue,
         *,
         on_message: AgentMessageHandler | None = None,
+        output_schema: dict[str, Any] | None = None,
     ) -> StructuredTurnResult:
         if not isinstance(session, AppServerSession):
             raise TypeError(f"Unsupported session type: {type(session)!r}")
         return await self._client.run_turn(
-            session, prompt, issue, on_message=on_message
+            session,
+            prompt,
+            issue,
+            on_message=on_message,
+            output_schema=output_schema,
         )
 
     def _build_dynamic_tool_executor(self, workspace: str) -> DynamicToolExecutor:

@@ -182,6 +182,7 @@ class DummyRuntime:
         issue: Issue,
         *,
         on_message=None,
+        output_schema=None,
     ) -> StructuredTurnResult:
         session.turn_count += 1
         self._controller.record_prompt(issue.identifier, prompt)

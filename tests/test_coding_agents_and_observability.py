@@ -99,7 +99,10 @@ from code_factory.observability.api.server import (
     site_bound_port,
 )
 from code_factory.runtime.subprocess.process_tree import ProcessTree
-from code_factory.structured_results import StructuredTurnResult
+from code_factory.structured_results import (
+    StructuredTurnResult,
+    structured_turn_output_schema,
+)
 from code_factory.trackers.memory import MemoryTracker
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
@@ -471,10 +474,23 @@ async def test_protocol_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
         == "thread-1"
     )
     session = make_session()
-    assert await start_turn(session, "prompt", make_issue()) == "turn-1"
+    assert (
+        await start_turn(
+            session,
+            "prompt",
+            make_issue(),
+            output_schema=structured_turn_output_schema(("Done", "Review")),
+        )
+        == "turn-1"
+    )
     assert sent[-1]["params"]["outputSchema"]["properties"]["decision"]["enum"] == [
         "transition",
         "blocked",
+    ]
+    assert sent[-1]["params"]["outputSchema"]["properties"]["next_state"]["enum"] == [
+        "Done",
+        "Review",
+        None,
     ]
 
 
@@ -716,7 +732,9 @@ async def test_client_runtime_and_observability_behaviors(
     session = make_session()
     monkeypatch.setattr(
         "code_factory.coding_agents.codex.app_server.client.start_turn",
-        lambda session, prompt, issue: asyncio.sleep(0, result="turn-1"),
+        lambda session, prompt, issue, output_schema=None: asyncio.sleep(
+            0, result="turn-1"
+        ),
     )
     monkeypatch.setattr(
         "code_factory.coding_agents.codex.app_server.client.await_turn_completion",

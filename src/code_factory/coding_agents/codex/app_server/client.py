@@ -77,10 +77,16 @@ class AppServerClient:
         *,
         on_message=None,
         tool_executor: DynamicToolExecutor | None = None,
+        output_schema: dict[str, Any] | None = None,
     ) -> StructuredTurnResult:
         handler = on_message or default_on_message
         executor = tool_executor or self._build_tool_executor(session.workspace)
-        turn_id = await start_turn(session, prompt, issue)
+        turn_id = await start_turn(
+            session,
+            prompt,
+            issue,
+            output_schema=output_schema,
+        )
         session_id = f"{session.thread_id}-{turn_id}"
         await emit_message(
             handler,

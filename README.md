@@ -139,6 +139,10 @@ active workflow states:
   `auto_next_state`.
 - Agent-run states may optionally define `allowed_next_states` and
   `failure_state`.
+- When `allowed_next_states` is set, the turn schema constrains `next_state` to
+  that set.
+- When `failure_state` is set, blocked results always route there regardless of
+  any agent-supplied `next_state`.
 - The Markdown body must be split into named `# prompt: <id>` sections for any
   agent-run states.
 - Only `codex.model` and `codex.reasoning_effort` can be overridden per

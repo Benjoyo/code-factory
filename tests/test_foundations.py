@@ -64,6 +64,7 @@ from code_factory.structured_results import (
     normalize_structured_turn_result,
     parse_result_comment,
     render_result_comment,
+    structured_turn_output_schema,
 )
 from code_factory.workflow.loader import (
     DEFAULT_WORKFLOW_FILENAME,
@@ -1103,6 +1104,12 @@ def test_state_profiles_and_result_helpers_cover_edge_paths(tmp_path: Path) -> N
     assert progress_profile.codex_reasoning_effort("low") == "high"
     assert progress_profile.allows_next_state("Human Review") is True
     assert progress_profile.allows_next_state("Done") is False
+    assert structured_turn_output_schema(("Done", "Review"))["properties"][
+        "next_state"
+    ] == {"enum": ["Done", "Review", None]}
+    assert structured_turn_output_schema()["properties"]["next_state"] == {
+        "type": ["string", "null"]
+    }
 
     rendered = render_result_comment(
         "Review",

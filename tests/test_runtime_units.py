@@ -272,7 +272,13 @@ async def test_issue_worker_paths(
             return self.session
 
         async def run_turn(
-            self, session: Any, prompt: str, issue: Any, *, on_message=None
+            self,
+            session: Any,
+            prompt: str,
+            issue: Any,
+            *,
+            on_message=None,
+            output_schema=None,
         ) -> StructuredTurnResult:
             self.prompts.append(prompt)
             if on_message is not None:
@@ -371,13 +377,21 @@ async def test_issue_worker_state_edge_paths_and_result_helpers(
     class FakeRuntime:
         def __init__(self, result: StructuredTurnResult) -> None:
             self.result = result
+            self.output_schema = None
 
         async def start_session(self, workspace: str) -> Session:
             return Session()
 
         async def run_turn(
-            self, session: Any, prompt: str, issue: Any, *, on_message=None
+            self,
+            session: Any,
+            prompt: str,
+            issue: Any,
+            *,
+            on_message=None,
+            output_schema=None,
         ) -> StructuredTurnResult:
+            self.output_schema = output_schema
             return self.result
 
     stop_worker = IssueWorker(
@@ -460,7 +474,44 @@ async def test_issue_worker_state_edge_paths_and_result_helpers(
     )  # type: ignore[assignment]
     with pytest.raises(RuntimeError, match="missing_issue_id_for_state_transition"):
         await missing_id_worker._run_state(Session())
-    assert worker._target_state(make_issue(), "blocked", "Blocked") == "Blocked"
+    assert worker._target_state(make_issue(), "blocked", "Other") == "Blocked"
+    schema_tracker = MemoryTracker([make_issue(id="issue-3", identifier="ENG-3")])
+    schema_worker = IssueWorker(
+        issue=make_issue(id="issue-3", identifier="ENG-3"),
+        workflow_snapshot=snapshot,
+        orchestrator_queue=asyncio.Queue(),
+        tracker=schema_tracker,
+    )
+    schema_runtime = FakeRuntime(
+        StructuredTurnResult(
+            decision="transition",
+            summary="done",
+            next_state="Done",
+        )
+    )
+    schema_worker._agent_runtime = schema_runtime  # type: ignore[assignment]
+    await schema_worker._run_state(Session())
+    allowed_schema = schema_runtime.output_schema
+    assert allowed_schema is not None
+    assert allowed_schema["properties"]["next_state"] == {"enum": ["Done", None]}
+
+    blocked_tracker = MemoryTracker([make_issue(id="issue-4", identifier="ENG-4")])
+    blocked_worker = IssueWorker(
+        issue=make_issue(id="issue-4", identifier="ENG-4"),
+        workflow_snapshot=snapshot,
+        orchestrator_queue=asyncio.Queue(),
+        tracker=blocked_tracker,
+    )
+    blocked_worker._agent_runtime = FakeRuntime(
+        StructuredTurnResult(
+            decision="blocked",
+            summary="blocked",
+            next_state="Elsewhere",
+        )
+    )  # type: ignore[assignment]
+    await blocked_worker._run_state(Session())
+    blocked_issue = await blocked_tracker.fetch_issue_states_by_ids(["issue-4"])
+    assert blocked_issue[0].state == "Blocked"
 
     stop_after_refresh_worker = IssueWorker(
         issue=make_issue(id="issue-1", identifier="ENG-1"),

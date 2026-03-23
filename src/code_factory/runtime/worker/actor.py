@@ -13,6 +13,7 @@ from ...coding_agents import (
 )
 from ...issues import Issue, normalize_issue_state
 from ...prompts import build_prompt
+from ...structured_results import structured_turn_output_schema
 from ...trackers.base import Tracker, build_tracker
 from ...workflow.models import WorkflowSnapshot
 from ...workspace import WorkspaceManager
@@ -138,13 +139,16 @@ class IssueWorker:
             prompt,
             current_issue,
             on_message=self._on_agent_message,
+            output_schema=structured_turn_output_schema(profile.allowed_next_states),
         )
         if self.stop_event.is_set():
             return
         target_state = self._target_state(
             current_issue, result.decision, result.next_state
         )
-        if not profile.allows_next_state(target_state):
+        if not (
+            result.decision == "blocked" and profile.failure_state is not None
+        ) and not profile.allows_next_state(target_state):
             raise RuntimeError(
                 f"invalid_next_state: {current_issue.state!r} -> {target_state!r}"
             )
@@ -176,7 +180,7 @@ class IssueWorker:
                 raise RuntimeError("missing_next_state_for_transition")
             target_state = next_state
         elif decision == "blocked":
-            target_state = next_state or profile.failure_state
+            target_state = profile.failure_state or next_state
             if target_state is None:
                 raise RuntimeError("missing_failure_state_for_blocked_result")
         else:

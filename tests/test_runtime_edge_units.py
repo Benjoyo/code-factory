@@ -314,7 +314,13 @@ async def test_config_utils_linear_graphql_client_and_worker_edge_paths(
             raise AssertionError("start_session should not run")
 
         async def run_turn(
-            self, session: Any, prompt: str, issue: Any, *, on_message=None
+            self,
+            session: Any,
+            prompt: str,
+            issue: Any,
+            *,
+            on_message=None,
+            output_schema=None,
         ) -> dict[str, Any]:
             raise AssertionError("run_turn should not run")
 
