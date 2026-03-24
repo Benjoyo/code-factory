@@ -2,8 +2,11 @@ from __future__ import annotations
 
 """Codex runtime configuration with stringent defaults for safe execution."""
 
+import json
+import os
 import shlex
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from ...config.models import CodingAgentSettings, Settings
@@ -61,10 +64,16 @@ def parse_coding_agent_settings(config: Mapping[str, Any]) -> CodingAgentSetting
     )
 
 
-def build_launch_command(settings: CodingAgentSettings) -> str:
+def build_launch_command(
+    settings: CodingAgentSettings, workspace: str | None = None
+) -> str:
     """Insert workflow-managed CLI flags ahead of the `app-server` subcommand."""
 
-    if settings.model is None and settings.reasoning_effort is None:
+    if (
+        settings.model is None
+        and settings.reasoning_effort is None
+        and settings.repo_skill_allowlist is None
+    ):
         return settings.command
     try:
         command_parts = shlex.split(settings.command)
@@ -87,8 +96,65 @@ def build_launch_command(settings: CodingAgentSettings) -> str:
         )
     if settings.model is not None:
         injected_flags.extend(["--model", settings.model])
+    if settings.repo_skill_allowlist is not None:
+        disabled_skill_paths = _disabled_repo_skill_paths(
+            workspace, settings.repo_skill_allowlist
+        )
+        if disabled_skill_paths:
+            injected_flags.extend(
+                [
+                    "--config",
+                    repo_skill_disable_config(disabled_skill_paths),
+                ]
+            )
     command_parts[app_server_index:app_server_index] = injected_flags
     return shlex.join(command_parts)
+
+
+def repo_skill_disable_config(skill_paths: tuple[str, ...]) -> str:
+    entries = ", ".join(
+        f"{{path={json.dumps(skill_path)}, enabled=false}}"
+        for skill_path in skill_paths
+    )
+    return f"skills.config=[{entries}]"
+
+
+def _disabled_repo_skill_paths(
+    workspace: str | None, allowlist: tuple[str, ...]
+) -> tuple[str, ...]:
+    if workspace is None:
+        raise ConfigValidationError(
+            "workspace is required when codex repo skill filtering is enabled"
+        )
+    skill_dirs = _repo_skill_directories(workspace)
+    missing = sorted(set(allowlist) - set(skill_dirs))
+    if missing:
+        names = ", ".join(missing)
+        raise ConfigValidationError(
+            f"codex.skills references missing repo skills for workspace {workspace}: {names}"
+        )
+    disabled = [
+        str(skill_dirs[skill_name] / "SKILL.md")
+        for skill_name in sorted(skill_dirs)
+        if skill_name not in allowlist
+    ]
+    return tuple(disabled)
+
+
+def _repo_skill_directories(workspace: str) -> dict[str, Path]:
+    skills_root = (
+        Path(os.path.abspath(os.path.expanduser(workspace))) / ".agents" / "skills"
+    )
+    if not skills_root.is_dir():
+        return {}
+    skill_dirs: dict[str, Path] = {}
+    for child in sorted(skills_root.iterdir(), key=lambda path: path.name):
+        if not child.is_dir():
+            continue
+        if not (child / "SKILL.md").is_file():
+            continue
+        skill_dirs[child.name] = child
+    return skill_dirs
 
 
 def normalize_approval_policy(approval_policy: Any) -> str | dict[str, Any]:

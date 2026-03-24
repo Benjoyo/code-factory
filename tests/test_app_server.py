@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -139,3 +139,76 @@ done
     assert result.decision == "transition"
     assert result.next_state == "Done"
     assert any(message["event"] == "tool_call_failed" for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_app_server_fails_before_launch_when_allowlisted_repo_skill_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace_root = tmp_path / "workspaces"
+    workspace = workspace_root / "MT-91"
+    workspace.mkdir(parents=True)
+
+    workflow = write_workflow_file(
+        tmp_path / "WORKFLOW.md",
+        workspace={"root": str(workspace_root)},
+    )
+    snapshot = make_snapshot(workflow)
+    client = AppServerClient(
+        replace(snapshot.settings.coding_agent, repo_skill_allowlist=("commit",)),
+        snapshot.settings.workspace,
+    )
+
+    async def fail_spawn(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("spawn should not run when the allowlist is invalid")
+
+    monkeypatch.setattr(
+        "code_factory.coding_agents.codex.app_server.client.ProcessTree.spawn_shell",
+        fail_spawn,
+    )
+
+    with pytest.raises(AppServerError, match="missing repo skills"):
+        await client.start_session(str(workspace))
+
+
+@pytest.mark.asyncio
+async def test_app_server_allows_empty_repo_skill_allowlist_without_repo_skills(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace_root = tmp_path / "workspaces"
+    workspace = workspace_root / "MT-92"
+    workspace.mkdir(parents=True)
+
+    workflow = write_workflow_file(
+        tmp_path / "WORKFLOW.md",
+        workspace={"root": str(workspace_root)},
+    )
+    snapshot = make_snapshot(workflow)
+    client = AppServerClient(
+        replace(snapshot.settings.coding_agent, repo_skill_allowlist=()),
+        snapshot.settings.workspace,
+    )
+    launched: list[str] = []
+
+    class DummyTree:
+        process = type("Proc", (), {"stdout": object(), "stderr": object()})()
+
+    tree = DummyTree()
+
+    async def fake_spawn(command: str, **kwargs):  # type: ignore[no-untyped-def]
+        launched.append(command)
+        return tree
+
+    async def fake_bootstrap(process_tree, workspace_path: str):  # type: ignore[no-untyped-def]
+        return ("session", process_tree, workspace_path)
+
+    monkeypatch.setattr(
+        "code_factory.coding_agents.codex.app_server.client.ProcessTree.spawn_shell",
+        fake_spawn,
+    )
+    monkeypatch.setattr(client, "_bootstrap_session", fake_bootstrap)
+
+    session = await client.start_session(str(workspace))
+
+    assert launched == ["codex app-server"]
+    assert session == ("session", tree, str(workspace.resolve()))

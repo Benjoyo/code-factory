@@ -80,6 +80,7 @@ def test_multi_state_workflow_parses_sections_and_derives_active_states(
                 "codex": {
                     "model": "gpt-5.4-mini",
                     "reasoning_effort": "low",
+                    "skills": ["land"],
                 },
             },
         },
@@ -100,8 +101,12 @@ def test_multi_state_workflow_parses_sections_and_derives_active_states(
         snapshot.settings_for_state("Todo").coding_agent.model
         == snapshot.settings.coding_agent.model
     )
+    assert snapshot.settings_for_state("Todo").coding_agent.repo_skill_allowlist is None
     assert snapshot.settings_for_state("Merging").coding_agent.model == "gpt-5.4-mini"
     assert snapshot.settings_for_state("Merging").coding_agent.reasoning_effort == "low"
+    assert snapshot.settings_for_state("Merging").coding_agent.repo_skill_allowlist == (
+        "land",
+    )
     prompt = build_prompt(make_issue(state="Merging"), snapshot)
     assert "Shared instructions for Merging." in prompt
     assert "Merge-only instructions." in prompt

@@ -17,6 +17,7 @@ class StateCodexOverride:
 
     model: str | None = None
     reasoning_effort: str | None = None
+    skills: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +57,11 @@ class WorkflowStateProfile:
             if self.codex.reasoning_effort is not None
             else default
         )
+
+    def codex_repo_skill_allowlist(
+        self, default: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        return self.codex.skills if self.codex.skills is not None else default
 
     def allows_next_state(self, state_name: str) -> bool:
         if not self.allowed_next_states:
@@ -126,7 +132,9 @@ def parse_state_profiles(
                 f"{field_name} must define either prompt or auto_next_state"
             )
         if auto_next_state is not None and (
-            codex.model is not None or codex.reasoning_effort is not None
+            codex.model is not None
+            or codex.reasoning_effort is not None
+            or codex.skills is not None
         ):
             raise ConfigValidationError(
                 f"{field_name}.codex is not supported for auto states"
@@ -197,7 +205,7 @@ def _prompt_ref(raw_prompt_ref: Any, field_name: str) -> str:
 def _codex_override(raw_codex: Any, field_name: str) -> StateCodexOverride:
     codex_field = f"{field_name}.codex"
     codex = require_mapping(raw_codex, codex_field)
-    unexpected_keys = set(codex.keys()) - {"model", "reasoning_effort"}
+    unexpected_keys = set(codex.keys()) - {"model", "reasoning_effort", "skills"}
     if unexpected_keys:
         names = ", ".join(sorted(map(str, unexpected_keys)))
         raise ConfigValidationError(f"{codex_field} has unsupported keys: {names}")
@@ -206,6 +214,7 @@ def _codex_override(raw_codex: Any, field_name: str) -> StateCodexOverride:
         reasoning_effort=optional_non_blank_string(
             codex.get("reasoning_effort"), f"{codex_field}.reasoning_effort"
         ),
+        skills=_skill_name_list(codex.get("skills"), f"{codex_field}.skills"),
     )
 
 
@@ -268,3 +277,23 @@ def _required_state_name(value: Any, field_name: str) -> str:
     if not state_name:
         raise ConfigValidationError(f"{field_name} must not be blank")
     return state_name
+
+
+def _skill_name_list(value: Any, field_name: str) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ConfigValidationError(f"{field_name} must be a list of strings")
+    skills: list[str] = []
+    seen: set[str] = set()
+    for raw_skill in value:
+        if not isinstance(raw_skill, str):
+            raise ConfigValidationError(f"{field_name} must be a list of strings")
+        skill_name = raw_skill.strip()
+        if not skill_name:
+            raise ConfigValidationError(f"{field_name} entries must not be blank")
+        if skill_name in seen:
+            raise ConfigValidationError(f"{field_name} must not contain duplicates")
+        seen.add(skill_name)
+        skills.append(skill_name)
+    return tuple(skills)

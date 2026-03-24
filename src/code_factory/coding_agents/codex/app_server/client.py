@@ -7,7 +7,7 @@ import os
 from typing import Any
 
 from ....config.models import CodingAgentSettings, WorkspaceSettings
-from ....errors import AppServerError, WorkspaceError
+from ....errors import AppServerError, ConfigValidationError, WorkspaceError
 from ....issues import Issue
 from ....runtime.subprocess import ProcessTree
 from ....structured_results import StructuredTurnResult
@@ -60,8 +60,14 @@ class AppServerClient:
     async def start_session(self, workspace: str) -> AppServerSession:
         """Spin up the Codex runtime and bootstrap a messaging thread before use."""
         validated_workspace = self._validate_workspace_cwd(workspace)
+        try:
+            launch_command = build_launch_command(
+                self._coding_agent, validated_workspace
+            )
+        except ConfigValidationError as exc:
+            raise AppServerError(str(exc)) from exc
         process_tree = await ProcessTree.spawn_shell(
-            build_launch_command(self._coding_agent),
+            launch_command,
             cwd=validated_workspace,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,

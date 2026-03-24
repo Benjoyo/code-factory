@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,12 @@ from code_factory.application import CodeFactoryService
 from ..conftest import make_issue, write_workflow_file
 from .helpers import wait_for_snapshot
 from .support import IntegrationHarness, RecordingMemoryTracker, TurnPlan
+
+
+def unused_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
 
 
 @pytest.mark.asyncio
@@ -68,6 +75,10 @@ async def test_integration_observability_http_endpoints_and_method_errors(
 async def test_integration_service_run_forever_starts_and_stops_with_memory_tracker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, port_value: int | None
 ) -> None:
+    if port_value is None:
+        monkeypatch.setattr(
+            "code_factory.config.parsing.DEFAULT_SERVER_PORT", unused_local_port()
+        )
     workflow = write_workflow_file(
         tmp_path / "WORKFLOW.md",
         tracker={"kind": "memory"},
