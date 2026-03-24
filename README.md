@@ -50,6 +50,7 @@ Top-level commands:
 
 ```bash
 cf init [--force]
+cf review TARGET... [--workflow WORKFLOW] [--keep]
 cf serve [OPTIONS] [WORKFLOW]
 cf steer ISSUE MESSAGE [--workflow WORKFLOW] [--port PORT]
 ```
@@ -75,6 +76,21 @@ cf steer ISSUE MESSAGE [--workflow WORKFLOW] [--port PORT]
   `0` is allowed if you want the OS to choose an ephemeral port.
 - `path-to-WORKFLOW.md`
   Explicit workflow file path. If omitted, the CLI uses `WORKFLOW.md` in the current working directory.
+
+`cf review`
+
+- `TARGET...`
+  One or more ticket identifiers and/or the reserved keyword `main`.
+- `--workflow <path>`
+  Workflow path used to load `review:` config and locate the repository root. Defaults to `./WORKFLOW.md`.
+- `--keep`
+  Keep created review worktrees after the command exits instead of removing them automatically.
+
+`cf review` is an operator-side helper for `Human Review`: it resolves each ticket to the exact open GitHub PR head commit, creates a temporary detached worktree, optionally runs `review.prepare`, and launches the configured dev servers side by side. Server commands can derive stable per-ticket ports from `base_port + ticket_number`.
+
+If a server defines `url`, Code Factory prints it in the summary table. Browser
+launch defaults to enabled when `url` is present and can be disabled per server
+with `open_browser: false`.
 
 `cf steer`
 
@@ -147,9 +163,26 @@ uv run cf steer ENG-901 "Focus on failing tests first."
 - Tracker configuration
 - Active and terminal states
 - Workspace root and lifecycle hooks
+- Review worktree/dev-server config for operator PR validation
 - Codex app-server command, model selection, and sandbox settings
 - State-specific prompt sections, transition policies, and harness-run auto transitions
 - Optional HTTP server host/port
+
+Operator review environments are configured with a top-level `review:` section:
+
+```yaml
+review:
+  temp_root: /tmp/code-factory-review
+  prepare: pnpm install
+  servers:
+    - name: web
+      base_port: 3000
+      command: pnpm dev --port {{ review.port }}
+      url: http://127.0.0.1:{{ review.port }}
+      open_browser: false
+```
+
+The review template context includes `review.target`, `review.kind`, `review.ticket_identifier`, `review.ticket_number`, `review.worktree`, `review.ref`, and `review.port`. Matching `CF_REVIEW_*` environment variables are exported for `prepare` and server commands.
 
 `WORKFLOW.md` uses the top-level `states` mapping as the source of truth for
 active workflow states:

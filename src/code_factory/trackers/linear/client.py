@@ -20,6 +20,7 @@ from .queries import (
     COMMENTS_QUERY,
     CREATE_COMMENT_MUTATION,
     QUERY,
+    QUERY_BY_IDENTIFIER,
     QUERY_BY_IDS,
     STATE_LOOKUP_QUERY,
     UPDATE_COMMENT_MUTATION,
@@ -77,6 +78,21 @@ class LinearClient:
         self._require_credentials()
         assignee_filter = await self._routing_assignee_filter()
         return await self._fetch_issue_states(ids, assignee_filter)
+
+    async def fetch_issue_by_identifier(self, identifier: str) -> Issue | None:
+        self._require_credentials()
+        body = await self.graphql(
+            QUERY_BY_IDENTIFIER,
+            {
+                "projectSlug": self._settings.tracker.project_slug,
+                "identifier": identifier,
+                "relationFirst": self.ISSUE_PAGE_SIZE,
+            },
+        )
+        issues = decode_linear_response(body, None)
+        if not issues:
+            return None
+        return issues[0]
 
     async def fetch_issue_comments(self, issue_id: str) -> list[IssueComment]:
         self._require_credentials()

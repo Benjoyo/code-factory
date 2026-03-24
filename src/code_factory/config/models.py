@@ -102,6 +102,26 @@ class ServerSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class ReviewServerSettings:
+    """One dev server command to run inside a review worktree."""
+
+    name: str
+    command: str
+    base_port: int | None = None
+    url: str | None = None
+    open_browser: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewSettings:
+    """Operator-facing review workspace configuration."""
+
+    temp_root: str | None = None
+    prepare: str | None = None
+    servers: tuple[ReviewServerSettings, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Settings:
     """Root settings model consumed by the orchestrator snapshots."""
 
@@ -113,3 +133,4 @@ class Settings:
     hooks: HooksSettings
     observability: ObservabilitySettings
     server: ServerSettings
+    review: ReviewSettings

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
@@ -12,15 +11,19 @@ from rich.console import Console
 
 from .application import CodeFactoryService
 from .application.bootstrap import initialize_project, prompt_project_init
-from .config.defaults import DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT
-from .errors import ControlRequestError
-from .observability.api.client import ControlEndpoint, steer_issue
-from .observability.runtime_metadata import read_runtime_metadata
-from .workflow.loader import DEFAULT_WORKFLOW_FILENAME, workflow_file_path
+from .errors import ControlRequestError, ReviewError
+from .observability.api.client import steer_issue
+from .observability.cli_support import (
+    CLIConfig,
+    build_cli_config,
+    resolve_control_endpoint,
+)
+from .workflow.loader import DEFAULT_WORKFLOW_FILENAME
+from .workspace.review_runner import run_review_session
 
 ACK_FLAG = "--no-guardrails"
 _HELP_FLAGS = frozenset({"-h", "--help"})
-_CLI_COMMANDS = frozenset({"init", "serve", "steer"})
+_CLI_COMMANDS = frozenset({"init", "review", "serve", "steer"})
 
 app = typer.Typer(
     add_completion=False,
@@ -30,15 +33,6 @@ app = typer.Typer(
     ),
     rich_markup_mode="markdown",
 )
-
-
-@dataclass(frozen=True, slots=True)
-class CLIConfig:
-    """Parsed CLI inputs needed to construct the long-running service."""
-
-    workflow_path: str
-    logs_root: str | None
-    port: int | None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -66,41 +60,6 @@ def normalize_cli_args(argv: list[str]) -> list[str]:
     if argv[0] in _CLI_COMMANDS:
         return argv
     return ["serve", *argv]
-
-
-def build_cli_config(
-    workflow_path: Path | None,
-    logs_root: Path | None,
-    port: int | None,
-) -> CLIConfig:
-    """Resolve CLI path inputs into the normalized runtime configuration."""
-
-    selected_workflow = workflow_path or Path(workflow_file_path())
-    resolved_logs_root = (
-        None if logs_root is None else str(logs_root.expanduser().resolve())
-    )
-    return CLIConfig(
-        workflow_path=str(selected_workflow.expanduser().resolve()),
-        logs_root=resolved_logs_root,
-        port=port,
-    )
-
-
-def resolve_control_endpoint(
-    workflow_path: Path | None, port: int | None
-) -> tuple[ControlEndpoint, str]:
-    """Locate the local control-plane endpoint for a workflow."""
-
-    resolved_workflow = build_cli_config(workflow_path, None, None).workflow_path
-    if isinstance(port, int):
-        return ControlEndpoint(DEFAULT_SERVER_HOST, port), resolved_workflow
-    metadata = read_runtime_metadata(resolved_workflow)
-    if isinstance(metadata, dict):
-        host = metadata.get("host")
-        bound_port = metadata.get("port")
-        if isinstance(host, str) and isinstance(bound_port, int):
-            return ControlEndpoint(host, bound_port), resolved_workflow
-    return ControlEndpoint(DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT), resolved_workflow
 
 
 def run_service(config: CLIConfig) -> int:
@@ -206,6 +165,35 @@ def init_command(
             "[yellow]The bundled prompt body still contains Linear-specific guidance. "
             "Review WORKFLOW.md before first use.[/yellow]"
         )
+
+
+@app.command("review")
+def review_command(
+    targets: Annotated[
+        list[str],
+        typer.Argument(help="Ticket identifiers and/or `main` to launch for review."),
+    ],
+    workflow_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--workflow",
+            help="Workflow path used to load review config. Defaults to `./WORKFLOW.md`.",
+        ),
+    ] = None,
+    keep: Annotated[
+        bool,
+        typer.Option("--keep", help="Keep created review worktrees after exit."),
+    ] = False,
+) -> None:
+    """Create review worktrees and start configured dev servers."""
+
+    resolved_workflow = build_cli_config(workflow_path, None, None).workflow_path
+    try:
+        asyncio.run(
+            run_review_session(resolved_workflow, targets, keep=keep, console=Console())
+        )
+    except ReviewError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @app.command("steer")

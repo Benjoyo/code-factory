@@ -23,6 +23,7 @@ from .models import (
     Settings,
     WorkspaceSettings,
 )
+from .review import parse_review_settings
 from .utils import (
     boolean,
     normalize_state_limits,
@@ -120,6 +121,7 @@ def parse_settings(config: Mapping[str, Any]) -> Settings:
                 server_raw.get("host"), "server.host", DEFAULT_SERVER_HOST
             ),
         ),
+        review=parse_review_settings(config),
     )
 
 

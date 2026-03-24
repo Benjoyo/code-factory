@@ -66,6 +66,37 @@ query CodeFactoryLinearIssuesById($ids: [ID!]!, $first: Int!, $relationFirst: In
 }
 """
 
+QUERY_BY_IDENTIFIER = """
+query CodeFactoryLinearIssueByIdentifier($projectSlug: String!, $identifier: String!, $relationFirst: Int!) {
+  issues(filter: {project: {slugId: {eq: $projectSlug}}, identifier: {eq: $identifier}}, first: 2) {
+    nodes {
+      id
+      identifier
+      title
+      description
+      priority
+      state { name }
+      branchName
+      url
+      assignee { id }
+      labels { nodes { name } }
+      inverseRelations(first: $relationFirst) {
+        nodes {
+          type
+          issue {
+            id
+            identifier
+            state { name }
+          }
+        }
+      }
+      createdAt
+      updatedAt
+    }
+  }
+}
+"""
+
 COMMENTS_QUERY = """
 query CodeFactoryIssueComments($issueId: String!, $first: Int!, $after: String) {
   issue(id: $issueId) {

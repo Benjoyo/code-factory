@@ -69,3 +69,13 @@ class ControlRequestError(CodeFactoryError):
 
     def __str__(self) -> str:
         return self.message
+
+
+@dataclass(slots=True)
+class ReviewError(CodeFactoryError):
+    """Operator-facing review workspace failure with a concise message."""
+
+    message: str
+
+    def __str__(self) -> str:
+        return self.message

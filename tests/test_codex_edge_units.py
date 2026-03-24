@@ -626,6 +626,32 @@ async def test_turn_handlers_cover_stream_and_input_edge_paths(
 
 
 @pytest.mark.asyncio
+async def test_session_stop_unblocks_waiting_turn_and_pending_requests() -> None:
+    session = make_session()
+    pending = asyncio.get_running_loop().create_future()
+    done_pending = asyncio.get_running_loop().create_future()
+    done_pending.set_result({"ok": True})
+    session.pending_requests[7] = pending
+    session.pending_requests[8] = done_pending
+
+    wait_task = asyncio.create_task(
+        await_turn_completion(
+            session,
+            lambda message: collect_messages(message, []),
+            cast(Any, object()),
+        )
+    )
+    await asyncio.sleep(0)
+    await session.stop()
+
+    with pytest.raises(AppServerError, match="port_exit"):
+        await wait_task
+    with pytest.raises(AppServerError, match="port_exit"):
+        await pending
+    assert done_pending.result() == {"ok": True}
+
+
+@pytest.mark.asyncio
 async def test_protocol_and_client_bootstrap_edge_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

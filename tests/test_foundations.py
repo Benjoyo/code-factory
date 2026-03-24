@@ -364,6 +364,22 @@ def test_configure_logging_adds_stream_and_file_handlers(
 def test_configure_logging_reuses_existing_handlers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    created_handlers: list[Any] = []
+
+    class FakeFileHandler:
+        def __init__(self, path: Path, maxBytes: int, backupCount: int) -> None:
+            self.path = Path(path)
+            self.maxBytes = maxBytes
+            self.backupCount = backupCount
+            self.formatter = None
+            created_handlers.append(self)
+
+        def setFormatter(self, formatter: Any) -> None:
+            self.formatter = formatter
+
+    monkeypatch.setattr(
+        "code_factory.application.logging.RotatingFileHandler", FakeFileHandler
+    )
     root_logger = logging.getLogger()
     original_handlers = list(root_logger.handlers)
     try:
@@ -372,7 +388,45 @@ def test_configure_logging_reuses_existing_handlers(
         root_logger.addHandler(logging.NullHandler())
         log_path = configure_logging(str(tmp_path))
         assert log_path == tmp_path / "log" / "code-factory.log"
+        assert len(created_handlers) == 1
+        assert created_handlers[0].path == log_path
         assert configure_logging(None) is None
+    finally:
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        for handler in original_handlers:
+            root_logger.addHandler(handler)
+
+
+def test_configure_logging_does_not_duplicate_existing_file_handler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    created_handlers: list[Any] = []
+
+    class FakeFileHandler:
+        def __init__(self, path: Path, maxBytes: int, backupCount: int) -> None:
+            self.path = Path(path)
+            self.maxBytes = maxBytes
+            self.backupCount = backupCount
+            self.formatter = None
+            created_handlers.append(self)
+
+        def setFormatter(self, formatter: Any) -> None:
+            self.formatter = formatter
+
+    monkeypatch.setattr(
+        "code_factory.application.logging.RotatingFileHandler", FakeFileHandler
+    )
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    try:
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        first_path = configure_logging(str(tmp_path))
+        second_path = configure_logging(str(tmp_path))
+        assert first_path == tmp_path / "log" / "code-factory.log"
+        assert second_path == first_path
+        assert len(created_handlers) == 1
     finally:
         for handler in list(root_logger.handlers):
             root_logger.removeHandler(handler)
@@ -1150,6 +1204,11 @@ def test_state_profiles_and_result_helpers_cover_edge_paths(tmp_path: Path) -> N
     assert progress_profile.allows_next_state("Done") is False
     assert profiles["merging"].hooks.before_complete is None
     assert profiles["merging"].hooks.before_complete_max_feedback_loops == 3
+    assert structured_turn_output_schema(("Done", "Review"))["required"] == [
+        "decision",
+        "summary",
+        "next_state",
+    ]
     assert structured_turn_output_schema(("Done", "Review"))["properties"][
         "next_state"
     ] == {"enum": ["Done", "Review", None]}

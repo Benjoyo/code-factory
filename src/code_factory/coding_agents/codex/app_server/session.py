@@ -7,6 +7,7 @@ import contextlib
 from dataclasses import dataclass, field
 from typing import Any
 
+from ....errors import AppServerError
 from ....runtime.subprocess import ProcessTree
 
 
@@ -50,7 +51,14 @@ class AppServerSession:
         """Shut down the subprocess and cancel background readers cleanly."""
         self.stopping = True
         await self.process_tree.terminate()
-        await self.stdout_queue.put(("exit", self.process_tree.process.returncode or 0))
+        exit_code = self.process_tree.process.returncode or 0
+        await self.stdout_queue.put(("exit", exit_code))
+        await self.event_queue.put(("exit", exit_code))
+        error = AppServerError(("port_exit", exit_code))
+        for request_id in list(self.pending_requests):
+            future = self.pending_requests.pop(request_id)
+            if not future.done():
+                future.set_exception(error)
         for task in (
             self.routing_task,
             self.stdout_task,

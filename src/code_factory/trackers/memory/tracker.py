@@ -47,6 +47,11 @@ class MemoryTracker:
         wanted = set(issue_ids)
         return [issue for issue in self._issues if issue.id in wanted]
 
+    async def fetch_issue_by_identifier(self, identifier: str) -> Issue | None:
+        return next(
+            (issue for issue in self._issues if issue.identifier == identifier), None
+        )
+
     async def fetch_issue_comments(self, issue_id: str) -> list[IssueComment]:
         return list(self._comments_by_issue.get(issue_id, ()))
 

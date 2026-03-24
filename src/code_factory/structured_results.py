@@ -41,7 +41,7 @@ def structured_turn_output_schema(
     return {
         "type": "object",
         "additionalProperties": False,
-        "required": ["decision", "summary"],
+        "required": ["decision", "summary", "next_state"],
         "properties": {
             "decision": {
                 "type": "string",
