@@ -81,7 +81,7 @@ from code_factory.workflow.template import (
     WorkflowTemplateValues,
     render_default_workflow,
 )
-from code_factory.workspace.hooks import run_hook
+from code_factory.workspace.hooks import _hook_environment, run_hook
 from code_factory.workspace.manager import WorkspaceManager
 from code_factory.workspace.paths import (
     canonicalize,
@@ -1070,6 +1070,42 @@ def test_multi_state_workflow_helper_validation_paths() -> None:
             {"default": "Body"},
             "auto_next_state must not be blank",
         ),
+        (
+            {
+                "states": {
+                    "Todo": {
+                        "prompt": "default",
+                        "hooks": {"before_complete_max_feedback_loops": 2},
+                    }
+                }
+            },
+            {"default": "Body"},
+            "before_complete_max_feedback_loops requires states.Todo.hooks.before_complete",
+        ),
+        (
+            {
+                "states": {
+                    "Todo": {
+                        "prompt": "default",
+                        "hooks": {"before_complete": "check", "unknown": "x"},
+                    }
+                }
+            },
+            {"default": "Body"},
+            "states.Todo.hooks has unsupported keys: unknown",
+        ),
+        (
+            {
+                "states": {
+                    "Todo": {
+                        "auto_next_state": "In Progress",
+                        "hooks": {"before_complete": "check"},
+                    }
+                }
+            },
+            {"default": "Body"},
+            "states.Todo.hooks is not supported for auto states",
+        ),
     ],
 )
 def test_parse_state_profiles_validation_paths(
@@ -1091,7 +1127,12 @@ def test_state_profiles_and_result_helpers_cover_edge_paths(tmp_path: Path) -> N
                     "allowed_next_states": ["Human Review"],
                     "failure_state": "Blocked",
                     "codex": {"reasoning_effort": "high"},
+                    "hooks": {
+                        "before_complete": "uv run pytest -q",
+                        "before_complete_max_feedback_loops": 0,
+                    },
                 },
+                "Merging": {"prompt": "default"},
             }
         },
         {"default": "Body"},
@@ -1103,8 +1144,12 @@ def test_state_profiles_and_result_helpers_cover_edge_paths(tmp_path: Path) -> N
     assert progress_profile.is_agent_run is True
     assert progress_profile.codex_model("gpt-5.4") == "gpt-5.4"
     assert progress_profile.codex_reasoning_effort("low") == "high"
+    assert progress_profile.hooks.before_complete == "uv run pytest -q"
+    assert progress_profile.hooks.before_complete_max_feedback_loops == 0
     assert progress_profile.allows_next_state("Human Review") is True
     assert progress_profile.allows_next_state("Done") is False
+    assert profiles["merging"].hooks.before_complete is None
+    assert profiles["merging"].hooks.before_complete_max_feedback_loops == 3
     assert structured_turn_output_schema(("Done", "Review"))["properties"][
         "next_state"
     ] == {"enum": ["Done", "Review", None]}
@@ -1511,9 +1556,9 @@ async def test_run_hook_handles_success_timeout_and_failure(
     calls: list[Any] = []
 
     class FakeProcess:
-        async def capture_output(self, timeout_ms: int) -> tuple[int, str]:
+        async def capture_streams(self, timeout_ms: int) -> tuple[int, str, str]:
             calls.append(("capture", timeout_ms))
-            return 0, "ok"
+            return 0, "ok", ""
 
         async def terminate(self) -> None:
             calls.append("terminate")
@@ -1533,9 +1578,11 @@ async def test_run_hook_handles_success_timeout_and_failure(
         "before_run",
         fatal=True,
     )
+    assert calls[0][1]["env"]["CF_ISSUE_ID"] == "i-1"
+    assert calls[0][1]["env"]["CF_ISSUE_IDENTIFIER"] == "MT-1"
 
     class TimeoutProcess(FakeProcess):
-        async def capture_output(self, timeout_ms: int) -> tuple[int, str]:
+        async def capture_streams(self, timeout_ms: int) -> tuple[int, str, str]:
             raise TimeoutError
 
     async def spawn_timeout(*args: Any, **kwargs: Any) -> TimeoutProcess:
@@ -1555,8 +1602,8 @@ async def test_run_hook_handles_success_timeout_and_failure(
         )
 
     class FailureProcess(FakeProcess):
-        async def capture_output(self, timeout_ms: int) -> tuple[int, str]:
-            return 17, "boom"
+        async def capture_streams(self, timeout_ms: int) -> tuple[int, str, str]:
+            return 17, "", "boom"
 
     async def spawn_failure(*args: Any, **kwargs: Any) -> FailureProcess:
         return FailureProcess()
@@ -1573,6 +1620,17 @@ async def test_run_hook_handles_success_timeout_and_failure(
             "after_run",
             fatal=False,
         )
+
+
+def test_hook_environment_handles_optional_values() -> None:
+    hook_env = _hook_environment(
+        {"issue_id": None, "issue_identifier": None},
+        {"CF_RESULT_NEXT_STATE": "Done", "CF_RESULT_DECISION": None},
+    )
+    assert "CF_ISSUE_ID" not in hook_env
+    assert "CF_ISSUE_IDENTIFIER" not in hook_env
+    assert hook_env["CF_RESULT_NEXT_STATE"] == "Done"
+    assert "CF_RESULT_DECISION" not in hook_env
 
 
 @pytest.mark.asyncio

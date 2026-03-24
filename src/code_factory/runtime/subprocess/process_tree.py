@@ -25,6 +25,7 @@ class ProcessTree:
         command: str,
         *,
         cwd: str,
+        env: dict[str, str] | None = None,
         stdin: Any = None,
         stdout: Any = asyncio.subprocess.PIPE,
         stderr: Any = asyncio.subprocess.PIPE,
@@ -32,6 +33,7 @@ class ProcessTree:
         """Start a shell command in a new process group (or Windows job) at a path."""
         kwargs: dict[str, Any] = {
             "cwd": cwd,
+            "env": env,
             "stdin": stdin,
             "stdout": stdout,
             "stderr": stderr,
@@ -97,6 +99,14 @@ class ProcessTree:
 
     async def capture_output(self, timeout_ms: int) -> tuple[int, str]:
         """Read stdout/stderr and decode them after enforcing a timeout."""
+        status, stdout, stderr = await self.capture_streams(timeout_ms)
+        return status, f"{stdout}{stderr}"
+
+    async def capture_streams(self, timeout_ms: int) -> tuple[int, str, str]:
+        """Read stdout/stderr separately after enforcing a timeout."""
         stdout, stderr = await self.communicate(timeout_ms)
-        output = b"".join(part for part in (stdout, stderr) if part)
-        return self.process.returncode or 0, output.decode("utf-8", errors="replace")
+        return (
+            self.process.returncode or 0,
+            stdout.decode("utf-8", errors="replace"),
+            stderr.decode("utf-8", errors="replace"),
+        )

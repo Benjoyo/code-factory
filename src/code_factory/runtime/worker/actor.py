@@ -13,12 +13,19 @@ from ...coding_agents import (
 )
 from ...issues import Issue, normalize_issue_state
 from ...prompts import build_prompt
-from ...structured_results import structured_turn_output_schema
+from ...structured_results import StructuredTurnResult, structured_turn_output_schema
 from ...trackers.base import Tracker, build_tracker
 from ...workflow.models import WorkflowSnapshot
 from ...workspace import WorkspaceManager
+from ...workspace.hooks import HookCommandResult, run_hook_command
 from ..messages import AgentWorkerUpdate, WorkerExited
 from ..support import maybe_aclose
+from .completion import (
+    before_complete_feedback_prompt,
+    before_complete_hook_env,
+    before_complete_issue_context,
+    emit_before_complete_update,
+)
 from .results import build_prompt_issue_data, persist_state_result
 
 LOGGER = logging.getLogger(__name__)
@@ -142,14 +149,7 @@ class IssueWorker:
             )
         if self.stop_event.is_set():
             return
-        prompt = await self._state_prompt(current_issue)
-        result = await self._require_agent_runtime().run_turn(
-            session,
-            prompt,
-            current_issue,
-            on_message=self._on_agent_message,
-            output_schema=structured_turn_output_schema(profile.allowed_next_states),
-        )
+        result = await self._run_state_turns(session, current_issue, profile)
         if self.stop_event.is_set():
             return
         target_state = self._target_state(
@@ -178,6 +178,75 @@ class IssueWorker:
             self.workflow_snapshot,
             attempt=self.attempt,
             issue_data=issue_data,
+        )
+
+    async def _run_state_turns(
+        self, session: CodingAgentSession, issue: Issue, profile
+    ) -> StructuredTurnResult:
+        prompt = await self._state_prompt(issue)
+        feedback_attempts = 0
+        while True:
+            result = await self._require_agent_runtime().run_turn(
+                session,
+                prompt,
+                issue,
+                on_message=self._on_agent_message,
+                output_schema=structured_turn_output_schema(
+                    profile.allowed_next_states
+                ),
+            )
+            if self.stop_event.is_set():
+                return result
+            hook = profile.hooks.before_complete
+            if result.decision != "transition" or not hook:
+                return result
+            hook_result = await self._run_before_complete_hook(issue, result, hook)
+            if hook_result.status == 0:
+                await emit_before_complete_update(
+                    self.queue, self.issue.id, "before_complete_passed", hook_result
+                )
+                return result
+            if hook_result.status != 2:
+                LOGGER.warning(
+                    "before_complete hook failed but completion will continue issue_id=%s issue_identifier=%s workspace=%s status=%s stderr=%s",
+                    issue.id or "n/a",
+                    issue.identifier or "n/a",
+                    self.workspace_path or "n/a",
+                    hook_result.status,
+                    hook_result.stderr.rstrip() or "<no stderr>",
+                )
+                await emit_before_complete_update(
+                    self.queue, self.issue.id, "before_complete_warned", hook_result
+                )
+                return result
+            await emit_before_complete_update(
+                self.queue, self.issue.id, "before_complete_blocked", hook_result
+            )
+            feedback_attempts += 1
+            if feedback_attempts > profile.hooks.before_complete_max_feedback_loops:
+                raise RuntimeError("before_complete_feedback_limit_exhausted")
+            prompt = before_complete_feedback_prompt(
+                result,
+                hook_result.stderr,
+                feedback_attempts,
+                profile.hooks.before_complete_max_feedback_loops,
+            )
+
+    async def _run_before_complete_hook(
+        self,
+        issue: Issue,
+        result: StructuredTurnResult,
+        command: str,
+    ) -> HookCommandResult:
+        if self.workspace_path is None:
+            raise RuntimeError("missing_workspace_for_before_complete")
+        return await run_hook_command(
+            self.workflow_snapshot.settings,
+            command,
+            self.workspace_path,
+            before_complete_issue_context(issue),
+            "before_complete",
+            env=before_complete_hook_env(issue, result),
         )
 
     def _target_state(self, issue: Issue, decision: str, next_state: str | None) -> str:

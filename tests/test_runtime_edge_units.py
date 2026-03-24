@@ -124,8 +124,8 @@ async def test_observability_workspace_and_hook_edge_paths(
     )
 
     class FailingHookProcess:
-        async def capture_output(self, _timeout_ms: int) -> tuple[int, str]:
-            return 1, "hook failed"
+        async def capture_streams(self, _timeout_ms: int) -> tuple[int, str, str]:
+            return 1, "", "hook failed"
 
         async def terminate(self) -> None:
             return None

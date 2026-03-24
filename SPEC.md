@@ -579,6 +579,9 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `states.<state>.prompt`: string or non-empty list of strings referencing prompt section ids
 - `states.<state>.codex.model`: string or null, optional
 - `states.<state>.codex.reasoning_effort`: string or null, optional
+- `states.<state>.hooks.before_complete`: shell script or null, optional for agent-run states
+- `states.<state>.hooks.before_complete_max_feedback_loops`: integer, default `3`, optional for
+  agent-run states
 - `polling.interval_ms`: integer, default `30000`
 - `workspace.root`: path, default `<system-temp>/code-factory-workspaces`
 - `hooks.after_create`: shell script or null
@@ -1989,6 +1992,11 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - `before_run` hook runs before each attempt and failure/timeouts abort the current attempt
 - `after_run` hook runs after each attempt and failure/timeouts are logged and ignored
 - `before_remove` hook runs on cleanup and failures/timeouts are ignored
+- `states.<state>.hooks.before_complete` runs after a transition result and before state
+  persistence/tracker transition
+- `states.<state>.hooks.before_complete` exit status `0` accepts completion, status `2` feeds
+  `stderr` back to the same session for another turn up to the configured loop cap, and other
+  non-zero statuses log a warning but allow completion
 - Workspace path sanitization and root containment invariants are enforced before agent launch
 - Agent launch uses the per-issue workspace path as cwd and rejects out-of-root paths
 

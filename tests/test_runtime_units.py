@@ -47,6 +47,10 @@ from code_factory.runtime.orchestration.tokens import (
 )
 from code_factory.runtime.subprocess.process_tree import ProcessTree
 from code_factory.runtime.worker.actor import IssueWorker
+from code_factory.runtime.worker.completion import (
+    before_complete_feedback_prompt,
+    emit_before_complete_update,
+)
 from code_factory.runtime.worker.results import (
     build_prompt_issue_data,
     parse_results_by_state,
@@ -55,6 +59,7 @@ from code_factory.runtime.worker.results import (
 from code_factory.runtime.worker.utils import tracker_state_is_active
 from code_factory.structured_results import StructuredTurnResult
 from code_factory.trackers.memory import MemoryTracker
+from code_factory.workspace.hooks import HookCommandResult
 from code_factory.workspace.manager import WorkspaceManager
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
@@ -673,6 +678,265 @@ async def test_issue_worker_state_edge_paths_and_result_helpers(
         )
     assert tracker_state_is_active(snapshot.settings, "In Progress") is True
     assert tracker_state_is_active(snapshot.settings, "Done") is False
+
+
+@pytest.mark.asyncio
+async def test_issue_worker_before_complete_hook_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "allowed_next_states": ["Done"],
+                    "hooks": {
+                        "before_complete": "uv run pytest -q",
+                        "before_complete_max_feedback_loops": 1,
+                    },
+                },
+            },
+        )
+    )
+
+    class Session:
+        async def stop(self) -> None:
+            return None
+
+    class FakeRuntime:
+        def __init__(self, results: list[StructuredTurnResult]) -> None:
+            self.results = list(results)
+            self.prompts: list[str] = []
+            self.sessions: list[Any] = []
+
+        async def start_session(self, workspace: str) -> Session:
+            return Session()
+
+        async def steer(self, session: Any, message: str) -> str | None:
+            return None
+
+        async def run_turn(
+            self,
+            session: Any,
+            prompt: str,
+            issue: Any,
+            *,
+            on_message=None,
+            output_schema=None,
+        ) -> StructuredTurnResult:
+            self.sessions.append(session)
+            self.prompts.append(prompt)
+            return self.results.pop(0)
+
+    async def run_worker(
+        *,
+        tracker: MemoryTracker,
+        runtime: FakeRuntime,
+    ) -> IssueWorker:
+        worker = IssueWorker(
+            issue=make_issue(id="issue-1", identifier="ENG-1"),
+            workflow_snapshot=snapshot,
+            orchestrator_queue=asyncio.Queue(),
+            tracker=tracker,
+        )
+        worker._agent_runtime = runtime  # type: ignore[assignment]
+        worker.workspace_path = str(tmp_path / "workspace")
+        return worker
+
+    hook_calls: list[dict[str, Any]] = []
+    hook_results: list[HookCommandResult] = [
+        HookCommandResult(status=2, stdout="lint running\n", stderr="fix lint\n"),
+        HookCommandResult(status=0, stdout="all green\n", stderr=""),
+    ]
+
+    async def fake_hook_command(
+        settings: Any,
+        command: str,
+        workspace: str,
+        issue_context: dict[str, str | None],
+        hook_name: str,
+        *,
+        env: dict[str, str | None] | None = None,
+    ) -> HookCommandResult:
+        hook_calls.append(
+            {
+                "command": command,
+                "workspace": workspace,
+                "issue_context": issue_context,
+                "hook_name": hook_name,
+                "env": env,
+            }
+        )
+        return hook_results.pop(0)
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.actor.run_hook_command", fake_hook_command
+    )
+
+    retry_tracker = MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")])
+    retry_runtime = FakeRuntime(
+        [
+            StructuredTurnResult(
+                decision="transition",
+                summary="first pass",
+                next_state="Done",
+            ),
+            StructuredTurnResult(
+                decision="transition",
+                summary="second pass",
+                next_state="Done",
+            ),
+        ]
+    )
+    retry_worker = await run_worker(tracker=retry_tracker, runtime=retry_runtime)
+    await retry_worker._run_state(Session())
+    updated_issue = await retry_tracker.fetch_issue_states_by_ids(["issue-1"])
+    assert updated_issue[0].state == "Done"
+    assert hook_calls[0]["hook_name"] == "before_complete"
+    assert hook_calls[0]["env"] == {
+        "CF_ISSUE_STATE": "In Progress",
+        "CF_RESULT_DECISION": "transition",
+        "CF_RESULT_NEXT_STATE": "Done",
+    }
+    assert len(retry_runtime.prompts) == 2
+    assert "fix lint" in retry_runtime.prompts[1]
+    assert retry_runtime.sessions[0] is retry_runtime.sessions[1]
+
+    warned_results = [HookCommandResult(status=1, stdout="", stderr="tests flaky\n")]
+
+    async def fake_warn_hook(
+        settings: Any,
+        command: str,
+        workspace: str,
+        issue_context: dict[str, str | None],
+        hook_name: str,
+        *,
+        env: dict[str, str | None] | None = None,
+    ) -> HookCommandResult:
+        return warned_results.pop(0)
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.actor.run_hook_command", fake_warn_hook
+    )
+    warned_tracker = MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")])
+    warned_runtime = FakeRuntime(
+        [StructuredTurnResult(decision="transition", summary="warn", next_state="Done")]
+    )
+    warned_worker = await run_worker(tracker=warned_tracker, runtime=warned_runtime)
+    with caplog.at_level("WARNING"):
+        await warned_worker._run_state(Session())
+    warned_issue = await warned_tracker.fetch_issue_states_by_ids(["issue-1"])
+    assert warned_issue[0].state == "Done"
+    assert any(
+        "before_complete hook failed but completion will continue" in record.message
+        for record in caplog.records
+    )
+
+    blocked_hook_calls: list[str] = []
+
+    async def fake_blocked_hook(*args: Any, **kwargs: Any) -> HookCommandResult:
+        blocked_hook_calls.append("called")
+        return HookCommandResult(status=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.actor.run_hook_command", fake_blocked_hook
+    )
+    blocked_tracker = MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")])
+    blocked_runtime = FakeRuntime(
+        [StructuredTurnResult(decision="blocked", summary="blocked", next_state="Done")]
+    )
+    blocked_worker = await run_worker(tracker=blocked_tracker, runtime=blocked_runtime)
+    await blocked_worker._run_state(Session())
+    blocked_issue = await blocked_tracker.fetch_issue_states_by_ids(["issue-1"])
+    assert blocked_issue[0].state == "Done"
+    assert blocked_hook_calls == []
+
+    exhausted_results = [HookCommandResult(status=2, stdout="", stderr="still broken")]
+
+    async def fake_exhausted_hook(
+        settings: Any,
+        command: str,
+        workspace: str,
+        issue_context: dict[str, str | None],
+        hook_name: str,
+        *,
+        env: dict[str, str | None] | None = None,
+    ) -> HookCommandResult:
+        return exhausted_results[0]
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.actor.run_hook_command", fake_exhausted_hook
+    )
+    exhausted_tracker = MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")])
+    exhausted_runtime = FakeRuntime(
+        [
+            StructuredTurnResult(
+                decision="transition",
+                summary="fail",
+                next_state="Done",
+            ),
+            StructuredTurnResult(
+                decision="transition",
+                summary="still failing",
+                next_state="Done",
+            ),
+        ]
+    )
+    exhausted_worker = await run_worker(
+        tracker=exhausted_tracker, runtime=exhausted_runtime
+    )
+    with pytest.raises(RuntimeError, match="before_complete_feedback_limit_exhausted"):
+        await exhausted_worker._run_state(Session())
+    exhausted_issue = await exhausted_tracker.fetch_issue_states_by_ids(["issue-1"])
+    assert exhausted_issue[0].state == "In Progress"
+
+    missing_workspace_worker = await run_worker(
+        tracker=MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")]),
+        runtime=FakeRuntime(
+            [
+                StructuredTurnResult(
+                    decision="transition", summary="done", next_state="Done"
+                )
+            ]
+        ),
+    )
+    missing_workspace_worker.workspace_path = None
+    with pytest.raises(RuntimeError, match="missing_workspace_for_before_complete"):
+        await missing_workspace_worker._run_before_complete_hook(
+            make_issue(id="issue-1", identifier="ENG-1"),
+            StructuredTurnResult(
+                decision="transition",
+                summary="done",
+                next_state="Done",
+            ),
+            "uv run pytest -q",
+        )
+
+
+@pytest.mark.asyncio
+async def test_before_complete_helper_edge_paths() -> None:
+    prompt = before_complete_feedback_prompt(
+        StructuredTurnResult(
+            decision="transition",
+            summary="done",
+            next_state="Done",
+        ),
+        "x" * 12_001,
+        1,
+        3,
+    )
+    assert "truncated: before_complete stderr exceeded 12000 characters" in prompt
+
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+    await emit_before_complete_update(
+        queue,
+        None,
+        "before_complete_blocked",
+        HookCommandResult(status=2, stdout="", stderr="fix this"),
+    )
+    assert queue.empty()
 
 
 @pytest.mark.asyncio

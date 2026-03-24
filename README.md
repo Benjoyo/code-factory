@@ -159,10 +159,18 @@ active workflow states:
   `auto_next_state`.
 - Agent-run states may optionally define `allowed_next_states` and
   `failure_state`.
+- Agent-run states may optionally define `hooks.before_complete` and
+  `hooks.before_complete_max_feedback_loops` to enforce per-state completion
+  gates such as tests or lint checks.
 - When `allowed_next_states` is set, the turn schema constrains `next_state` to
   that set.
 - When `failure_state` is set, blocked results always route there regardless of
   any agent-supplied `next_state`.
+- `hooks.before_complete` runs after the agent emits a transition result but
+  before the harness persists the result or updates the tracker state.
+- `before_complete` exit code `0` accepts completion, `2` feeds `stderr` back
+  into the same session for another turn up to the configured loop cap, and any
+  other non-zero status logs a warning but still allows completion.
 - The Markdown body must be split into named `# prompt: <id>` sections for any
   agent-run states.
 - Only `codex.model` and `codex.reasoning_effort` can be overridden per
