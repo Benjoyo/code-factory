@@ -195,6 +195,10 @@ active workflow states:
 - Agent-run states may optionally define `hooks.before_complete` and
   `hooks.before_complete_max_feedback_loops` to enforce per-state completion
   gates such as tests or lint checks.
+- Agent-run states may optionally define `codex.skills` as a repo-local
+  allowlist of direct child directories under `.agents/skills`; omitted or
+  `null` keeps all repo-local skills available, and `[]` disables all
+  repo-local skills for that state.
 - When `allowed_next_states` is set, the turn schema constrains `next_state` to
   that set.
 - When `failure_state` is set, blocked results always route there regardless of
@@ -206,8 +210,8 @@ active workflow states:
   other non-zero status logs a warning but still allows completion.
 - The Markdown body must be split into named `# prompt: <id>` sections for any
   agent-run states.
-- Only `codex.model` and `codex.reasoning_effort` can be overridden per
-  agent-run state.
+- Only `codex.model`, `codex.reasoning_effort`, and repo-local `codex.skills`
+  can be overridden per agent-run state.
 - Agent-run states finish one workflow state per turn using structured output;
   the harness validates the result, persists a state-result comment, and applies
   the tracker transition.

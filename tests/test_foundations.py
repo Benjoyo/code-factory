@@ -1073,6 +1073,33 @@ def test_multi_state_workflow_helper_validation_paths() -> None:
             "unsupported keys",
         ),
         (
+            {"states": {"Todo": {"prompt": "default", "codex": {"skills": "x"}}}},
+            {"default": "Body"},
+            "states.Todo.codex.skills must be a list of strings",
+        ),
+        (
+            {"states": {"Todo": {"prompt": "default", "codex": {"skills": [1]}}}},
+            {"default": "Body"},
+            "states.Todo.codex.skills must be a list of strings",
+        ),
+        (
+            {"states": {"Todo": {"prompt": "default", "codex": {"skills": [" "]}}}},
+            {"default": "Body"},
+            "states.Todo.codex.skills entries must not be blank",
+        ),
+        (
+            {
+                "states": {
+                    "Todo": {
+                        "prompt": "default",
+                        "codex": {"skills": ["commit", " commit "]},
+                    }
+                }
+            },
+            {"default": "Body"},
+            "states.Todo.codex.skills must not contain duplicates",
+        ),
+        (
             {"states": {"Todo": {"prompt": "default", "auto_next_state": "Done"}}},
             {"default": "Body"},
             "cannot define both prompt and auto_next_state",
@@ -1084,6 +1111,11 @@ def test_multi_state_workflow_helper_validation_paths() -> None:
         ),
         (
             {"states": {"Todo": {"auto_next_state": "Done", "codex": {"model": "x"}}}},
+            {"default": "Body"},
+            "codex is not supported for auto states",
+        ),
+        (
+            {"states": {"Todo": {"auto_next_state": "Done", "codex": {"skills": []}}}},
             {"default": "Body"},
             "codex is not supported for auto states",
         ),
@@ -1180,7 +1212,10 @@ def test_state_profiles_and_result_helpers_cover_edge_paths(tmp_path: Path) -> N
                     "prompt": "default",
                     "allowed_next_states": ["Human Review"],
                     "failure_state": "Blocked",
-                    "codex": {"reasoning_effort": "high"},
+                    "codex": {
+                        "reasoning_effort": "high",
+                        "skills": ["commit"],
+                    },
                     "hooks": {
                         "before_complete": "uv run pytest -q",
                         "before_complete_max_feedback_loops": 0,
@@ -1198,6 +1233,7 @@ def test_state_profiles_and_result_helpers_cover_edge_paths(tmp_path: Path) -> N
     assert progress_profile.is_agent_run is True
     assert progress_profile.codex_model("gpt-5.4") == "gpt-5.4"
     assert progress_profile.codex_reasoning_effort("low") == "high"
+    assert progress_profile.codex_repo_skill_allowlist(None) == ("commit",)
     assert progress_profile.hooks.before_complete == "uv run pytest -q"
     assert progress_profile.hooks.before_complete_max_feedback_loops == 0
     assert progress_profile.allows_next_state("Human Review") is True

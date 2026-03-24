@@ -73,6 +73,7 @@ from code_factory.coding_agents.codex.app_server.turns import (
 from code_factory.coding_agents.codex.config import (
     build_launch_command,
     normalize_approval_policy,
+    repo_skill_disable_config,
 )
 from code_factory.coding_agents.codex.runtime import CodexRuntime
 from code_factory.coding_agents.codex.tools import DynamicToolExecutor
@@ -111,6 +112,15 @@ from .conftest import make_issue, make_snapshot, write_workflow_file
 def make_settings(tmp_path: Path, *, overrides: dict[str, Any] | None = None):
     workflow = write_workflow_file(tmp_path / "WORKFLOW.md", **(overrides or {}))
     return make_snapshot(workflow).settings
+
+
+def create_repo_skill(workspace: Path, name: str) -> Path:
+    skill_dir = workspace / ".agents" / "skills" / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: test skill\n---\n", encoding="utf-8"
+    )
+    return skill_dir
 
 
 def make_stream_reader(*chunks: bytes) -> asyncio.StreamReader:
@@ -281,6 +291,112 @@ def test_build_launch_command_supports_reasoning_only_override(
         )
     )
     assert launch_command == "codex --config model_reasoning_effort=high app-server"
+
+
+def test_build_launch_command_disables_repo_skills_not_in_allowlist(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    create_repo_skill(workspace, "commit")
+    disabled_skill = create_repo_skill(workspace, "push")
+
+    launch_command = build_launch_command(
+        replace(
+            settings.coding_agent,
+            command="codex app-server",
+            repo_skill_allowlist=("commit",),
+        ),
+        str(workspace),
+    )
+
+    expected_config = repo_skill_disable_config((str(disabled_skill / "SKILL.md"),))
+    assert launch_command == f"codex --config '{expected_config}' app-server"
+
+
+def test_build_launch_command_disables_all_repo_skills_for_empty_allowlist(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    commit_skill = create_repo_skill(workspace, "commit")
+    push_skill = create_repo_skill(workspace, "push")
+
+    launch_command = build_launch_command(
+        replace(
+            settings.coding_agent,
+            command="codex app-server",
+            repo_skill_allowlist=(),
+        ),
+        str(workspace),
+    )
+
+    expected_config = repo_skill_disable_config(
+        (
+            str(commit_skill / "SKILL.md"),
+            str(push_skill / "SKILL.md"),
+        )
+    )
+    assert launch_command == f"codex --config '{expected_config}' app-server"
+
+
+def test_build_launch_command_keeps_existing_behavior_without_repo_skills(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    launch_command = build_launch_command(
+        replace(
+            settings.coding_agent,
+            command="codex app-server",
+            repo_skill_allowlist=(),
+        ),
+        str(workspace),
+    )
+
+    assert launch_command == "codex app-server"
+
+
+def test_build_launch_command_requires_workspace_for_repo_skill_filter(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+
+    with pytest.raises(ConfigValidationError, match="workspace is required"):
+        build_launch_command(
+            replace(
+                settings.coding_agent,
+                command="codex app-server",
+                repo_skill_allowlist=("commit",),
+            )
+        )
+
+
+def test_build_launch_command_ignores_non_skill_entries_in_repo_skill_dir(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+    workspace = tmp_path / "workspace"
+    skills_root = workspace / ".agents" / "skills"
+    skills_root.mkdir(parents=True)
+    (skills_root / "README.txt").write_text("not a skill\n", encoding="utf-8")
+    (skills_root / "draft").mkdir()
+    create_repo_skill(workspace, "commit")
+
+    launch_command = build_launch_command(
+        replace(
+            settings.coding_agent,
+            command="codex app-server",
+            repo_skill_allowlist=("commit",),
+        ),
+        str(workspace),
+    )
+
+    assert launch_command == "codex app-server"
 
 
 @pytest.mark.asyncio

@@ -445,6 +445,13 @@ fields locally if they want stricter startup checks.
   - Default: `null`
   - When present, the runtime inserts `--config model_reasoning_effort=<value>` immediately
     before the `app-server` argument in `codex.command`.
+- `skills` (list of strings or null)
+  - Default: `null`
+  - Repo-local allowlist of direct child skill directories under `<workspace>/.agents/skills`.
+  - When present, the runtime disables repo-local skills not listed by injecting a
+    `skills.config=[...]` CLI override immediately before the `app-server` argument in
+    `codex.command`.
+  - User/admin/system skills are unaffected.
 - `approval_policy` (Codex `AskForApproval` value)
   - Default: implementation-defined.
 - `thread_sandbox` (Codex `SandboxMode` value)
@@ -579,6 +586,8 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `states.<state>.prompt`: string or non-empty list of strings referencing prompt section ids
 - `states.<state>.codex.model`: string or null, optional
 - `states.<state>.codex.reasoning_effort`: string or null, optional
+- `states.<state>.codex.skills`: list of strings or null, optional, repo-local allowlist of
+  direct child directories under `.agents/skills`
 - `states.<state>.hooks.before_complete`: shell script or null, optional for agent-run states
 - `states.<state>.hooks.before_complete_max_feedback_loops`: integer, default `3`, optional for
   agent-run states
@@ -924,7 +933,8 @@ Compatibility profile:
 
 Subprocess launch parameters:
 
-- Command: `codex.command` with optional `codex.model` / `codex.reasoning_effort` CLI overrides
+- Command: `codex.command` with optional `codex.model`, `codex.reasoning_effort`, and
+  repo-local `codex.skills` CLI overrides
 - Invocation: `bash -lc <effective codex command>`
 - Working directory: workspace path
 - Stdout/stderr: separate streams
@@ -933,8 +943,10 @@ Subprocess launch parameters:
 Notes:
 
 - The default command is `codex app-server`.
-- If configured, `codex.model` and `codex.reasoning_effort` are injected immediately before
-  `app-server`.
+- If configured, `codex.model`, `codex.reasoning_effort`, and repo-local `codex.skills`
+  overrides are injected immediately before `app-server`.
+- `codex.skills` only affects repo-local skills under `<workspace>/.agents/skills`; when an
+  allowlist references a missing repo skill directory, launch fails before the subprocess starts.
 - Approval policy, cwd, and prompt are expressed in the protocol messages in Section 10.2.
 
 Recommended additional process settings:
@@ -1975,6 +1987,8 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - `~` path expansion works
 - `codex.command` is preserved as a shell command string
 - `codex.model` and `codex.reasoning_effort` inject CLI overrides ahead of `app-server`
+- `codex.skills` disables only repo-local skills ahead of launch and errors on missing
+  allowlisted repo skill directories
 - Per-state concurrency override map normalizes state names and ignores invalid values
 - Prompt template renders `issue` and `attempt`
 - Prompt rendering fails on unknown variables (strict mode)
