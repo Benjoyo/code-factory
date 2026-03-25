@@ -76,7 +76,7 @@ class ReviewRunner:
         try:
             for target in targets:
                 worktree = _worktree_path(self._worktree_root, target.target)
-                await _create_worktree(self._repo_root, worktree, target.ref)
+                await _create_worktree(self._repo_root, worktree, target)
                 created_worktrees.append(worktree)
                 head_sha = await _head_sha(worktree)
                 await self._run_prepare(target, worktree)
@@ -151,18 +151,38 @@ def _worktree_path(root: str, target: str) -> str:
     return canonicalize(os.path.join(root, safe_identifier(target)))
 
 
-async def _create_worktree(repo_root: str, worktree: str, ref: str) -> None:
+async def _create_worktree(
+    repo_root: str,
+    worktree: str,
+    target: ReviewTarget,
+) -> None:
     os.makedirs(os.path.dirname(worktree), exist_ok=True)
     if os.path.exists(worktree):
         raise ReviewError(f"Review worktree already exists: {worktree}")
-    result = await capture_shell(
-        f"git worktree add --detach {shlex.quote(worktree)} {shlex.quote(ref)}",
-        cwd=repo_root,
-    )
+    result = await _worktree_add(repo_root, worktree, target.ref)
+    if (
+        result.status != 0
+        and target.branch_name
+        and "invalid reference" in (result.output or "").lower()
+    ):
+        fetch_result = await capture_shell(
+            "git fetch origin "
+            f"{shlex.quote(f'refs/heads/{target.branch_name}:refs/remotes/origin/{target.branch_name}')}",
+            cwd=repo_root,
+        )
+        if fetch_result.status == 0:
+            result = await _worktree_add(repo_root, worktree, target.ref)
     if result.status != 0:
         raise ReviewError(
             f"Failed to create review worktree {worktree}: {result.output or result.status}"
         )
+
+
+async def _worktree_add(repo_root: str, worktree: str, ref: str) -> ShellResult:
+    return await capture_shell(
+        f"git worktree add --detach {shlex.quote(worktree)} {shlex.quote(ref)}",
+        cwd=repo_root,
+    )
 
 
 async def _head_sha(worktree: str) -> str:

@@ -174,7 +174,7 @@ class LinearOpsWriteMixin(LinearOpsReadMixin):
                 {"issueId": issue_id, "url": url, "title": title or "PR"},
             )
             fallback_attach = (
-                (self._data(fallback, "issueUpdate") or {})
+                (self._data(fallback, "attachmentCreate") or {})
                 if isinstance(fallback, dict)
                 else {}
             )
@@ -203,15 +203,32 @@ class LinearOpsWriteMixin(LinearOpsReadMixin):
             )
         upload_url = str(upload["uploadUrl"])
         asset_url = str(upload["assetUrl"])
+        headers = {"Content-Type": content_type, "Cache-Control": "public, max-age=31536000"}
+        headers.update(
+            {
+                item["key"]: item["value"]
+                for item in upload.get("headers") or []
+                if isinstance(item, dict)
+                and isinstance(item.get("key"), str)
+                and isinstance(item.get("value"), str)
+            }
+        )
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            result = await client.put(
-                upload_url,
-                headers={
-                    item["key"]: item["value"] for item in upload.get("headers") or []
-                },
-                content=content,
-            )
-            result.raise_for_status()
+            try:
+                result = await client.put(
+                    upload_url,
+                    headers=headers,
+                    content=content,
+                )
+                result.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                body = exc.response.text.strip()
+                detail = (
+                    f"tracker file upload PUT failed with HTTP {exc.response.status_code}: {body}"
+                    if body
+                    else f"tracker file upload PUT failed with HTTP {exc.response.status_code}"
+                )
+                raise TrackerClientError(("tracker_operation_failed", detail)) from exc
         return {
             "filename": filename,
             "content_type": content_type,

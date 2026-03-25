@@ -14,6 +14,7 @@ from .decoding import (
     decode_linear_page_response,
     decode_linear_response,
     next_page_cursor,
+    normalize_issue,
 )
 from .graphql import LinearGraphQLClient, RequestFunction
 from .queries import (
@@ -84,15 +85,18 @@ class LinearClient:
         body = await self.graphql(
             QUERY_BY_IDENTIFIER,
             {
-                "projectSlug": self._settings.tracker.project_slug,
                 "identifier": identifier,
                 "relationFirst": self.ISSUE_PAGE_SIZE,
             },
         )
-        issues = decode_linear_response(body, None)
-        if not issues:
+        issue_node = body.get("data", {}).get("issue")
+        if isinstance(issue_node, dict):
+            return normalize_issue(issue_node, None)
+        if body.get("errors") is not None:
+            raise TrackerClientError(("linear_graphql_errors", body["errors"]))
+        if issue_node is None:
             return None
-        return issues[0]
+        raise TrackerClientError("linear_unknown_payload")
 
     async def fetch_issue_comments(self, issue_id: str) -> list[IssueComment]:
         self._require_credentials()

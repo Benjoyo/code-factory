@@ -267,9 +267,9 @@ mutation CodeFactoryTrackerAttachFallback(
   $url: String!,
   $title: String!
 ) {
-  issueUpdate(id: $issueId, input: { links: [{ title: $title, url: $url }] }) {
+  attachmentCreate(input: { issueId: $issueId, url: $url, title: $title }) {
     success
-    issue { id identifier }
+    attachment { id title url }
   }
 }
 """

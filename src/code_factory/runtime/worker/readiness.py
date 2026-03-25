@@ -9,6 +9,7 @@ from ...workspace.repository import (
     current_branch_name,
     ensure_git_repository,
     head_sha,
+    upstream_head_sha,
     upstream_name,
     worktree_status,
 )
@@ -55,7 +56,12 @@ async def native_readiness_result(
             "`git push -u origin HEAD` and retry."
         )
     local_head = await head_sha(workspace)
-    remote_head = await head_sha(workspace, "@{upstream}")
+    remote_head = await upstream_head_sha(workspace)
+    if remote_head is None:
+        return _blocked(
+            "Completion blocked: the configured branch upstream could not be "
+            "resolved on remote. Push or fetch the issue branch and retry."
+        )
     if local_head != remote_head:
         return _blocked(
             "Completion blocked: local HEAD is not fully pushed to the branch upstream."

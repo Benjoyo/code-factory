@@ -20,7 +20,7 @@ from code_factory.workspace.review_resolution import (
     resolve_review_targets,
     trailing_ticket_number,
 )
-from code_factory.workspace.review_runner import ReviewRunner
+from code_factory.workspace.review_runner import ReviewRunner, _create_worktree
 from code_factory.workspace.review_shell import ShellResult
 from code_factory.workspace.review_templates import (
     build_review_environment,
@@ -175,7 +175,9 @@ async def test_review_runner_runs_prepare_and_cleans_up(monkeypatch) -> None:
     spawn_envs: list[dict[str, str] | None] = []
     opened_urls: list[str] = []
 
-    async def fake_create_worktree(repo_root: str, worktree: str, ref: str) -> None:
+    async def fake_create_worktree(
+        repo_root: str, worktree: str, target: ReviewTarget
+    ) -> None:
         calls.append(("create", worktree))
 
     async def fake_head_sha(worktree: str) -> str:
@@ -365,6 +367,57 @@ async def test_review_runner_skips_browser_when_disabled(monkeypatch) -> None:
             ),
         )
     assert opened_urls == []
+
+
+@pytest.mark.asyncio
+async def test_create_worktree_fetches_ticket_branch_when_pr_head_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worktree = str(tmp_path / "review" / "BEN-24")
+    calls: list[tuple[str, str]] = []
+
+    async def fake_capture_shell(
+        command: str,
+        *,
+        cwd: str,
+        env: dict[str, str] | None = None,
+    ) -> ShellResult:
+        calls.append((command, cwd))
+        if command.startswith("git worktree add --detach") and len(calls) == 1:
+            return ShellResult(128, "", "fatal: invalid reference: deadbeef")
+        if command.startswith("git fetch origin "):
+            return ShellResult(0, "", "")
+        if command.startswith("git worktree add --detach"):
+            return ShellResult(0, "prepared\n", "")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(
+        "code_factory.workspace.review_runner.capture_shell",
+        fake_capture_shell,
+    )
+
+    await _create_worktree(
+        "/repo",
+        worktree,
+        ReviewTarget(
+            target="BEN-24",
+            kind="ticket",
+            ticket_identifier="BEN-24",
+            ticket_number=24,
+            ref="deadbeef",
+            branch_name="codex/ben-24",
+            head_sha="deadbeef",
+        ),
+    )
+    assert calls == [
+        (f"git worktree add --detach {worktree} deadbeef", "/repo"),
+        (
+            "git fetch origin "
+            "refs/heads/codex/ben-24:refs/remotes/origin/codex/ben-24",
+            "/repo",
+        ),
+        (f"git worktree add --detach {worktree} deadbeef", "/repo"),
+    ]
 
 
 @pytest.mark.asyncio

@@ -35,6 +35,7 @@ from code_factory.runtime.orchestration.actor import OrchestratorActor
 from code_factory.runtime.orchestration.models import RetryEntry, RunningEntry
 from code_factory.runtime.subprocess.process_tree import ProcessTree
 from code_factory.runtime.worker.actor import IssueWorker
+from code_factory.runtime.worker.readiness import native_readiness_result
 from code_factory.trackers.linear.client import (
     LinearClient,
 )
@@ -65,6 +66,7 @@ from code_factory.workspace.repository import (
     head_sha,
     prepare_workspace_repository,
     run_repository_command,
+    upstream_head_sha,
     upstream_name,
 )
 from code_factory.workspace.review_shell import ShellResult
@@ -308,6 +310,70 @@ async def test_prepare_workspace_repository_rejects_tracked_workpad(
 
 
 @pytest.mark.asyncio
+async def test_native_readiness_accepts_pushed_head_in_shallow_single_branch_clone(
+    tmp_path: Path,
+) -> None:
+    remote = tmp_path / "remote.git"
+    seed = tmp_path / "seed"
+    workspace = tmp_path / "workspace"
+    workflow = write_workflow_file(
+        tmp_path / "WORKFLOW.md",
+        states={
+            "Todo": {"auto_next_state": "In Progress"},
+            "In Progress": {
+                "prompt": "default",
+                "completion": {"require_pushed_head": True},
+            },
+        },
+    )
+    snapshot = make_snapshot(workflow)
+    profile = snapshot.state_profile("In Progress")
+    assert profile is not None
+
+    run_git(["git", "init", "--bare", str(remote)], tmp_path)
+    seed.mkdir()
+    run_git(["git", "init", "-b", "main"], seed)
+    run_git(["git", "config", "user.email", "codex@example.com"], seed)
+    run_git(["git", "config", "user.name", "Codex"], seed)
+    (seed / "app.txt").write_text("one\n", encoding="utf-8")
+    run_git(["git", "add", "app.txt"], seed)
+    run_git(["git", "commit", "-m", "initial"], seed)
+    run_git(["git", "remote", "add", "origin", f"file://{remote}"], seed)
+    run_git(["git", "push", "-u", "origin", "main"], seed)
+    run_git(["git", "symbolic-ref", "HEAD", "refs/heads/main"], remote)
+
+    run_git(
+        ["git", "clone", "--depth", "1", f"file://{remote}", str(workspace)],
+        tmp_path,
+    )
+    run_git(["git", "config", "user.email", "codex@example.com"], workspace)
+    run_git(["git", "config", "user.name", "Codex"], workspace)
+    run_git(
+        ["git", "checkout", "-b", "codex/eng-24"],
+        workspace,
+    )
+    (workspace / "app.txt").write_text("two\n", encoding="utf-8")
+    run_git(["git", "add", "app.txt"], workspace)
+    run_git(["git", "commit", "-m", "update"], workspace)
+    run_git(["git", "push", "-u", "origin", "HEAD"], workspace)
+
+    assert (
+        run_git(["git", "config", "--get-all", "remote.origin.fetch"], workspace)
+        == "+refs/heads/main:refs/remotes/origin/main"
+    )
+    assert await upstream_name(str(workspace)) == "origin/codex/eng-24"
+    assert await upstream_head_sha(str(workspace)) == await head_sha(str(workspace))
+
+    result = await native_readiness_result(
+        str(workspace),
+        make_issue(identifier="ENG-24", branch_name="codex/eng-24"),
+        profile,
+    )
+    assert result is not None
+    assert result.status == 0
+
+
+@pytest.mark.asyncio
 async def test_repository_helper_edge_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -333,6 +399,7 @@ async def test_repository_helper_edge_paths(
         blank_repo_command,
     )
     assert await upstream_name(str(tmp_path)) is None
+    assert await upstream_head_sha(str(tmp_path)) is None
 
     async def success_repo_command(_workspace: str, _command: str) -> ShellResult:
         return ShellResult(status=0, stdout="abc123\n", stderr="")
@@ -342,6 +409,35 @@ async def test_repository_helper_edge_paths(
         success_repo_command,
     )
     assert await head_sha(str(tmp_path)) == "abc123"
+
+    async def branch_config_repo_command(_workspace: str, command: str) -> ShellResult:
+        if command == "git rev-parse --abbrev-ref --symbolic-full-name @{upstream}":
+            return ShellResult(status=128, stdout="", stderr="missing")
+        if command == "git symbolic-ref --quiet --short HEAD":
+            return ShellResult(status=0, stdout="feature/test\n", stderr="")
+        if command == "git config --get branch.feature/test.remote":
+            return ShellResult(status=0, stdout="origin\n", stderr="")
+        if command == "git config --get branch.feature/test.merge":
+            return ShellResult(status=0, stdout="refs/heads/feature/test\n", stderr="")
+        if command == "git rev-parse @{upstream}":
+            return ShellResult(status=128, stdout="", stderr="missing")
+        if (
+            command
+            == "git ls-remote --exit-code origin refs/heads/feature/test"
+        ):
+            return ShellResult(
+                status=0,
+                stdout="deadbeef\trefs/heads/feature/test\n",
+                stderr="",
+            )
+        return ShellResult(status=1, stdout="", stderr=command)
+
+    monkeypatch.setattr(
+        "code_factory.workspace.repository.repository_command",
+        branch_config_repo_command,
+    )
+    assert await upstream_name(str(tmp_path)) == "origin/feature/test"
+    assert await upstream_head_sha(str(tmp_path)) == "deadbeef"
 
     async def noop(*_args: Any, **_kwargs: Any) -> None:
         return None

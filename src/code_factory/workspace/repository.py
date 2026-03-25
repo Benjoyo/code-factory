@@ -133,7 +133,42 @@ async def upstream_name(workspace: str) -> str | None:
         workspace, "git rev-parse --abbrev-ref --symbolic-full-name @{upstream}"
     )
     upstream = result.stdout.strip()
-    return upstream if result.status == 0 and upstream else None
+    if result.status == 0 and upstream:
+        return upstream
+    branch = await current_branch_name(workspace)
+    if branch is None:
+        return None
+    config = await _upstream_config(workspace, branch)
+    return _upstream_display_name(*config) if config is not None else None
+
+
+async def upstream_head_sha(workspace: str) -> str | None:
+    """Return the upstream branch HEAD SHA, even in narrow shallow clones."""
+
+    result = await repository_command(
+        workspace,
+        "git rev-parse @{upstream}",
+    )
+    sha = result.stdout.strip()
+    if result.status == 0 and sha:
+        return sha
+    branch = await current_branch_name(workspace)
+    if branch is None:
+        return None
+    config = await _upstream_config(workspace, branch)
+    if config is None:
+        return None
+    remote, merge_ref = config
+    remote_result = await repository_command(
+        workspace,
+        "git ls-remote --exit-code "
+        f"{shlex.quote(remote)} {shlex.quote(merge_ref)}",
+    )
+    first_line = remote_result.stdout.strip().splitlines()
+    if remote_result.status != 0 or not first_line:
+        return None
+    parts = first_line[0].split()
+    return parts[0] if parts else None
 
 
 async def head_sha(workspace: str, ref: str = "HEAD") -> str:
@@ -182,6 +217,30 @@ async def run_repository_command(workspace: str, command: str) -> ShellResult:
     raise WorkspaceError(
         ("workspace_repository_command_failed", command, result.output)
     )
+
+
+async def _upstream_config(workspace: str, branch: str) -> tuple[str, str] | None:
+    remote_result = await repository_command(
+        workspace,
+        f"git config --get {shlex.quote(f'branch.{branch}.remote')}",
+    )
+    merge_result = await repository_command(
+        workspace,
+        f"git config --get {shlex.quote(f'branch.{branch}.merge')}",
+    )
+    remote = remote_result.stdout.strip()
+    merge_ref = merge_result.stdout.strip()
+    if remote_result.status != 0 or merge_result.status != 0 or not remote or not merge_ref:
+        return None
+    return remote, merge_ref
+
+
+def _upstream_display_name(remote: str, merge_ref: str) -> str:
+    if merge_ref.startswith("refs/remotes/"):
+        return merge_ref.removeprefix("refs/remotes/")
+    if merge_ref.startswith("refs/heads/"):
+        return f"{remote}/{merge_ref.removeprefix('refs/heads/')}"
+    return f"{remote}/{merge_ref.rsplit('/', 1)[-1]}"
 
 
 def _summarize_status(status: str) -> str:

@@ -48,12 +48,14 @@ from code_factory.trackers.linear.ops_queries import (
     ATTACH_PR_MUTATION,
     CREATE_ISSUE_MUTATION,
     CREATE_RELATION_MUTATION,
+    FILE_UPLOAD_MUTATION,
     ISSUES_QUERY,
 )
 from code_factory.trackers.linear.queries import (
     COMMENTS_QUERY,
     CREATE_COMMENT_MUTATION,
     QUERY,
+    QUERY_BY_IDENTIFIER,
     QUERY_BY_IDS,
     STATE_LOOKUP_QUERY,
     UPDATE_COMMENT_MUTATION,
@@ -378,6 +380,21 @@ async def test_linear_client_core_behaviors(tmp_path: Path) -> None:
                     for issue_id in reversed(payload["ids"])
                 ]
                 return {"data": {"issues": {"nodes": nodes}}}
+            if query == QUERY_BY_IDENTIFIER:
+                identifier = payload["identifier"]
+                if identifier == "ENG-404":
+                    return {"data": {"issue": None}}
+                return {
+                    "data": {
+                        "issue": {
+                            "id": "issue-identifier",
+                            "identifier": identifier,
+                            "title": "By identifier",
+                            "state": {"name": "Todo"},
+                            "assignee": {"id": "viewer-1"},
+                        }
+                    }
+                }
             if query == COMMENTS_QUERY:
                 after = payload.get("after")
                 return {
@@ -445,6 +462,11 @@ async def test_linear_client_core_behaviors(tmp_path: Path) -> None:
         "b",
         "a",
     ]
+    identified = await client.fetch_issue_by_identifier("ENG-24")
+    assert identified is not None
+    assert identified.id == "issue-identifier"
+    assert identified.identifier == "ENG-24"
+    assert await client.fetch_issue_by_identifier("ENG-404") is None
     assert [comment.id for comment in await client.fetch_issue_comments("issue-1")] == [
         "comment-1",
         "comment-2",
@@ -651,6 +673,47 @@ async def test_linear_ops_create_issue_surfaces_relation_failures(
 
 
 @pytest.mark.asyncio
+async def test_linear_ops_link_pr_uses_attachment_create_fallback(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+
+    class FakeLinearOps(LinearOps):
+        async def _resolve_issue_id(self, issue: str) -> str:
+            return issue
+
+    async def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        if query == ATTACH_PR_MUTATION:
+            return {"data": {"attachmentLinkGitHubPR": {"success": False}}}
+        if query == ATTACH_LINK_FALLBACK_MUTATION:
+            return {
+                "data": {
+                    "attachmentCreate": {
+                        "success": True,
+                        "attachment": {
+                            "id": "attachment-1",
+                            "title": variables["title"],
+                            "url": variables["url"],
+                        },
+                    }
+                }
+            }
+        raise AssertionError(f"unexpected query: {query}")
+
+    result = await FakeLinearOps(settings, graphql).link_pr(
+        "ENG-1",
+        "https://github.com/org/repo/pull/1",
+        "PR",
+    )
+    assert result == {
+        "issue_id": "ENG-1",
+        "url": "https://github.com/org/repo/pull/1",
+        "title": "PR",
+        "linked": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_linear_ops_link_pr_surfaces_failed_fallback(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
 
@@ -662,7 +725,9 @@ async def test_linear_ops_link_pr_surfaces_failed_fallback(tmp_path: Path) -> No
         if query == ATTACH_PR_MUTATION:
             return {"data": {"attachmentLinkGitHubPR": {"success": False}}}
         if query == ATTACH_LINK_FALLBACK_MUTATION:
-            return {"data": {"issueUpdate": {"success": False, "issue": None}}}
+            return {
+                "data": {"attachmentCreate": {"success": False, "attachment": None}}
+            }
         raise AssertionError(f"unexpected query: {query}")
 
     with pytest.raises(TrackerClientError, match="tracker PR link attachment failed"):
@@ -671,3 +736,136 @@ async def test_linear_ops_link_pr_surfaces_failed_fallback(tmp_path: Path) -> No
             "https://github.com/org/repo/pull/1",
             "PR",
         )
+
+
+@pytest.mark.asyncio
+async def test_linear_ops_upload_file_sets_documented_headers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = make_settings(tmp_path)
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"png-bytes")
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+            self.calls: list[tuple[str, dict[str, str], bytes]] = []
+
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def put(
+            self, url: str, *, headers: dict[str, str], content: bytes
+        ) -> httpx.Response:
+            self.calls.append((url, headers, content))
+            return httpx.Response(
+                200,
+                request=httpx.Request("PUT", url),
+            )
+
+    http_client = FakeAsyncClient()
+    monkeypatch.setattr(
+        "code_factory.trackers.linear.ops_write.httpx.AsyncClient",
+        lambda **kwargs: http_client,
+    )
+
+    async def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        assert query == FILE_UPLOAD_MUTATION
+        assert variables == {
+            "filename": "image.png",
+            "contentType": "image/png",
+            "size": 9,
+        }
+        return {
+            "data": {
+                "fileUpload": {
+                    "success": True,
+                    "uploadFile": {
+                        "uploadUrl": "https://upload.example/file",
+                        "assetUrl": "https://asset.example/file",
+                        "headers": [{"key": "x-ms-blob-type", "value": "BlockBlob"}],
+                    },
+                }
+            }
+        }
+
+    result = await LinearOps(
+        settings,
+        graphql,
+        allowed_roots=(str(tmp_path),),
+    ).upload_file("image.png")
+    assert result == {
+        "filename": "image.png",
+        "content_type": "image/png",
+        "asset_url": "https://asset.example/file",
+        "markdown": "![image.png](https://asset.example/file)",
+    }
+    assert http_client.calls == [
+        (
+            "https://upload.example/file",
+            {
+                "Content-Type": "image/png",
+                "Cache-Control": "public, max-age=31536000",
+                "x-ms-blob-type": "BlockBlob",
+            },
+            b"png-bytes",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_linear_ops_upload_file_surfaces_put_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = make_settings(tmp_path)
+    file_path = tmp_path / "evidence.jpg"
+    file_path.write_bytes(b"jpeg-bytes")
+
+    class FailingAsyncClient:
+        async def __aenter__(self) -> FailingAsyncClient:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def put(
+            self, url: str, *, headers: dict[str, str], content: bytes
+        ) -> httpx.Response:
+            return httpx.Response(
+                400,
+                text="bad upload",
+                request=httpx.Request("PUT", url),
+            )
+
+    monkeypatch.setattr(
+        "code_factory.trackers.linear.ops_write.httpx.AsyncClient",
+        lambda **kwargs: FailingAsyncClient(),
+    )
+
+    async def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        assert query == FILE_UPLOAD_MUTATION
+        return {
+            "data": {
+                "fileUpload": {
+                    "success": True,
+                    "uploadFile": {
+                        "uploadUrl": "https://upload.example/file",
+                        "assetUrl": "https://asset.example/file",
+                        "headers": [],
+                    },
+                }
+            }
+        }
+
+    with pytest.raises(
+        TrackerClientError,
+        match="tracker file upload PUT failed with HTTP 400: bad upload",
+    ):
+        await LinearOps(
+            settings,
+            graphql,
+            allowed_roots=(str(tmp_path),),
+        ).upload_file("evidence.jpg")

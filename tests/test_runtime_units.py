@@ -1334,13 +1334,19 @@ async def test_native_readiness_result_edge_paths(
         return "origin/codex/eng-1"
 
     async def mismatched_head(_workspace: str, ref: str = "HEAD") -> str:
-        return "local" if ref == "HEAD" else "remote"
+        return "local" if ref == "HEAD" else "unused"
+
+    async def remote_head(_workspace: str) -> str | None:
+        return "remote"
 
     monkeypatch.setattr(
         "code_factory.runtime.worker.readiness.upstream_name", with_upstream
     )
     monkeypatch.setattr(
         "code_factory.runtime.worker.readiness.head_sha", mismatched_head
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.upstream_head_sha", remote_head
     )
     result = await native_readiness_result(str(tmp_path), issue, profile)
     assert result is not None
@@ -1349,10 +1355,17 @@ async def test_native_readiness_result_edge_paths(
     async def matched_head(_workspace: str, ref: str = "HEAD") -> str:
         return "same"
 
+    async def matching_remote_head(_workspace: str) -> str | None:
+        return "same"
+
     async def gh_auth_fail(*_args: Any, **_kwargs: Any) -> None:
         raise ReviewError("gh auth failed")
 
     monkeypatch.setattr("code_factory.runtime.worker.readiness.head_sha", matched_head)
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.upstream_head_sha",
+        matching_remote_head,
+    )
     monkeypatch.setattr(
         "code_factory.runtime.worker.readiness.ensure_github_ready", gh_auth_fail
     )
