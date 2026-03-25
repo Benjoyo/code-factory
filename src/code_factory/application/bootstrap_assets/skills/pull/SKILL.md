@@ -1,10 +1,11 @@
 ---
 name: pull
 description:
-  Pull latest origin/main into the current local branch and resolve merge
-  conflicts (aka update-branch). Use when Codex needs to sync a feature branch
-  with origin, perform a merge-based update (not rebase), and guide conflict
-  resolution best practices.
+  Sync the current local branch with its remote state when available, then
+  merge the remote default base branch and resolve conflicts (aka
+  update-branch). Use when Codex needs to update the harness-prepared issue
+  branch with origin, perform a merge-based update (not rebase), and guide
+  conflict resolution best practices.
 ---
 
 # Pull
@@ -17,21 +18,35 @@ description:
    - `git config rerere.autoupdate true`
 3. Confirm remotes and branches:
    - Ensure the `origin` remote exists.
-   - Ensure the current branch is the one to receive the merge.
+   - Ensure the current branch is the harness-prepared issue branch for this run.
+   - The branch name may come from tracker metadata or a harness-generated
+     fallback. Treat the checked-out branch as canonical for the run.
 4. Fetch latest refs:
    - `git fetch origin`
-5. Sync the remote feature branch first:
-   - `git pull --ff-only origin $(git branch --show-current)`
-   - This pulls branch updates made remotely (for example, a GitHub auto-commit)
-     before merging `origin/main`.
+5. Sync branch-specific remote state first when available:
+   - Prefer the configured upstream:
+     - `git rev-parse --abbrev-ref --symbolic-full-name @{upstream}`
+     - If it resolves, run `git pull --ff-only`.
+   - If no upstream is configured, check for a same-named remote branch:
+     - `branch=$(git branch --show-current)`
+     - `git show-ref --verify --quiet "refs/remotes/origin/$branch"`
+     - If it exists, run `git pull --ff-only origin "$branch"`.
+   - If neither an upstream nor a same-named `origin/<branch>` ref exists, skip
+     the branch-sync step and note that this is expected for a harness-prepared
+     branch without remote tracking.
 6. Merge in order:
-   - Prefer `git -c merge.conflictstyle=zdiff3 merge origin/main` for clearer
+   - Resolve the remote default base branch:
+     - `base_ref=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD || true)`
+     - `base_ref=${base_ref:-origin/main}`
+   - Prefer `git -c merge.conflictstyle=zdiff3 merge "$base_ref"` for clearer
      conflict context.
 7. If conflicts appear, resolve them (see conflict guidance below), then:
    - `git add <files>`
    - `git commit` (or `git merge --continue` if the merge is paused)
 8. Verify with project checks (follow repo policy in `AGENTS.md`).
 9. Summarize the merge:
+   - Identify the checked-out branch and whether it came from existing tracking
+     or had no remote-tracking ref.
    - Call out the most challenging conflicts/files and how they were resolved.
    - Note any assumptions or follow-ups.
 
@@ -93,8 +108,8 @@ Ask the user only when:
   equivalent technical merit and no clear local signal.
 - The merge introduces data loss, schema changes, or irreversible side effects
   without an obvious safe default.
-- The branch is not the intended target, or the remote/branch names do not exist
-  and cannot be determined locally.
+- The checked-out branch is clearly not the intended issue branch, or the
+  remote/default-base information cannot be determined locally.
 
 Otherwise, proceed with the merge, explain the decision briefly in notes, and
 leave a clear, reviewable commit history.

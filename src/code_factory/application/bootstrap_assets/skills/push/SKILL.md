@@ -14,7 +14,7 @@ description:
 
 ## Goals
 
-- Push current branch changes to `origin` safely.
+- Push the current harness-prepared issue branch changes to `origin` safely.
 - Create a PR if none exists for the branch, otherwise update the existing PR.
 - Keep branch history clean when remote has moved.
 
@@ -31,7 +31,8 @@ description:
    remote URL is already configured.
 4. If push is not clean/rejected:
    - If the failure is a non-fast-forward or sync problem, run the `pull`
-     skill to merge `origin/main`, resolve conflicts, and rerun validation.
+     skill to merge the remote default base branch, resolve conflicts, and rerun
+     validation.
    - Push again; use `--force-with-lease` only when history was rewritten.
    - If the failure is due to auth, permissions, or workflow restrictions on
      the configured remote, stop and surface the exact error instead of
@@ -40,7 +41,8 @@ description:
 5. Ensure a PR exists for the branch:
    - If no PR exists, create one.
    - If a PR exists and is open, update it.
-   - If branch is tied to a closed/merged PR, create a new branch + PR.
+   - If the branch is tied to a closed/merged PR, do not invent a replacement
+     branch here.
    - Write a proper PR title that clearly describes the change outcome
    - For branch updates, explicitly reconsider whether current PR title still
      matches the latest scope; update it if it no longer does.
@@ -80,7 +82,7 @@ git push --force-with-lease origin HEAD
 # Ensure a PR exists (create only if missing)
 pr_state=$(gh pr view --json state -q .state 2>/dev/null || true)
 if [ "$pr_state" = "MERGED" ] || [ "$pr_state" = "CLOSED" ]; then
-  echo "Current branch is tied to a closed PR; create a new branch + PR." >&2
+  echo "Current branch is tied to a closed PR; do not invent a replacement branch here." >&2
   exit 1
 fi
 
@@ -111,6 +113,8 @@ gh pr view --json url -q .url
 ## Notes
 
 - Do not use `--force`; only use `--force-with-lease` as the last resort.
+- The current branch is expected to be the orchestrator-prepared issue branch.
+  Its name may come from tracker metadata or a harness-generated fallback.
 - Distinguish sync problems from remote auth/permission problems:
   - Use the `pull` skill for non-fast-forward or stale-branch issues.
   - Surface auth, permissions, or workflow restrictions directly instead of
