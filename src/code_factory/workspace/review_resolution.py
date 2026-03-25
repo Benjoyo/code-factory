@@ -130,6 +130,15 @@ async def resolve_main_ref(
     *,
     shell_capture: ShellCapture,
 ) -> str:
+    fetch = await _capture(
+        "git fetch origin",
+        cwd=repo_root,
+        shell_capture=shell_capture,
+    )
+    if fetch.status != 0:
+        raise ReviewError(
+            f"Failed to fetch origin before resolving main review target: {fetch.output or fetch.status}"
+        )
     result = await _capture(
         "git symbolic-ref --quiet --short refs/remotes/origin/HEAD",
         cwd=repo_root,

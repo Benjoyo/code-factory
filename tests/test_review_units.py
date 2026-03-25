@@ -5,6 +5,7 @@ import io
 from pathlib import Path
 from typing import Any, cast
 
+import httpx
 import pytest
 from rich.console import Console
 
@@ -14,6 +15,7 @@ from code_factory.errors import ConfigValidationError, ReviewError
 from code_factory.trackers.memory import MemoryTracker
 from code_factory.workflow.loader import load_workflow
 from code_factory.workspace.paths import canonicalize
+from code_factory.workspace.review_browser import wait_for_http_ready
 from code_factory.workspace.review_models import ReviewTarget
 from code_factory.workspace.review_resolution import (
     dedupe_review_targets,
@@ -72,6 +74,8 @@ async def test_review_resolution_prefers_pr_head_and_dedupes_targets() -> None:
         cwd: str,
         env: dict[str, str] | None = None,
     ) -> ShellResult:
+        if command == "git fetch origin":
+            return ShellResult(0, "", "")
         if command == "gh auth status":
             return ShellResult(0, "", "")
         if command.startswith("gh pr list"):
@@ -106,6 +110,40 @@ async def test_review_resolution_prefers_pr_head_and_dedupes_targets() -> None:
     assert resolved[0].ref == "origin/main"
     assert resolved[1].ref == "abc123"
     assert resolved[1].pr_url == "https://example/pr/12"
+
+
+@pytest.mark.asyncio
+async def test_review_resolution_main_fetch_failure_is_fatal() -> None:
+    tracker = MemoryTracker([])
+
+    async def fake_capture(
+        command: str,
+        *,
+        cwd: str,
+        env: dict[str, str] | None = None,
+    ) -> ShellResult:
+        if command == "git fetch origin":
+            return ShellResult(1, "", "fetch failed")
+        raise AssertionError(command)
+
+    settings = parse_settings(
+        {
+            "failure_state": "Human Review",
+            "tracker": {"kind": "memory"},
+            "states": {"In Progress": {"prompt": "default"}},
+            "review": {
+                "servers": [{"name": "web", "command": "pnpm dev", "base_port": 3000}]
+            },
+        }
+    )
+    with pytest.raises(ReviewError, match="Failed to fetch origin"):
+        await resolve_review_targets(
+            "/repo",
+            settings,
+            ["main"],
+            tracker_factory=lambda _settings: tracker,
+            shell_capture=fake_capture,
+        )
 
 
 def test_review_template_environment_and_ports() -> None:
@@ -243,6 +281,10 @@ async def test_review_runner_runs_prepare_and_cleans_up(monkeypatch) -> None:
         "code_factory.workspace.review_runner.webbrowser.open",
         lambda url: opened_urls.append(url) or True,
     )
+    monkeypatch.setattr(
+        "code_factory.workspace.review_runner.wait_for_http_ready",
+        lambda _url: asyncio.sleep(0, result=True),
+    )
     runner = ReviewRunner(
         repo_root="/repo",
         worktree_root="/tmp/review-root",
@@ -338,6 +380,10 @@ async def test_review_runner_skips_browser_when_disabled(monkeypatch) -> None:
         "code_factory.workspace.review_runner.webbrowser.open",
         lambda url: opened_urls.append(url) or True,
     )
+    monkeypatch.setattr(
+        "code_factory.workspace.review_runner.wait_for_http_ready",
+        lambda _url: asyncio.sleep(0, result=True),
+    )
     runner = ReviewRunner(
         repo_root="/repo",
         worktree_root="/tmp/review-root",
@@ -418,6 +464,65 @@ async def test_create_worktree_fetches_ticket_branch_when_pr_head_is_missing(
         ),
         (f"git worktree add --detach {worktree} deadbeef", "/repo"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_wait_for_http_ready_retries_until_response() -> None:
+    attempts = 0
+
+    class FakeClient:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def get(self, url: str) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise httpx.ConnectError("not ready")
+            return httpx.Response(404, request=httpx.Request("GET", url))
+
+    assert (
+        await wait_for_http_ready(
+            "http://127.0.0.1:3000",
+            timeout_s=0.05,
+            interval_s=0,
+            client_factory=FakeClient,
+        )
+        is True
+    )
+    assert attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_wait_for_http_ready_times_out_when_server_never_responds() -> None:
+    class FakeClient:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def get(self, url: str) -> httpx.Response:
+            raise httpx.ConnectError("not ready")
+
+    assert (
+        await wait_for_http_ready(
+            "http://127.0.0.1:3000",
+            timeout_s=0,
+            interval_s=0,
+            client_factory=FakeClient,
+        )
+        is False
+    )
 
 
 @pytest.mark.asyncio

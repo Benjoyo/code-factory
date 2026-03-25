@@ -18,6 +18,7 @@ from ..errors import ReviewError
 from ..runtime.subprocess import ProcessTree
 from ..workflow.loader import load_workflow
 from .paths import canonicalize, safe_identifier
+from .review_browser import wait_for_http_ready
 from .review_models import ReviewTarget, RunningReviewServer
 from .review_resolution import resolve_repo_root, resolve_review_targets
 from .review_shell import capture_shell
@@ -282,6 +283,13 @@ async def _open_review_urls(
     for entry in running:
         url = entry.launch.url
         if url is None or not entry.launch.open_browser:
+            continue
+        ready = await wait_for_http_ready(url)
+        if not ready:
+            console.print(
+                f"[warn]Timed out waiting for {entry.target.target}:{entry.launch.name} "
+                f"to respond at {url}; browser was not opened automatically.[/warn]"
+            )
             continue
         opened = await asyncio.to_thread(webbrowser.open, url)
         if not opened:
