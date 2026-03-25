@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from code_factory.issues import BlockerRef
+from code_factory.runtime.worker.workpad import WORKPAD_HEADER
 from code_factory.structured_results import parse_result_comment
 
 from ..conftest import make_issue, write_workflow_file
@@ -77,16 +78,22 @@ async def test_integration_worker_driven_lifecycle_runs_hooks_and_cleans_workspa
         created_comments = [
             event[2] for event in harness.tracker.events if event[0] == "create_comment"
         ]
-        parsed_comments = [parse_result_comment(body) for body in created_comments]
-        assert all(parsed is not None for parsed in parsed_comments)
-        assert [parsed[0] for parsed in parsed_comments if parsed is not None] == [
+        result_comments = [
+            parsed
+            for parsed in map(parse_result_comment, created_comments)
+            if parsed is not None
+        ]
+        workpad_comments = [
+            body for body in created_comments if parse_result_comment(body) is None
+        ]
+        assert len(workpad_comments) == 1
+        assert workpad_comments[0].startswith(WORKPAD_HEADER)
+        assert [parsed[0] for parsed in result_comments] == [
             "Todo",
             "Review",
             "Merging",
         ]
-        assert [
-            parsed[1].summary for parsed in parsed_comments if parsed is not None
-        ] == [
+        assert [parsed[1].summary for parsed in result_comments] == [
             "reviewed",
             "ready to merge",
             "shipped",

@@ -427,8 +427,8 @@ async def test_messages_helpers_and_metadata() -> None:
 
     assert message_params({"params": {"x": 1}}) == {"x": 1}
     assert message_params({}) == {}
-    assert tool_call_name({"tool": " linear_graphql "}) == "linear_graphql"
-    assert tool_call_name({"name": " sync_workpad "}) == "sync_workpad"
+    assert tool_call_name({"tool": " tracker_issue_get "}) == "tracker_issue_get"
+    assert tool_call_name({"name": " workpad_sync "}) == "workpad_sync"
     assert tool_call_name({"tool": " "}) is None
     assert needs_input("turn/input_required", {}) is True
     assert needs_input("other", {"params": {"requiresInput": True}}) is True
@@ -745,10 +745,12 @@ async def test_turn_helpers() -> None:
                 {},
             )
 
+        class FailingTrackerOps:
+            async def read_issue(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+                raise RuntimeError("bad")
+
         failing_executor = DynamicToolExecutor(
-            lambda query, variables: asyncio.sleep(
-                0, result={"errors": [{"message": "bad"}]}
-            )
+            FailingTrackerOps(), current_issue="ENG-1", current_project="proj-1"
         )
         assert (
             await handle_tool_call(
@@ -757,8 +759,8 @@ async def test_turn_helpers() -> None:
                 {
                     "id": 10,
                     "params": {
-                        "tool": "linear_graphql",
-                        "arguments": {"query": "query"},
+                        "tool": "tracker_issue_get",
+                        "arguments": {},
                     },
                 },
                 "{}",
@@ -842,10 +844,8 @@ async def test_client_runtime_and_observability_behaviors(
         "type": "custom"
     }
 
-    executor = client._build_tool_executor(str(workspace))
-    outcome = await executor.execute(
-        "linear_graphql", {"query": "query Viewer { viewer { id } }"}
-    )
+    executor = client._build_tool_executor(str(workspace), issue)
+    outcome = await executor.execute("tracker_issue_get", {})
     assert outcome.event == "tool_call_completed"
     assert outcome.success is False
 
@@ -885,20 +885,24 @@ async def test_client_runtime_and_observability_behaviors(
         await client.run_turn(session, "prompt", issue, on_message=on_message)
     assert emitted[-1] == "turn_ended_with_error"
 
-    class GraphQLTracker(MemoryTracker):
-        def __init__(self) -> None:
-            super().__init__([])
+    class FakeOps:
+        async def read_issue(self, issue: str, **kwargs: Any) -> dict[str, Any]:
+            return {
+                "issue": {
+                    "identifier": issue,
+                    "title": "Fix the thing",
+                    "state": {"name": "In Progress"},
+                }
+            }
 
-        async def graphql(
-            self, query: str, variables: dict[str, Any]
-        ) -> dict[str, Any]:
-            return {"data": {"ok": True}}
-
-    runtime = CodexRuntime(settings, GraphQLTracker())
-    tool_executor = runtime._build_dynamic_tool_executor(str(workspace))
-    outcome = await tool_executor.execute(
-        "linear_graphql", {"query": "query Viewer { viewer { id } }"}
+    monkeypatch.setattr(
+        "code_factory.coding_agents.codex.runtime.build_tracker_ops",
+        lambda _settings, *, allowed_roots: FakeOps(),
     )
+
+    runtime = CodexRuntime(settings, MemoryTracker([]))
+    tool_executor = runtime._build_dynamic_tool_executor(str(workspace), issue)
+    outcome = await tool_executor.execute("tracker_issue_get", {})
     assert outcome.success is True
     with pytest.raises(TypeError, match="Unsupported session type"):
         await runtime.run_turn(object(), "prompt", issue)  # type: ignore[arg-type]

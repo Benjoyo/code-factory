@@ -57,10 +57,17 @@ from code_factory.runtime.worker.results import (
     persist_state_result,
 )
 from code_factory.runtime.worker.utils import tracker_state_is_active
+from code_factory.runtime.worker.workpad import (
+    DEFAULT_WORKPAD_BODY,
+    WORKPAD_HEADER,
+    hydrate_workspace_workpad,
+    sync_workspace_workpad,
+)
 from code_factory.structured_results import StructuredTurnResult
 from code_factory.trackers.memory import MemoryTracker
 from code_factory.workspace.hooks import HookCommandResult
 from code_factory.workspace.manager import WorkspaceManager
+from code_factory.workspace.workpad import WORKPAD_FILENAME, workspace_workpad_path
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
 
@@ -74,6 +81,19 @@ def make_actor(
     snapshot = make_snapshot(workflow)
     return OrchestratorActor(
         snapshot, tracker_factory=lambda settings: MemoryTracker([])
+    )
+
+
+@pytest.fixture(autouse=True)
+def patch_issue_worker_workpad(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _noop(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.actor.hydrate_workspace_workpad", _noop
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.actor.sync_workspace_workpad", _noop
     )
 
 
@@ -253,6 +273,110 @@ async def test_process_tree_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_workspace_workpad_helpers_fallback_paths(tmp_path: Path) -> None:
+    workflow = write_workflow_file(
+        tmp_path / "WORKFLOW.md",
+        tracker={"kind": "memory"},
+    )
+    settings = make_snapshot(workflow).settings
+    issue = make_issue(id="issue-1", identifier="ENG-1")
+    tracker = MemoryTracker([issue])
+    workspace = tmp_path / "workspace"
+
+    path = await hydrate_workspace_workpad(settings, tracker, issue, str(workspace))
+    assert path == workspace_workpad_path(str(workspace))
+    assert Path(path).read_text(encoding="utf-8") == DEFAULT_WORKPAD_BODY
+
+    existing_body = f"{WORKPAD_HEADER}\n\nexisting\n"
+    await tracker.create_comment(issue.id or "", existing_body)
+    hydrated = await hydrate_workspace_workpad(settings, tracker, issue, str(workspace))
+    assert Path(hydrated).read_text(encoding="utf-8") == existing_body
+
+    Path(hydrated).write_text(f"{WORKPAD_HEADER}\n\nupdated\n", encoding="utf-8")
+    await sync_workspace_workpad(settings, tracker, issue, str(workspace))
+    comments = await tracker.fetch_issue_comments(issue.id or "")
+    assert len(comments) == 1
+    assert comments[0].body == f"{WORKPAD_HEADER}\n\nupdated\n"
+
+    new_issue = make_issue(id="issue-2", identifier="ENG-2")
+    tracker.replace_issues([issue, new_issue])
+    await hydrate_workspace_workpad(settings, tracker, new_issue, str(workspace))
+    Path(workspace_workpad_path(str(workspace))).write_text(
+        f"{WORKPAD_HEADER}\n\nfresh\n", encoding="utf-8"
+    )
+    await sync_workspace_workpad(settings, tracker, new_issue, str(workspace))
+    fresh_comments = await tracker.fetch_issue_comments(new_issue.id or "")
+    assert len(fresh_comments) == 1
+    assert fresh_comments[0].body == f"{WORKPAD_HEADER}\n\nfresh\n"
+
+    with pytest.raises(RuntimeError, match="missing_issue_id_for_workpad_sync"):
+        await sync_workspace_workpad(
+            settings,
+            tracker,
+            make_issue(id=None, identifier="ENG-3"),
+            str(workspace),
+        )
+
+
+@pytest.mark.asyncio
+async def test_workspace_workpad_helpers_linear_ops_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = make_snapshot(write_workflow_file(tmp_path / "WORKFLOW.md")).settings
+    issue = make_issue(id="issue-1", identifier="ENG-1")
+    tracker = MemoryTracker([issue])
+    workspace = tmp_path / "workspace"
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    class FakeTrackerOps:
+        async def get_workpad(self, issue_identifier: str) -> dict[str, str]:
+            calls.append(("get_workpad", {"issue": issue_identifier}))
+            return {"body": "hydrated body\n"}
+
+        async def sync_workpad(
+            self,
+            issue_identifier: str,
+            *,
+            body: str | None = None,
+            file_path: str | None = None,
+        ) -> dict[str, str]:
+            calls.append(
+                (
+                    "sync_workpad",
+                    {
+                        "issue": issue_identifier,
+                        "body": body,
+                        "file_path": file_path,
+                    },
+                )
+            )
+            return {"comment_id": "workpad-1"}
+
+        async def close(self) -> None:
+            calls.append(("close", {}))
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.workpad.build_tracker_ops",
+        lambda *_args, **_kwargs: FakeTrackerOps(),
+    )
+
+    hydrated = await hydrate_workspace_workpad(settings, tracker, issue, str(workspace))
+    assert Path(hydrated).read_text(encoding="utf-8") == "hydrated body\n"
+    assert calls == [("get_workpad", {"issue": "ENG-1"}), ("close", {})]
+
+    calls.clear()
+    Path(hydrated).write_text("updated body\n", encoding="utf-8")
+    await sync_workspace_workpad(settings, tracker, issue, str(workspace))
+    assert calls == [
+        (
+            "sync_workpad",
+            {"issue": "ENG-1", "body": None, "file_path": WORKPAD_FILENAME},
+        ),
+        ("close", {}),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_issue_worker_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -368,6 +492,7 @@ async def test_issue_worker_state_edge_paths_and_result_helpers(
     )
     queue: asyncio.Queue[Any] = asyncio.Queue()
     tracker = MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")])
+    workspace_path = str(tmp_path / "workspace")
     worker = IssueWorker(
         issue=make_issue(id="issue-1", identifier="ENG-1"),
         workflow_snapshot=snapshot,
@@ -477,6 +602,7 @@ async def test_issue_worker_state_edge_paths_and_result_helpers(
             next_state="Done",
         )
     )  # type: ignore[assignment]
+    missing_id_worker.workspace_path = workspace_path
     with pytest.raises(RuntimeError, match="missing_issue_id_for_state_transition"):
         await missing_id_worker._run_state(Session())
     assert worker._target_state(make_issue(), "blocked", "Other") == "Blocked"
@@ -495,6 +621,7 @@ async def test_issue_worker_state_edge_paths_and_result_helpers(
         )
     )
     schema_worker._agent_runtime = schema_runtime  # type: ignore[assignment]
+    schema_worker.workspace_path = workspace_path
     await schema_worker._run_state(Session())
     allowed_schema = schema_runtime.output_schema
     assert allowed_schema is not None
@@ -514,6 +641,7 @@ async def test_issue_worker_state_edge_paths_and_result_helpers(
             next_state="Elsewhere",
         )
     )  # type: ignore[assignment]
+    blocked_worker.workspace_path = workspace_path
     await blocked_worker._run_state(Session())
     blocked_issue = await blocked_tracker.fetch_issue_states_by_ids(["issue-4"])
     assert blocked_issue[0].state == "Blocked"

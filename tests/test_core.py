@@ -9,17 +9,14 @@ from code_factory.application import CodeFactoryService
 from code_factory.config import parse_settings
 from code_factory.errors import ConfigValidationError, WorkflowLoadError, WorkspaceError
 from code_factory.prompts import build_prompt
-from code_factory.workflow import load_workflow
+from code_factory.workflow import load_workflow, parse_workflow
 from code_factory.workspace import WorkspaceManager
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
 
 
-def test_workflow_load_accepts_prompt_only_files(tmp_path: Path) -> None:
-    workflow = tmp_path / "PROMPT_ONLY_WORKFLOW.md"
-    workflow.write_text("Prompt only\n", encoding="utf-8")
-
-    loaded = load_workflow(str(workflow))
+def test_parse_workflow_accepts_prompt_only_files() -> None:
+    loaded = parse_workflow("Prompt only\n")
     assert loaded.config == {}
     assert loaded.prompt_template == "Prompt only"
 
@@ -29,6 +26,14 @@ def test_workflow_load_rejects_non_map_front_matter(tmp_path: Path) -> None:
     workflow.write_text("---\n- not-a-map\n---\nPrompt body\n", encoding="utf-8")
 
     with pytest.raises(WorkflowLoadError):
+        load_workflow(str(workflow))
+
+
+def test_workflow_load_requires_states_mapping(tmp_path: Path) -> None:
+    workflow = tmp_path / "PROMPT_ONLY_WORKFLOW.md"
+    workflow.write_text("Prompt only\n", encoding="utf-8")
+
+    with pytest.raises(ConfigValidationError, match="states is required"):
         load_workflow(str(workflow))
 
 
@@ -145,9 +150,10 @@ def test_settings_require_states_mapping(tmp_path: Path) -> None:
         "---\ntracker:\n  kind: linear\n  project_slug: project\n---\n# prompt: default\nBody\n",
         encoding="utf-8",
     )
+    definition = parse_workflow(workflow.read_text(encoding="utf-8"))
 
     with pytest.raises(ConfigValidationError, match="states is required"):
-        parse_settings(load_workflow(str(workflow)).config)
+        parse_settings(definition.config)
 
 
 def test_snapshot_state_profile_helpers_fall_back_without_profile(

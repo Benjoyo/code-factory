@@ -13,168 +13,418 @@ from code_factory.coding_agents.codex.tools import (
     supported_tool_names,
     tool_specs,
 )
+from code_factory.coding_agents.codex.tools.issue_read import tracker_states
 from code_factory.errors import TrackerClientError
 
 
+class FakeTrackerOps:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    async def read_issue(self, issue: str, **kwargs: object) -> dict:
+        self.calls.append(("read_issue", {"issue": issue, **kwargs}))
+        return {
+            "issue": {
+                "identifier": issue,
+                "title": "Example",
+                "state": {"name": "In Progress"},
+            }
+        }
+
+    async def read_issues(self, **kwargs: object) -> dict:
+        self.calls.append(("read_issues", dict(kwargs)))
+        return {
+            "issues": [
+                {
+                    "identifier": "ENG-1",
+                    "title": "Example",
+                    "state": {"name": "Todo"},
+                }
+            ],
+            "count": 1,
+        }
+
+    async def read_states(self, **kwargs: object) -> dict:
+        self.calls.append(("read_states", dict(kwargs)))
+        return {"states": [{"name": "Todo"}, {"name": "In Progress"}]}
+
+    async def create_issue(self, **kwargs: object) -> dict:
+        self.calls.append(("create_issue", dict(kwargs)))
+        return {"issue_id": "issue-1", "created": True}
+
+    async def update_issue(self, issue: str, **kwargs: object) -> dict:
+        self.calls.append(("update_issue", {"issue": issue, **kwargs}))
+        return {"issue_id": issue, "updated": True}
+
+    async def create_comment(self, issue: str, body: str) -> dict:
+        self.calls.append(("create_comment", {"issue": issue, "body": body}))
+        return {"comment_id": "comment-1", "created": True}
+
+    async def update_comment(self, comment_id: str, body: str) -> dict:
+        self.calls.append(("update_comment", {"comment_id": comment_id, "body": body}))
+        return {"comment_id": comment_id, "updated": True}
+
+    async def link_pr(self, issue: str, url: str, title: str | None) -> dict:
+        self.calls.append(("link_pr", {"issue": issue, "url": url, "title": title}))
+        return {"issue_id": issue, "linked": True}
+
+    async def upload_file(self, file_path: str) -> dict:
+        self.calls.append(("upload_file", {"file_path": file_path}))
+        return {"asset_url": "https://example.com/file.png"}
+
+    async def sync_workpad(
+        self, issue: str, *, body: str | None = None, file_path: str | None = None
+    ) -> dict:
+        self.calls.append(
+            ("sync_workpad", {"issue": issue, "body": body, "file_path": file_path})
+        )
+        return {"comment_id": "workpad-1", "created": body == "hello\n"}
+
+
 def test_tool_specs_are_registry_driven() -> None:
-    assert supported_tool_names() == ["linear_graphql", "sync_workpad"]
-    assert tool_specs() == [
-        {
-            "name": "linear_graphql",
-            "description": "Execute a raw GraphQL query or mutation against Linear using Code Factory's configured auth.",
-            "inputSchema": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["query"],
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "GraphQL query or mutation document to execute against Linear.",
-                    },
-                    "variables": {
-                        "type": "object",
-                        "description": "Optional GraphQL variables object.",
-                        "additionalProperties": True,
-                    },
-                },
-            },
-        },
-        {
-            "name": "sync_workpad",
-            "description": "Create or update a workpad comment on a Linear issue. Reads the body from a local file to keep the conversation context small.",
-            "inputSchema": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["issue_id", "file_path"],
-                "properties": {
-                    "issue_id": {
-                        "type": "string",
-                        "description": 'Linear issue identifier (e.g. "ENG-123") or internal UUID.',
-                    },
-                    "file_path": {
-                        "type": "string",
-                        "description": "Path to a local markdown file whose contents become the comment body.",
-                    },
-                    "comment_id": {
-                        "anyOf": [{"type": "string"}, {"type": "null"}],
-                        "description": "Existing comment ID to update. Omit to create a new comment.",
-                    },
-                },
-            },
-        },
+    assert supported_tool_names() == [
+        "tracker_issue_get",
+        "tracker_issue_search",
+        "tracker_issue_create",
+        "tracker_issue_update",
+        "tracker_comment_create",
+        "tracker_comment_update",
+        "tracker_pr_link",
+        "tracker_file_upload",
+        "workpad_sync",
     ]
+    specs = {item["name"]: item for item in tool_specs()}
+    assert set(specs) == set(supported_tool_names())
+    assert "required" not in specs["tracker_issue_get"]["inputSchema"]
+    assert "required" not in specs["tracker_issue_search"]["inputSchema"]
+    assert specs["tracker_issue_create"]["inputSchema"]["required"] == ["title"]
+    assert "required" not in specs["tracker_issue_update"]["inputSchema"]
+    assert specs["tracker_comment_create"]["inputSchema"]["required"] == ["body"]
+    assert specs["tracker_comment_update"]["inputSchema"]["required"] == [
+        "comment_id",
+        "body",
+    ]
+    assert specs["tracker_pr_link"]["inputSchema"]["required"] == ["url"]
+    assert specs["tracker_file_upload"]["inputSchema"]["required"] == ["file_path"]
+    assert "required" not in specs["workpad_sync"]["inputSchema"]
 
 
 @pytest.mark.asyncio
-async def test_linear_graphql_tool_accepts_raw_query_string() -> None:
-    called: list[tuple[str, dict]] = []
+async def test_tracker_issue_get_defaults_to_current_issue() -> None:
+    ops = FakeTrackerOps()
+    executor = DynamicToolExecutor(ops, current_issue="ENG-1", current_project="proj-1")
 
-    async def fake_linear(query: str, variables: dict) -> dict:
-        called.append((query, variables))
-        return {"data": {"viewer": {"id": "usr_123"}}}
-
-    executor = DynamicToolExecutor(fake_linear)
     outcome = await executor.execute(
-        "linear_graphql", "  query Viewer { viewer { id } }  "
+        "tracker_issue_get",
+        {"include_comments": False, "include_attachments": False},
     )
 
     assert outcome.event == "tool_call_completed"
-    assert called == [("query Viewer { viewer { id } }", {})]
     assert outcome.success is True
-    assert build_tool_response(outcome)["success"] is True
+    assert ops.calls == [
+        (
+            "read_issue",
+            {
+                "issue": "ENG-1",
+                "include_description": True,
+                "include_comments": False,
+                "include_attachments": False,
+                "include_relations": True,
+            },
+        )
+    ]
     assert json.loads(build_tool_response(outcome)["contentItems"][0]["text"]) == {
-        "data": {"viewer": {"id": "usr_123"}}
+        "issue": {
+            "identifier": "ENG-1",
+            "title": "Example",
+            "state": {"name": "In Progress"},
+        }
     }
 
 
 @pytest.mark.asyncio
-async def test_sync_workpad_is_bounded_to_workspace(tmp_path: Path) -> None:
-    calls: list[tuple[str, dict]] = []
+async def test_tracker_issue_search_is_current_project_scoped_and_lightweight() -> None:
+    ops = FakeTrackerOps()
+    executor = DynamicToolExecutor(ops, current_issue="ENG-1", current_project="proj-1")
 
-    async def fake_linear(query: str, variables: dict) -> dict:
-        calls.append((query, variables))
-        return {"data": {"commentCreate": {"success": True}}}
+    outcome = await executor.execute(
+        "tracker_issue_search",
+        {"query": "example", "state": "Todo", "limit": 5},
+    )
 
+    assert outcome.success is True
+    assert ops.calls == [
+        (
+            "read_issues",
+            {
+                "project": "proj-1",
+                "state": "Todo",
+                "query": "example",
+                "limit": 5,
+                "include_description": False,
+                "include_comments": False,
+                "include_attachments": False,
+                "include_relations": False,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tracker_states_defaults_to_current_issue() -> None:
+    ops = FakeTrackerOps()
+    executor = DynamicToolExecutor(
+        ops,
+        current_issue="ENG-1",
+        current_project="proj-1",
+        tools=(tracker_states,),
+    )
+
+    outcome = await executor.execute("tracker_states", {})
+
+    assert outcome.success is True
+    assert ops.calls == [
+        ("read_states", {"issue": "ENG-1", "team": None, "project": None})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_write_tools_default_current_context_and_forward_supported_fields() -> (
+    None
+):
+    ops = FakeTrackerOps()
+    executor = DynamicToolExecutor(ops, current_issue="ENG-1", current_project="proj-1")
+
+    assert (
+        await executor.execute("tracker_issue_create", {"title": "Follow-up"})
+    ).success
+    assert (
+        await executor.execute(
+            "tracker_issue_update",
+            {"description": "Updated", "blocked_by": ["ENG-2"]},
+        )
+    ).success
+    assert (await executor.execute("tracker_comment_create", {"body": "note"})).success
+    assert (
+        await executor.execute(
+            "tracker_comment_update",
+            {"comment_id": "comment-1", "body": "edited"},
+        )
+    ).success
+    assert (
+        await executor.execute(
+            "tracker_pr_link",
+            {"url": "https://example.com/pr/1", "title": "PR 1"},
+        )
+    ).success
+    assert (
+        await executor.execute(
+            "tracker_file_upload",
+            {"file_path": "artifacts/failure.png"},
+        )
+    ).success
+    assert (await executor.execute("workpad_sync", {})).success
+
+    assert ops.calls == [
+        (
+            "create_issue",
+            {
+                "title": "Follow-up",
+                "description": None,
+                "project": "proj-1",
+                "team": None,
+                "state": None,
+                "priority": None,
+                "assignee": None,
+                "labels": [],
+                "blocked_by": [],
+            },
+        ),
+        (
+            "update_issue",
+            {
+                "issue": "ENG-1",
+                "title": None,
+                "description": "Updated",
+                "project": None,
+                "team": None,
+                "state": None,
+                "priority": None,
+                "assignee": None,
+                "labels": None,
+                "blocked_by": ["ENG-2"],
+            },
+        ),
+        ("create_comment", {"issue": "ENG-1", "body": "note"}),
+        ("update_comment", {"comment_id": "comment-1", "body": "edited"}),
+        (
+            "link_pr",
+            {
+                "issue": "ENG-1",
+                "url": "https://example.com/pr/1",
+                "title": "PR 1",
+            },
+        ),
+        ("upload_file", {"file_path": "artifacts/failure.png"}),
+        ("sync_workpad", {"issue": "ENG-1", "body": None, "file_path": "workpad.md"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_workpad_sync_uses_fixed_workspace_file_and_current_issue(
+    tmp_path: Path,
+) -> None:
+    ops = FakeTrackerOps()
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     workpad = workspace / "workpad.md"
     workpad.write_text("hello\n", encoding="utf-8")
 
-    executor = DynamicToolExecutor(fake_linear, allowed_roots=(str(workspace),))
-    outcome = await executor.execute(
-        "sync_workpad",
-        {"issue_id": "ENG-1", "file_path": "workpad.md"},
+    executor = DynamicToolExecutor(
+        ops,
+        allowed_roots=(str(workspace),),
+        current_issue="ENG-1",
+        current_project="proj-1",
     )
+    outcome = await executor.execute("workpad_sync", {})
 
     assert outcome.event == "tool_call_completed"
     assert outcome.success is True
-    assert calls and calls[0][1]["issueId"] == "ENG-1"
+    assert ops.calls == [
+        ("sync_workpad", {"issue": "ENG-1", "body": None, "file_path": "workpad.md"})
+    ]
 
-    outside = tmp_path / "outside.md"
-    outside.write_text("forbidden\n", encoding="utf-8")
-    outcome = await executor.execute(
-        "sync_workpad",
-        {"issue_id": "ENG-1", "file_path": str(outside)},
-    )
-    assert outcome.event == "tool_call_completed"
-    assert outcome.success is False
 
-    outcome = await executor.execute(
-        "sync_workpad",
-        {"issue_id": "ENG-1", "file_path": "workpad.md", "extra": True},
-    )
-    assert outcome.event == "tool_call_completed"
-    assert outcome.success is False
-    payload = outcome.payload
-    assert payload == {"error": {"message": "sync_workpad: unexpected field: `extra`"}}
+@pytest.mark.asyncio
+async def test_missing_current_issue_or_project_is_reported() -> None:
+    ops = FakeTrackerOps()
+    issue_executor = DynamicToolExecutor(ops)
+    issue_outcome = await issue_executor.execute("tracker_issue_get", {})
+    assert issue_outcome.success is False
+    assert issue_outcome.payload == {"error": {"message": "`issue` is required"}}
+
+    project_executor = DynamicToolExecutor(ops, current_issue="ENG-1")
+    project_outcome = await project_executor.execute("tracker_issue_search", {})
+    assert project_outcome.success is False
+    assert project_outcome.payload == {"error": {"message": "`project` is required"}}
 
 
 @pytest.mark.asyncio
 async def test_unsupported_tool_reports_supported_names() -> None:
-    async def fake_linear(query: str, variables: dict) -> dict:
-        return {"data": {}}
-
-    executor = DynamicToolExecutor(fake_linear)
-    outcome = await executor.execute("not_real", {})
+    executor = DynamicToolExecutor(
+        FakeTrackerOps(), current_issue="ENG-1", current_project="proj-1"
+    )
+    outcome = await executor.execute("tracker_read", {})
 
     assert outcome.event == "unsupported_tool_call"
     assert outcome.success is False
-    payload = outcome.payload
-    assert payload["error"]["supportedTools"] == ["linear_graphql", "sync_workpad"]
+    assert outcome.payload["error"]["supportedTools"] == supported_tool_names()
 
 
 @pytest.mark.asyncio
-async def test_linear_graphql_preserves_reference_error_shapes() -> None:
-    async def status_error(query: str, variables: dict) -> dict:
-        raise TrackerClientError(("linear_api_status", 503))
+async def test_tracker_operation_errors_remain_structured() -> None:
+    class FailingTrackerOps:
+        async def read_issues(self, **_kwargs: object) -> dict:
+            raise TrackerClientError(("linear_api_status", 503))
 
-    executor = DynamicToolExecutor(status_error)
-    outcome = await executor.execute(
-        "linear_graphql", {"query": "query Viewer { viewer { id } }"}
+    executor = DynamicToolExecutor(
+        FailingTrackerOps(), current_issue="ENG-1", current_project="proj-1"
     )
+    outcome = await executor.execute("tracker_issue_search", {})
+
     assert outcome.event == "tool_call_completed"
     assert outcome.success is False
-    payload = outcome.payload
-    assert payload == {
+    assert outcome.payload == {
         "error": {
-            "message": "Linear GraphQL request failed with HTTP 503.",
+            "message": "Tracker request failed with HTTP 503.",
             "status": 503,
         }
     }
 
-    async def request_error(query: str, variables: dict) -> dict:
-        raise TrackerClientError(("linear_api_request", "timeout"))
 
-    executor = DynamicToolExecutor(request_error)
-    outcome = await executor.execute(
-        "linear_graphql", {"query": "query Viewer { viewer { id } }"}
+@pytest.mark.asyncio
+async def test_all_tool_handlers_surface_tracker_failures() -> None:
+    class FailingTrackerOps:
+        async def read_issue(self, *args: object, **kwargs: object) -> dict:
+            raise TrackerClientError(("tracker_operation_failed", "read failed"))
+
+        async def read_states(self, *args: object, **kwargs: object) -> dict:
+            raise TrackerClientError(("tracker_operation_failed", "states failed"))
+
+        async def read_issues(self, *args: object, **kwargs: object) -> dict:
+            raise TrackerClientError(("tracker_operation_failed", "search failed"))
+
+        async def create_issue(self, **kwargs: object) -> dict:
+            raise TrackerClientError(("tracker_operation_failed", "create failed"))
+
+        async def update_issue(self, issue: str, **kwargs: object) -> dict:
+            raise TrackerClientError(("tracker_operation_failed", "update failed"))
+
+        async def create_comment(self, issue: str, body: str) -> dict:
+            raise TrackerClientError(("tracker_operation_failed", "comment failed"))
+
+        async def update_comment(self, comment_id: str, body: str) -> dict:
+            raise TrackerClientError(
+                ("tracker_operation_failed", "comment edit failed")
+            )
+
+        async def link_pr(self, issue: str, url: str, title: str | None) -> dict:
+            raise TrackerClientError(("tracker_operation_failed", "link failed"))
+
+        async def upload_file(self, file_path: str) -> dict:
+            raise TrackerClientError(("tracker_operation_failed", "upload failed"))
+
+        async def sync_workpad(
+            self, issue: str, *, body: str | None = None, file_path: str | None = None
+        ) -> dict:
+            raise TrackerClientError(
+                ("tracker_operation_failed", "workpad sync failed")
+            )
+
+    executor = DynamicToolExecutor(
+        FailingTrackerOps(), current_issue="ENG-1", current_project="proj-1"
     )
-    assert outcome.event == "tool_call_completed"
+
+    expectations = {
+        "tracker_issue_get": ({}, "read failed"),
+        "tracker_issue_search": ({}, "search failed"),
+        "tracker_issue_create": ({"title": "Follow-up"}, "create failed"),
+        "tracker_issue_update": ({"description": "Updated"}, "update failed"),
+        "tracker_comment_create": ({"body": "note"}, "comment failed"),
+        "tracker_comment_update": (
+            {"comment_id": "comment-1", "body": "edited"},
+            "comment edit failed",
+        ),
+        "tracker_pr_link": ({"url": "https://example.com/pr/1"}, "link failed"),
+        "tracker_file_upload": (
+            {"file_path": "artifacts/failure.png"},
+            "upload failed",
+        ),
+        "workpad_sync": ({}, "workpad sync failed"),
+    }
+    for tool_name, (arguments, expected_message) in expectations.items():
+        outcome = await executor.execute(tool_name, arguments)
+        assert outcome.success is False
+        assert outcome.payload == {"error": {"message": expected_message}}
+
+    states_executor = DynamicToolExecutor(
+        FailingTrackerOps(),
+        current_issue="ENG-1",
+        current_project="proj-1",
+        tools=(tracker_states,),
+    )
+    states_outcome = await states_executor.execute("tracker_states", {})
+    assert states_outcome.success is False
+    assert states_outcome.payload == {"error": {"message": "states failed"}}
+
+
+@pytest.mark.asyncio
+async def test_invalid_tool_input_and_fail_factory_paths_are_covered() -> None:
+    executor = DynamicToolExecutor(
+        FakeTrackerOps(), current_issue="ENG-1", current_project="proj-1"
+    )
+    outcome = await executor.execute("tracker_comment_update", {"body": "missing id"})
     assert outcome.success is False
-    payload = outcome.payload
-    assert payload == {
-        "error": {
-            "message": "Linear GraphQL request failed before receiving a successful response.",
-            "reason": "'timeout'",
-        }
+    assert outcome.payload == {
+        "error": {"message": "tracker_comment_update: `comment_id` is required"}
     }

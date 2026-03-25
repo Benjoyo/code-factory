@@ -1,5 +1,3 @@
-"""Issue worker that orchestrates agent sessions inside per-issue workspaces."""
-
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +9,7 @@ from ...coding_agents import (
     CodingAgentSession,
     build_coding_agent_runtime,
 )
-from ...issues import Issue, normalize_issue_state
+from ...issues import Issue
 from ...prompts import build_prompt
 from ...structured_results import StructuredTurnResult, structured_turn_output_schema
 from ...trackers.base import Tracker, build_tracker
@@ -27,13 +25,13 @@ from .completion import (
     emit_before_complete_update,
 )
 from .results import build_prompt_issue_data, persist_state_result
+from .utils import tracker_state_is_terminal
+from .workpad import hydrate_workspace_workpad, sync_workspace_workpad
 
 LOGGER = logging.getLogger(__name__)
 
 
 class IssueWorker:
-    """Wraps the agent session loop and hooks for a single issue."""
-
     def __init__(
         self,
         *,
@@ -61,8 +59,6 @@ class IssueWorker:
             await asyncio.shield(self._session.stop())
 
     async def steer(self, message: str) -> str | None:
-        """Forward operator steering to the live coding-agent session."""
-
         if self._session is None:
             raise RuntimeError("worker_has_no_active_session")
         if self._agent_runtime is None:
@@ -81,6 +77,12 @@ class IssueWorker:
                 normal = True
                 reason = "stopped"
                 return
+            await hydrate_workspace_workpad(
+                self.workflow_snapshot.settings,
+                self.tracker,
+                self.issue,
+                workspace.path,
+            )
             if self._agent_runtime is None:
                 self._agent_runtime = build_coding_agent_runtime(
                     self.workflow_snapshot.settings_for_state(self.issue.state),
@@ -161,14 +163,22 @@ class IssueWorker:
             raise RuntimeError(
                 f"invalid_next_state: {current_issue.state!r} -> {target_state!r}"
             )
+        if self.workspace_path is None:
+            raise RuntimeError("missing_workspace_for_workpad_sync")
+        await sync_workspace_workpad(
+            self.workflow_snapshot.settings,
+            self.tracker,
+            current_issue,
+            self.workspace_path,
+        )
         await persist_state_result(
             self.tracker, current_issue, current_issue.state or "", result
         )
         if not current_issue.id:
             raise RuntimeError("missing_issue_id_for_state_transition")
         await self.tracker.update_issue_state(current_issue.id, target_state)
-        self._remove_workspace_after_run = _is_terminal_state(
-            self.workflow_snapshot, target_state
+        self._remove_workspace_after_run = tracker_state_is_terminal(
+            self.workflow_snapshot.settings, target_state
         )
 
     async def _state_prompt(self, issue: Issue) -> str:
@@ -283,11 +293,3 @@ class IssueWorker:
     def _require_agent_runtime(self) -> CodingAgentRuntime:
         assert self._agent_runtime is not None
         return self._agent_runtime
-
-
-def _is_terminal_state(workflow_snapshot: WorkflowSnapshot, state_name: str) -> bool:
-    normalized = normalize_issue_state(state_name)
-    return normalized in {
-        normalize_issue_state(state)
-        for state in workflow_snapshot.settings.tracker.terminal_states
-    }

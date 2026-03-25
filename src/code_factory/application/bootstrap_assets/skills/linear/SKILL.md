@@ -1,179 +1,69 @@
 ---
 name: linear
 description: |
-  Linear GraphQL patterns for Symphony agents. Use `linear_graphql` for all
-  operations — comments, state transitions, PR attachments, file uploads, and
-  issue creation. Never use schema introspection.
+  Tracker operations for Symphony agents. Use the flat `tracker_*` and
+  `workpad_sync` tools for ticket work. Do not use raw tracker access in agent flows.
 ---
 
-# Linear GraphQL
+# Tracker Operations
 
-All Linear operations go through the `linear_graphql` client tool exposed by
-Symphony's app server. It handles auth automatically.
+All ticket operations go through the shared tracker tools exposed by
+Code Factory's app server. They handle auth automatically and keep the agent
+surface self-explanatory.
 
-```json
-{
-  "query": "query or mutation document",
-  "variables": { "optional": "graphql variables" }
-}
-```
-
-One operation per tool call. A top-level `errors` array means the operation
+Use one operation per tool call. A top-level `errors` array means the operation
 failed even if the tool call completed.
+
+## Read
+
+Use these read tools for context gathering:
+
+- `tracker_issue_get` to fetch one issue. Omit `issue` to read the current ticket.
+- `tracker_issue_search` to search lightweight issue summaries in the current
+  workflow project.
+
+Prefer the narrowest read that answers the question. Ask for comments,
+attachments, or relations only when they matter to the task.
 
 ## Workpad
 
-Maintain a local `workpad.md` in your workspace. Edit freely (zero API cost),
-then sync to Linear at milestones — plan finalized, implementation done,
-validation complete. Do not sync after every small change.
+Code Factory hydrates a local `workpad.md` file in the workspace before the run.
+Treat that file as the working copy for plan, acceptance criteria, validation
+notes, and final handoff summary.
 
-**First sync** — create the comment, save the ID:
+- Edit `workpad.md` locally throughout the run.
+- Use `workpad_sync` when you want the tracker comment updated immediately.
+- Code Factory also syncs the local workpad automatically before it persists the
+  final state/result transition.
 
-```graphql
-mutation CreateComment($issueId: String!, $body: String!) {
-  commentCreate(input: { issueId: $issueId, body: $body }) {
-    success
-    comment { id }
-  }
-}
-```
+## Write
 
-Write the returned `comment.id` to `.workpad-id` so subsequent syncs can update.
+Use these write tools for explicit mutations:
 
-**Subsequent syncs** — read `.workpad-id`, update in place:
+- `tracker_issue_create` for follow-up tickets and new work in the current
+  workflow project.
+- `tracker_issue_update` for description, labels, priority, assignee, or
+  blockers. Omit `issue` to update the current ticket.
+- `tracker_comment_create` and `tracker_comment_update` for non-workpad comments
+  when needed.
+- `tracker_pr_link` to attach the branch PR to the issue. Omit `issue` to use
+  the current ticket.
+- `tracker_file_upload` to upload validation media from the workspace.
 
-```graphql
-mutation UpdateComment($id: String!, $body: String!) {
-  commentUpdate(id: $id, input: { body: $body }) { success }
-}
-```
+## Common Workflows
 
-## Query an issue
-
-The orchestrator injects issue context (identifier, title, description, state,
-labels, URL) into your prompt at startup. You usually do not need to re-read.
-
-When you do, use the narrowest lookup for what you have:
-
-```graphql
-# By ticket key (e.g. MT-686)
-query($key: String!) {
-  issue(id: $key) {
-    id identifier title url description
-    state { id name type }
-    project { id name }
-  }
-}
-```
-
-For comments and attachments:
-
-```graphql
-query($id: String!) {
-  issue(id: $id) {
-    comments(first: 50) { nodes { id body user { name } createdAt } }
-    attachments(first: 20) { nodes { url title sourceType } }
-  }
-}
-```
-
-## State transitions
-
-Fetch team states first, then move with the exact `stateId`:
-
-```graphql
-query($id: String!) {
-  issue(id: $id) {
-    team { states { nodes { id name } } }
-  }
-}
-```
-
-```graphql
-mutation($id: String!, $stateId: String!) {
-  issueUpdate(id: $id, input: { stateId: $stateId }) {
-    success
-    issue { state { name } }
-  }
-}
-```
-
-## Attach a PR or URL
-
-```graphql
-# GitHub PR (preferred for PRs)
-mutation($issueId: String!, $url: String!, $title: String) {
-  attachmentLinkGitHubPR(issueId: $issueId, url: $url, title: $title, linkKind: links) {
-    success
-  }
-}
-
-# Plain URL
-mutation($issueId: String!, $url: String!, $title: String) {
-  attachmentLinkURL(issueId: $issueId, url: $url, title: $title) {
-    success
-  }
-}
-```
-
-## File upload
-
-Three steps:
-
-1. Get upload URL:
-
-```graphql
-mutation($filename: String!, $contentType: String!, $size: Int!) {
-  fileUpload(filename: $filename, contentType: $contentType, size: $size, makePublic: true) {
-    success
-    uploadFile { uploadUrl assetUrl headers { key value } }
-  }
-}
-```
-
-2. PUT file bytes to `uploadUrl` with the returned headers (use `curl`).
-3. Embed `assetUrl` in comments/workpad as `![description](url)`.
-
-## Issue creation
-
-Resolve project slug to IDs first:
-
-```graphql
-query($slug: String!) {
-  projects(filter: { slugId: { eq: $slug } }) {
-    nodes { id teams { nodes { id key states { nodes { id name } } } } }
-  }
-}
-```
-
-Then create:
-
-```graphql
-mutation($input: IssueCreateInput!) {
-  issueCreate(input: $input) {
-    success
-    issue { identifier url }
-  }
-}
-```
-
-`$input` fields: `title`, `teamId`, `projectId`, and optionally `description`,
-`priority` (0–4), `stateId`. For relations, follow up with:
-
-```graphql
-mutation($input: IssueRelationCreateInput!) {
-  issueRelationCreate(input: $input) { success }
-}
-```
-
-Input: `issueId`, `relatedIssueId`, `type` (`blocks` or `related`).
+- Inspect issue context with `tracker_issue_get` before making assumptions.
+- Keep `workpad.md` current locally, then call `workpad_sync` when you need the
+  tracker copy refreshed before the end-of-run sync.
+- Create follow-up tickets in the same project when scope spillover is real.
+- Attach PRs and validation media as part of the handoff, not as separate
+  tracking chores.
+- Read other tickets explicitly when the current issue depends on them or needs
+  comparison context.
 
 ## Rules
 
-- **No introspection.** Never use `__type` or `__schema` queries. They return
-  the entire Linear schema (~200K chars) and waste the context window. Every
-  pattern you need is documented above.
-- Keep queries narrowly scoped — ask only for fields you need.
-- Sync the workpad at milestones, not after every change.
-- For state transitions, always fetch team states first — never hardcode state IDs.
-- Prefer `attachmentLinkGitHubPR` over generic URL attachment for GitHub PRs.
+- Keep reads and writes narrowly scoped to the task at hand.
+- Use the hydrated `workpad.md` file as the preferred progress surface for every ticket.
+- Prefer PR attachment and file upload helpers over ad hoc comments.
+- Do not use raw tracker queries or schema introspection in agent runs.

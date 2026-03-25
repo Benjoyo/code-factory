@@ -2,13 +2,12 @@ from __future__ import annotations
 
 """Codex runtime wiring that keeps the orchestrator agnostic of the App Server protocol."""
 
-import inspect
 from typing import Any
 
 from ...config.models import Settings
-from ...errors import TrackerClientError
 from ...issues import Issue
 from ...structured_results import StructuredTurnResult
+from ...trackers import build_tracker_ops
 from ...trackers.base import Tracker
 from ..base import AgentMessageHandler, CodingAgentRuntime, CodingAgentSession
 from .app_server import AppServerClient, AppServerSession
@@ -19,6 +18,7 @@ class CodexRuntime:
     """Real runtime implementation that proxies work through App Server sessions."""
 
     def __init__(self, settings: Settings, tracker: Tracker | None = None) -> None:
+        self._settings = settings
         self._tracker = tracker
         self._client = AppServerClient(
             settings.coding_agent,
@@ -53,20 +53,17 @@ class CodexRuntime:
             output_schema=output_schema,
         )
 
-    def _build_dynamic_tool_executor(self, workspace: str) -> DynamicToolExecutor:
-        """Expose tracker-level GraphQL calls to tools that need them."""
-        graphql = getattr(self._tracker, "graphql", None) if self._tracker else None
-
-        async def graphql_call(query: str, variables: dict[str, Any]) -> dict[str, Any]:
-            if callable(graphql):
-                result = graphql(query, variables)
-                if inspect.isawaitable(result):
-                    return await result
-                if isinstance(result, dict):
-                    return result
-            raise TrackerClientError("missing_linear_api_token")
-
-        return DynamicToolExecutor(graphql_call, allowed_roots=(workspace,))
+    def _build_dynamic_tool_executor(
+        self, workspace: str, issue: Issue
+    ) -> DynamicToolExecutor:
+        """Expose shared tracker operations to tools that need them."""
+        ops = build_tracker_ops(self._settings, allowed_roots=(workspace,))
+        return DynamicToolExecutor(
+            ops,
+            allowed_roots=(workspace,),
+            current_issue=issue.identifier,
+            current_project=self._settings.tracker.project_slug,
+        )
 
 
 def build_coding_agent_runtime(

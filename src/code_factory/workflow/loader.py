@@ -10,6 +10,7 @@ from typing import Any
 
 import yaml
 
+from ..config.utils import configured_active_states
 from ..errors import WorkflowLoadError
 from .models import FileStamp, WorkflowDefinition
 
@@ -26,7 +27,7 @@ def workflow_file_path(selected_path: str | None = None) -> str:
 
 
 def load_workflow(path: str) -> WorkflowDefinition:
-    """Read and parse a workflow file while normalizing missing-file errors."""
+    """Read and validate a runnable workflow file."""
 
     try:
         content = Path(path).read_text(encoding="utf-8")
@@ -34,11 +35,13 @@ def load_workflow(path: str) -> WorkflowDefinition:
         raise WorkflowLoadError(
             ("missing_workflow_file", path, exc.strerror or type(exc).__name__)
         ) from exc
-    return parse_workflow(content)
+    definition = parse_workflow(content)
+    _validate_runnable_workflow(definition)
+    return definition
 
 
 def parse_workflow(content: str) -> WorkflowDefinition:
-    """Split the markdown document into config front matter and prompt template."""
+    """Split a workflow document into config front matter and prompt template."""
 
     front_matter_lines, prompt_lines = split_front_matter(content)
     config = front_matter_yaml_to_map(front_matter_lines)
@@ -49,6 +52,12 @@ def parse_workflow(content: str) -> WorkflowDefinition:
         prompt_template="" if prompt_sections else prompt,
         prompt_sections=prompt_sections,
     )
+
+
+def _validate_runnable_workflow(definition: WorkflowDefinition) -> None:
+    """Reject documents that parse but cannot satisfy the runtime contract."""
+
+    configured_active_states(definition.config, {})
 
 
 def split_front_matter(content: str) -> tuple[list[str], list[str]]:

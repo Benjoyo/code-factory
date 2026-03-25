@@ -29,7 +29,7 @@ Important boundary:
 - Symphony is a scheduler/runner and tracker reader.
 - The harness owns tracker state transitions and persisted structured state-result comments.
 - Coding agents may still manage workpad-style comments, PR metadata, and other workflow-local
-  tracker writes exposed through tools.
+  tracker writes exposed through the structured ticket tools exposed by the runtime.
 - A successful run may end at a workflow-defined handoff state (for example `Human Review`), not
   necessarily `Done`.
 
@@ -294,7 +294,7 @@ Loader behavior:
 
 ### 5.2 File Format
 
-`WORKFLOW.md` is a Markdown file with optional YAML front matter.
+`WORKFLOW.md` is a Markdown file with YAML front matter for runnable workflows.
 
 Design note:
 
@@ -306,7 +306,8 @@ Parsing rules:
 
 - If file starts with `---`, parse lines until the next `---` as YAML front matter.
 - Remaining lines become the prompt body.
-- If front matter is absent, treat the entire file as prompt body and use an empty config map.
+- Raw parsing may still treat a frontmatter-less file as prompt body with an empty config map, but
+  validated workflow loads must reject that shape because runnable workflows require `states`.
 - YAML front matter must decode to a map/object; non-map YAML is an error.
 - Prompt body is trimmed before use.
 - If front matter contains `states`, the prompt body switches to named-section mode:
@@ -1076,43 +1077,43 @@ Unsupported dynamic tool calls:
 Optional client-side tool extension:
 
 - An implementation may expose a limited set of client-side tools to the app-server session.
-- Current optional standardized tool: `linear_graphql`.
+- Current standardized tools: `tracker_read`, `tracker_write`, and `workpad`.
 - If implemented, supported tools should be advertised to the app-server session during startup
   using the protocol mechanism supported by the targeted Codex app-server version.
 - Unsupported tool names should still return a failure result and continue the session.
 
-`linear_graphql` extension contract:
+`tracker_read` extension contract:
 
-- Purpose: execute a raw GraphQL query or mutation against Linear using Symphony's configured
-  tracker auth for the current session.
-- Availability: only meaningful when `tracker.kind == "linear"` and valid Linear auth is configured.
-- Preferred input shape:
+- Purpose: fetch tracker context needed for planning, execution, and handoff.
+- Availability: only meaningful when tracker auth is configured for the current session.
+- Read actions should support issue, project, state, comment, attachment, and relation context.
+- Implementations should allow explicit cross-ticket reads when the caller supplies the target
+  issue, project, or team identifier.
+- Returns normalized tracker JSON with stable, task-oriented field names rather than raw GraphQL
+  payloads.
 
-  ```json
-  {
-    "query": "single GraphQL query or mutation document",
-    "variables": {
-      "optional": "graphql variables object"
-    }
-  }
-  ```
+`tracker_write` extension contract:
 
-- `query` must be a non-empty string.
-- `query` must contain exactly one GraphQL operation.
-- `variables` is optional and, when present, must be a JSON object.
-- Implementations may additionally accept a raw GraphQL query string as shorthand input.
-- Execute one GraphQL operation per tool call.
-- If the provided document contains multiple operations, reject the tool call as invalid input.
-- `operationName` selection is intentionally out of scope for this extension.
-- Reuse the configured Linear endpoint and auth from the active Symphony workflow/runtime config; do
-  not require the coding agent to read raw tokens from disk.
-- Tool result semantics:
-  - transport success + no top-level GraphQL `errors` -> `success=true`
-  - top-level GraphQL `errors` present -> `success=false`, but preserve the GraphQL response body
-    for debugging
-  - invalid input, missing auth, or transport failure -> `success=false` with an error payload
-- Return the GraphQL response or error payload as structured tool output that the model can inspect
-  in-session.
+- Purpose: perform explicit tracker mutations for issue creation, issue updates, state moves,
+  comment creation/updates, PR linking, and file uploads.
+- `issue_move` takes a target state name and resolves the underlying state ID internally.
+- `issue_create` and `issue_update` should support the planning fields agents use most often:
+  `title`, `description`, `project`, `team`, `priority`, `state`, `labels`, `assignee`,
+  `blocked_by`, `blocks`, and `related_to`.
+- `file_upload` should accept a workspace-bounded file path when available and return at least an
+  asset URL plus a ready-to-embed Markdown snippet.
+- Tool results should use a success/failure shape that preserves the tracker payload or error
+  details in-session.
+
+`workpad` extension contract:
+
+- Purpose: manage the single persistent `## Codex Workpad` comment for a ticket.
+- `get` finds the live workpad comment, ignoring resolved comments, and returns `found`,
+  `comment_id`, `url`, `body`, and timestamps.
+- `sync` updates the live workpad if present or creates it if missing.
+- `sync` should accept either inline `body` content or a workspace-bounded `file_path`.
+- The workpad is the preferred progress and handoff surface; agents should not need to manage
+  comment IDs directly.
 
 Illustrative responses (equivalent payload shapes are acceptable if they preserve the same outcome):
 
@@ -1221,7 +1222,7 @@ Recommended error categories:
 - `missing_tracker_project_slug`
 - `linear_api_request` (transport failures)
 - `linear_api_status` (non-200 HTTP)
-- `linear_graphql_errors`
+- `tracker_operation_errors`
 - `linear_unknown_payload`
 - `linear_missing_end_cursor` (pagination integrity error)
 
@@ -1721,8 +1722,9 @@ Possible hardening measures include:
   separate credentials beyond the built-in Codex policy controls.
 - Filtering which Linear issues, projects, teams, labels, or other tracker sources are eligible for
   dispatch so untrusted or out-of-scope tasks do not automatically reach the agent.
-- Narrowing the optional `linear_graphql` tool so it can only read or mutate data inside the
-  intended project scope, rather than exposing general workspace-wide tracker access.
+- Narrowing the optional `tracker_read`/`tracker_write`/`workpad` tool surface so it can only read
+  or mutate data inside the intended project scope, rather than exposing general workspace-wide
+  tracker access.
 - Reducing the set of client-side tools, credentials, filesystem paths, and network destinations
   available to the agent to the minimum needed for the workflow.
 
@@ -2067,10 +2069,10 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
   telemetry are accepted when they preserve the same logical meaning
 - If optional client-side tools are implemented, the startup handshake advertises the supported tool
   specs required for discovery by the targeted app-server version
-- If the optional `linear_graphql` client-side tool extension is implemented:
-  - the tool is advertised to the session
-  - valid `query` / `variables` inputs execute against configured Linear auth
-  - top-level GraphQL `errors` produce `success=false` while preserving the GraphQL body
+- If the optional tracker client-side tool extension is implemented:
+  - the tools are advertised to the session
+  - valid tracker read/write/workpad inputs execute against configured tracker auth
+  - tool-level errors produce `success=false` while preserving the tracker body or error payload
   - invalid arguments, missing auth, and transport failures return structured failure payloads
   - unsupported tool names still fail without stalling the session
 
@@ -2141,8 +2143,8 @@ Use the same validation profiles as Section 17:
 
 - Optional HTTP server honors CLI `--port` over `server.port`, uses a safe default bind host, and
   exposes the baseline endpoints/error semantics in Section 13.7 if shipped.
-- Optional `linear_graphql` client-side tool extension exposes raw Linear GraphQL access through the
-  app-server session using configured Symphony auth.
+- Optional tracker tool extension exposes structured tracker reads and writes through the app-server
+  session using configured Symphony auth.
 - TODO: Persist retry queue and session metadata across process restarts.
 - TODO: Make observability settings configurable in workflow front matter without prescribing UI
   implementation details.

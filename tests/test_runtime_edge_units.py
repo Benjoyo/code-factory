@@ -82,6 +82,19 @@ def make_actor(
     )
 
 
+@pytest.fixture(autouse=True)
+def patch_issue_worker_workpad(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _noop(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.actor.hydrate_workspace_workpad", _noop
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.actor.sync_workspace_workpad", _noop
+    )
+
+
 @pytest.mark.asyncio
 async def test_observability_workspace_and_hook_edge_paths(
     tmp_path: Path,

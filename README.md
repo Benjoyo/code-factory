@@ -11,7 +11,7 @@ Use this port if you want the Symphony behavior and workflow contract in a Pytho
 - Python 3.12
 - [`uv`](https://docs.astral.sh/uv/)
 - A valid `WORKFLOW.md`
-- Access to Linear for the tracker configured in `WORKFLOW.md`
+- Access to the tracker configured in `WORKFLOW.md`
 - A working Codex app-server command available to `codex.command`
 
 Create a starter workflow in a new project by running:
@@ -22,7 +22,7 @@ uv run cf init
 
 `cf init` now walks you through the starter values with Rich prompts, renders a
 project-specific `WORKFLOW.md`, and copies this repo's bundled skills into
-`./.agents/skills`. The starter workflow now uses the optional `states` mapping
+`./.agents/skills`. The starter workflow now uses the required `states` mapping
 plus a shared `# prompt: default` section, with `Todo` rendered as a harness-run
 auto-transition to `In Progress` by default. Re-run with `--force` if you want
 to overwrite an existing workflow or skills bundle.
@@ -43,6 +43,29 @@ uvx --from /Users/bennet/git/code-factory cf serve --no-guardrails /path/to/WORK
 
 If you omit the workflow path, the CLI defaults to `./WORKFLOW.md`. Bare service
 invocations like `cf --no-guardrails` are routed to `cf serve`.
+
+## Ticket Surfaces
+
+Agent sessions use the shared `tracker_read`, `tracker_write`, and `workpad`
+tools for ticket work. Operators use the CLI for the same surface area:
+
+```bash
+cf issue get ISSUE
+cf issue list [--project PROJECT] [--team TEAM] [--state STATE]
+cf issue create --team TEAM --title TITLE
+cf issue update ISSUE
+cf issue move ISSUE --state STATE
+cf issue link-pr ISSUE --url URL
+cf comment list ISSUE
+cf comment create ISSUE
+cf comment update COMMENT
+cf workpad get ISSUE
+cf workpad sync ISSUE
+```
+
+See [docs/ticket-cli.md](docs/ticket-cli.md) for the full command reference and
+common workflows. The hidden `cf tracker raw` command is reserved for admin and
+debug use only.
 
 ## CLI Reference
 

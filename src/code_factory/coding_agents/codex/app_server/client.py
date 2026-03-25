@@ -87,7 +87,7 @@ class AppServerClient:
         output_schema: dict[str, Any] | None = None,
     ) -> StructuredTurnResult:
         handler = on_message or default_on_message
-        executor = tool_executor or self._build_tool_executor(session.workspace)
+        executor = tool_executor or self._build_tool_executor(session.workspace, issue)
         turn_id = await start_turn(
             session,
             prompt,
@@ -180,17 +180,23 @@ class AppServerClient:
             routing_task=routing_task,
         )
 
-    def _build_tool_executor(self, workspace: str) -> DynamicToolExecutor:
+    def _build_tool_executor(self, workspace: str, issue: Issue) -> DynamicToolExecutor:
         """Provide a DynamicToolExecutor bound to the workspace and tracker tools."""
         if self._dynamic_tool_factory is None:
 
-            async def missing_tool_backend(
-                _query: str, _variables: dict[str, Any]
-            ) -> dict[str, Any]:
-                raise AppServerError("missing_dynamic_tool_backend")
+            class MissingToolBackend:
+                async def __call__(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+                    raise AppServerError("missing_dynamic_tool_backend")
 
-            return DynamicToolExecutor(missing_tool_backend, allowed_roots=(workspace,))
-        return self._dynamic_tool_factory(workspace)
+                def __getattr__(self, _name: str) -> Any:
+                    return self.__call__
+
+            return DynamicToolExecutor(
+                MissingToolBackend(),
+                allowed_roots=(workspace,),
+                current_issue=issue.identifier,
+            )
+        return self._dynamic_tool_factory(workspace, issue)
 
     def _validate_workspace_cwd(self, workspace: str) -> str:
         """Check the workspace path is inside the configured workspace root."""

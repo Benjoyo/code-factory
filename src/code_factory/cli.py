@@ -18,12 +18,15 @@ from .observability.cli_support import (
     build_cli_config,
     resolve_control_endpoint,
 )
+from .trackers.cli import register_tracker_commands
 from .workflow.loader import DEFAULT_WORKFLOW_FILENAME
 from .workspace.review_runner import run_review_session
 
 ACK_FLAG = "--no-guardrails"
 _HELP_FLAGS = frozenset({"-h", "--help"})
-_CLI_COMMANDS = frozenset({"init", "review", "serve", "steer"})
+_CLI_COMMANDS = frozenset(
+    {"comment", "init", "issue", "review", "serve", "steer", "tracker", "workpad"}
+)
 
 app = typer.Typer(
     add_completion=False,
@@ -33,6 +36,7 @@ app = typer.Typer(
     ),
     rich_markup_mode="markdown",
 )
+register_tracker_commands(app)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -21,8 +21,10 @@ from .results import (
 class ToolContext:
     """Shared runtime dependencies injected into dynamic tools."""
 
-    linear_client: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
+    tracker_ops: Any
     allowed_roots: tuple[str, ...] = ()
+    current_issue: str | None = None
+    current_project: str | None = None
 
 
 type ToolArguments = Any
@@ -88,14 +90,18 @@ class DynamicToolExecutor:
 
     def __init__(
         self,
-        linear_client: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]],
+        tracker_ops: Any,
         *,
         allowed_roots: tuple[str, ...] = (),
+        current_issue: str | None = None,
+        current_project: str | None = None,
         tools: tuple[ToolDefinition[Any], ...] = (),
     ) -> None:
         self._context = ToolContext(
-            linear_client=linear_client,
+            tracker_ops=tracker_ops,
             allowed_roots=allowed_roots,
+            current_issue=current_issue,
+            current_project=current_project,
         )
         self._tools: tuple[ToolDefinition[Any], ...] = cast(
             tuple[ToolDefinition[Any], ...], tools or TOOLS
@@ -182,6 +188,8 @@ def _validation_error_payload(tool_name: str, reason: Exception) -> dict[str, An
         error = reason.errors()[0]
         field = ".".join(str(item) for item in error.get("loc", ()))
         message = error.get("msg", "invalid arguments")
+        if isinstance(message, str) and message.startswith("Value error, "):
+            message = message.removeprefix("Value error, ")
         if error.get("type") == "extra_forbidden" and field:
             message = f"unexpected field: `{field}`"
         elif error.get("type") == "missing" and field:
@@ -247,7 +255,21 @@ def _compact_nullable_object_union(
     }
 
 
-from .linear_graphql import linear_graphql
-from .sync_workpad import sync_workpad
+from .attachment_tools import tracker_file_upload, tracker_pr_link
+from .comment_tools import tracker_comment_create, tracker_comment_update
+from .issue_read import tracker_issue_get, tracker_issue_search
+from .issue_write import tracker_issue_create, tracker_issue_update
+from .workpad_tools import workpad_sync
 
-TOOLS = (linear_graphql, sync_workpad)
+TOOLS: tuple[ToolDefinition[Any], ...] = (
+    tracker_issue_get,
+    # tracker_states intentionally withheld for now; the orchestrator owns transitions.
+    tracker_issue_search,
+    tracker_issue_create,
+    tracker_issue_update,
+    tracker_comment_create,
+    tracker_comment_update,
+    tracker_pr_link,
+    tracker_file_upload,
+    workpad_sync,
+)

@@ -14,6 +14,7 @@ from code_factory.trackers.base import (
     parse_tracker_settings,
     validate_tracker_settings,
 )
+from code_factory.trackers.linear import LinearOps
 from code_factory.trackers.linear.client import LinearClient
 from code_factory.trackers.linear.config import (
     parse_tracker_settings as parse_linear_tracker_settings,
@@ -41,6 +42,13 @@ from code_factory.trackers.linear.decoding import (
 from code_factory.trackers.linear.graphql import (
     LinearGraphQLClient,
     summarize_error_body,
+)
+from code_factory.trackers.linear.ops_queries import (
+    ATTACH_LINK_FALLBACK_MUTATION,
+    ATTACH_PR_MUTATION,
+    CREATE_ISSUE_MUTATION,
+    CREATE_RELATION_MUTATION,
+    ISSUES_QUERY,
 )
 from code_factory.trackers.linear.queries import (
     COMMENTS_QUERY,
@@ -502,3 +510,164 @@ async def test_linear_client_core_behaviors(tmp_path: Path) -> None:
     )
     with pytest.raises(TrackerClientError, match="missing_linear_viewer_identity"):
         await broken._routing_assignee_filter()
+
+
+@pytest.mark.asyncio
+async def test_linear_ops_read_issues_paginates_before_filtering(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+    calls: list[dict[str, Any]] = []
+
+    async def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        assert query == ISSUES_QUERY
+        calls.append(variables)
+        if variables.get("after") is None:
+            return {
+                "data": {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "issue-1",
+                                "identifier": "ENG-1",
+                                "title": "Ignore me",
+                                "priority": 0,
+                                "url": "https://example/ENG-1",
+                                "branchName": "codex/eng-1",
+                                "state": {
+                                    "id": "state-1",
+                                    "name": "Todo",
+                                    "type": "unstarted",
+                                },
+                                "project": {
+                                    "id": "project-2",
+                                    "name": "Other",
+                                    "slugId": "other",
+                                    "url": "https://example/project-2",
+                                },
+                                "team": {"id": "team-1", "name": "Team", "key": "ENG"},
+                                "labels": {"nodes": []},
+                            }
+                        ],
+                        "pageInfo": {"hasNextPage": True, "endCursor": "cursor-2"},
+                    }
+                }
+            }
+        return {
+            "data": {
+                "issues": {
+                    "nodes": [
+                        {
+                            "id": "issue-2",
+                            "identifier": "ENG-2",
+                            "title": "Backlog item",
+                            "priority": 0,
+                            "url": "https://example/ENG-2",
+                            "branchName": "codex/eng-2",
+                            "state": {
+                                "id": "state-2",
+                                "name": "Backlog",
+                                "type": "backlog",
+                            },
+                            "project": {
+                                "id": "project-1",
+                                "name": "Project",
+                                "slugId": "project",
+                                "url": "https://example/project-1",
+                            },
+                            "team": {"id": "team-1", "name": "Team", "key": "ENG"},
+                            "labels": {"nodes": []},
+                        }
+                    ],
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                }
+            }
+        }
+
+    ops = LinearOps(settings, graphql)
+    payload = await ops.read_issues(
+        project="project",
+        state="Backlog",
+        query=None,
+        limit=1,
+        include_description=False,
+        include_comments=False,
+        include_attachments=False,
+        include_relations=False,
+    )
+    assert [issue["identifier"] for issue in payload["issues"]] == ["ENG-2"]
+    assert [call.get("after") for call in calls] == [None, "cursor-2"]
+
+
+@pytest.mark.asyncio
+async def test_linear_ops_create_issue_surfaces_relation_failures(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+
+    class FakeLinearOps(LinearOps):
+        async def _resolve_issue_target(
+            self, project: object, team: object
+        ) -> tuple[dict | None, dict | None]:
+            return {"id": "team-1"}, None
+
+        async def _issue_input(
+            self,
+            values: dict[str, object],
+            *,
+            team_node: dict | None,
+            project_node: dict | None,
+            issue_node: dict | None,
+        ) -> dict:
+            return {"title": values.get("title")}
+
+        async def _resolve_issue_id(self, issue: str) -> str:
+            return issue
+
+    async def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        if query == CREATE_ISSUE_MUTATION:
+            return {
+                "data": {
+                    "issueCreate": {
+                        "success": True,
+                        "issue": {
+                            "id": "ENG-1",
+                            "identifier": "ENG-1",
+                            "title": "Issue",
+                            "url": "https://example/ENG-1",
+                        },
+                    }
+                }
+            }
+        if query == CREATE_RELATION_MUTATION:
+            return {"data": {"issueRelationCreate": {"success": False}}}
+        raise AssertionError(f"unexpected query: {query}")
+
+    with pytest.raises(TrackerClientError, match="tracker relation update failed"):
+        await FakeLinearOps(settings, graphql).create_issue(
+            title="Issue",
+            blocked_by=["ENG-2"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_linear_ops_link_pr_surfaces_failed_fallback(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+
+    class FakeLinearOps(LinearOps):
+        async def _resolve_issue_id(self, issue: str) -> str:
+            return issue
+
+    async def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        if query == ATTACH_PR_MUTATION:
+            return {"data": {"attachmentLinkGitHubPR": {"success": False}}}
+        if query == ATTACH_LINK_FALLBACK_MUTATION:
+            return {"data": {"issueUpdate": {"success": False, "issue": None}}}
+        raise AssertionError(f"unexpected query: {query}")
+
+    with pytest.raises(TrackerClientError, match="tracker PR link attachment failed"):
+        await FakeLinearOps(settings, graphql).link_pr(
+            "ENG-1",
+            "https://github.com/org/repo/pull/1",
+            "PR",
+        )

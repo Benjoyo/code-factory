@@ -105,7 +105,7 @@ while IFS= read -r line; do
     1) printf '%s\n' '{{"id":1,"result":{{}}}}' ;;
     2) printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-90b"}}}}}}' ;;
     3) printf '%s\n' '{{"id":3,"result":{{"turn":{{"id":"turn-90b"}}}}}}'
-       printf '%s\n' '{{"id":103,"method":"item/tool/call","params":{{"tool":"linear_graphql","callId":"call-90b","threadId":"thread-90b","turnId":"turn-90b","arguments":{{"query":"query Viewer {{ viewer {{ id }} }}"}}}}}}' ;;
+       printf '%s\n' '{{"id":103,"method":"item/tool/call","params":{{"tool":"tracker_issue_get","callId":"call-90b","threadId":"thread-90b","turnId":"turn-90b","arguments":{{}}}}}}' ;;
     4) printf '%s\n' '{structured_result}'
        printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"status":"completed"}}}}}}'
        exit 0 ;;

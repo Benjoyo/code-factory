@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -18,6 +19,19 @@ def write_fake_agent(path: Path, body: str) -> Path:
     path.write_text(body, encoding="utf-8")
     path.chmod(0o755)
     return path
+
+
+@pytest.fixture(autouse=True)
+def patch_issue_worker_workpad(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _noop(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.actor.hydrate_workspace_workpad", _noop
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.actor.sync_workspace_workpad", _noop
+    )
 
 
 @pytest.mark.asyncio

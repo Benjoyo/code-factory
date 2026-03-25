@@ -12,3 +12,11 @@ def tracker_state_is_active(settings: Settings, state_name: str | None) -> bool:
     return normalized in {
         normalize_issue_state(state) for state in settings.tracker.active_states
     }
+
+
+def tracker_state_is_terminal(settings: Settings, state_name: str) -> bool:
+    """Return True when the tracker treats a state as terminal."""
+    normalized = normalize_issue_state(state_name)
+    return normalized in {
+        normalize_issue_state(state) for state in settings.tracker.terminal_states
+    }
