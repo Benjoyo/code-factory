@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ..config.models import Settings
+from ..errors import ConfigValidationError
 from ..issues import normalize_issue_state
 from .state_profiles import WorkflowStateProfile
 
@@ -47,6 +48,16 @@ class WorkflowSnapshot:
     state_profiles: dict[str, WorkflowStateProfile] = field(default_factory=dict)
     loaded_at: datetime = field(default_factory=utc_now)
 
+    def __post_init__(self) -> None:
+        for normalized_state, profile in self.state_profiles.items():
+            if (
+                normalize_issue_state(self.failure_state_for_state(profile.state_name))
+                == normalized_state
+            ):
+                raise ConfigValidationError(
+                    f"states.{profile.state_name}.resolved failure_state must not equal the current state"
+                )
+
     @property
     def prompt_template(self) -> str:
         """Expose the prompt directly so callers do not reach into `definition`."""
@@ -83,6 +94,12 @@ class WorkflowSnapshot:
                 ),
             ),
         )
+
+    def failure_state_for_state(self, state_name: str | None) -> str:
+        profile = self.state_profile(state_name)
+        if profile is None or profile.failure_state is None:
+            return self.settings.failure_state
+        return profile.failure_state
 
     def state_profile(self, state_name: str | None) -> WorkflowStateProfile | None:
         return self.state_profiles.get(normalize_issue_state(state_name))

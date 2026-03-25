@@ -11,14 +11,10 @@ from typing import Any
 
 from ...issues import Issue
 from ...workspace import WorkspaceManager
-from ..messages import WorkerCleanupComplete, WorkerExited
+from ..messages import WorkerExited
 from ..support import maybe_aclose
 from .context import OrchestratorContext
-from .policy import (
-    active_issue_state,
-    next_retry_attempt,
-    terminal_issue_state,
-)
+from .policy import active_issue_state, next_retry_attempt, terminal_issue_state
 from .snapshot import snapshot_payload
 from .tokens import apply_token_delta, extract_rate_limits, extract_token_delta
 
@@ -133,64 +129,17 @@ class ReconciliationMixin:
             self.completed.add(message.issue_id)
             self._release_issue_claim(message.issue_id)
         elif message.normal:
-            self._schedule_issue_retry(
-                message.issue_id,
-                next_retry_attempt(entry),
-                identifier=entry.identifier,
+            await self._retry_or_escalate_worker_exit(
+                entry,
+                attempt=next_retry_attempt(entry),
                 error="worker exited without completing a state transition",
-                workspace_path=entry.workspace_path,
             )
         else:
-            self._schedule_issue_retry(
-                message.issue_id,
-                next_retry_attempt(entry),
-                identifier=entry.identifier,
+            await self._retry_or_escalate_worker_exit(
+                entry,
+                attempt=next_retry_attempt(entry),
                 error=f"agent exited: {message.reason or 'unknown'}",
-                workspace_path=entry.workspace_path,
             )
-
-    async def _handle_stopping_worker_exit(
-        self: OrchestratorContext, message: WorkerExited, entry
-    ) -> None:
-        """React to a worker already flagged for shutdown, honoring workspace cleanup."""
-        if entry.cleanup_workspace and entry.workspace_path:
-            asyncio.create_task(
-                self._cleanup_workspace_after_exit(
-                    message.issue_id, entry.workspace_path
-                )
-            )
-            return
-        self.running.pop(message.issue_id, None)
-        if entry.post_exit_retry_attempt is not None:
-            self._schedule_issue_retry(
-                message.issue_id,
-                entry.post_exit_retry_attempt,
-                identifier=entry.identifier,
-                error=entry.post_exit_retry_error,
-                workspace_path=entry.workspace_path,
-            )
-        else:
-            self._release_issue_claim(message.issue_id)
-
-    async def _cleanup_workspace_after_exit(
-        self: OrchestratorContext, issue_id: str, workspace_path: str
-    ) -> None:
-        """Remove a workspace after a worker finishes and report cleanup completion."""
-        manager = self._workspace_manager_for_path(workspace_path)
-        error: str | None = None
-        try:
-            await manager.remove(workspace_path)
-        except Exception as exc:
-            error = repr(exc)
-        await self.queue.put(WorkerCleanupComplete(issue_id, workspace_path, error))
-
-    def _handle_worker_cleanup_complete(
-        self: OrchestratorContext, message: WorkerCleanupComplete
-    ) -> None:
-        """Drop entries that finished cleanup and free associated claims."""
-        self.running.pop(message.issue_id, None)
-        self.retry_entries.pop(message.issue_id, None)
-        self._release_issue_claim(message.issue_id)
 
     def _snapshot_payload(self: OrchestratorContext) -> dict[str, Any]:
         """Build the orchestrator snapshot shown to dashboards and APIs."""

@@ -166,6 +166,7 @@ def test_init_command_copies_default_workflow(
         tracker_kind="linear",
         project_slug="demo-project",
         git_repo="git@github.com:example/demo.git",
+        failure_state="Human Review",
         active_states=("Todo", "In Progress"),
         terminal_states=("Done",),
         workspace_root="/tmp/demo-workspaces",
@@ -193,6 +194,7 @@ def test_init_command_rejects_existing_workflow(
             tracker_kind="linear",
             project_slug="demo-project",
             git_repo="git@github.com:example/demo.git",
+            failure_state="Human Review",
             active_states=("Todo",),
             terminal_states=("Done",),
             workspace_root="/tmp/demo-workspaces",
@@ -217,6 +219,7 @@ def test_init_command_force_overwrites_existing_workflow(
         tracker_kind="memory",
         project_slug="demo-project",
         git_repo="https://github.com/example/demo.git",
+        failure_state="Human Review",
         active_states=("Queued",),
         terminal_states=("Done",),
         workspace_root="/tmp/demo-workspaces",
@@ -1192,6 +1195,30 @@ def test_multi_state_workflow_helper_validation_paths() -> None:
             {"default": "Body"},
             "states.Todo.hooks is not supported for auto states",
         ),
+        (
+            {
+                "states": {
+                    "Todo": {
+                        "prompt": "default",
+                        "completion": {"require_pushed_head": True, "unknown": True},
+                    }
+                }
+            },
+            {"default": "Body"},
+            "states.Todo.completion has unsupported keys: unknown",
+        ),
+        (
+            {
+                "states": {
+                    "Todo": {
+                        "auto_next_state": "In Progress",
+                        "completion": {"require_pr": True},
+                    }
+                }
+            },
+            {"default": "Body"},
+            "states.Todo.completion is not supported for auto states",
+        ),
     ],
 )
 def test_parse_state_profiles_validation_paths(
@@ -1212,6 +1239,10 @@ def test_state_profiles_and_result_helpers_cover_edge_paths(tmp_path: Path) -> N
                     "prompt": "default",
                     "allowed_next_states": ["Human Review"],
                     "failure_state": "Blocked",
+                    "completion": {
+                        "require_pushed_head": True,
+                        "require_pr": True,
+                    },
                     "codex": {
                         "reasoning_effort": "high",
                         "skills": ["commit"],
@@ -1234,10 +1265,14 @@ def test_state_profiles_and_result_helpers_cover_edge_paths(tmp_path: Path) -> N
     assert progress_profile.codex_model("gpt-5.4") == "gpt-5.4"
     assert progress_profile.codex_reasoning_effort("low") == "high"
     assert progress_profile.codex_repo_skill_allowlist(None) == ("commit",)
+    assert progress_profile.completion.require_pushed_head is True
+    assert progress_profile.completion.require_pr is True
     assert progress_profile.hooks.before_complete == "uv run pytest -q"
     assert progress_profile.hooks.before_complete_max_feedback_loops == 0
     assert progress_profile.allows_next_state("Human Review") is True
     assert progress_profile.allows_next_state("Done") is False
+    assert profiles["merging"].completion.require_pushed_head is False
+    assert profiles["merging"].completion.require_pr is False
     assert profiles["merging"].hooks.before_complete is None
     assert profiles["merging"].hooks.before_complete_max_feedback_loops == 3
     assert structured_turn_output_schema(("Done", "Review"))["required"] == [
@@ -1336,7 +1371,7 @@ async def test_workflow_store_reload_run_and_error_paths(
     assert snapshots == []
 
     workflow.write_text(
-        "---\ntracker:\n  kind: linear\n  api_key: token\n  project_slug: next\n"
+        "---\nfailure_state: Human Review\ntracker:\n  kind: linear\n  api_key: token\n  project_slug: next\n"
         "states:\n  Todo:\n    prompt: default\n---\n# prompt: default\nnew\n",
         encoding="utf-8",
     )
@@ -1872,3 +1907,19 @@ def test_issue_helpers() -> None:
     assert issue.label_names() == ["backend", "ops"]
     assert normalize_issue_state(" In Progress ") == "in progress"
     assert normalize_issue_state(None) == ""
+
+
+def test_workflow_snapshot_rejects_resolved_failure_state_equal_to_current(
+    tmp_path: Path,
+) -> None:
+    workflow = write_workflow_file(
+        tmp_path / "INVALID_FAILURE_STATE.md",
+        failure_state="Todo",
+        states={"Todo": {"prompt": "default"}},
+    )
+
+    with pytest.raises(
+        ConfigValidationError,
+        match="states.Todo.resolved failure_state must not equal the current state",
+    ):
+        make_snapshot(workflow)

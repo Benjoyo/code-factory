@@ -55,7 +55,7 @@ def todo_issue_blocked_by_non_terminal(settings: Settings, issue: Issue) -> bool
 def terminal_issue_state(settings: Settings, state_name: str | None) -> bool:
     """Identify whether a state belongs to the workflow's terminal set."""
     return normalize_issue_state(state_name) in {
-        normalize_issue_state(state) for state in settings.tracker.terminal_states
+        normalize_issue_state(state) for state in settings.terminal_states
     }
 
 

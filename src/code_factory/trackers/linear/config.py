@@ -12,7 +12,6 @@ from ...config.utils import (
     optional_string,
     require_mapping,
     resolve_secret_setting,
-    string_list,
     string_with_default,
 )
 from ...errors import ConfigValidationError
@@ -62,9 +61,4 @@ def parse_tracker_settings(config: Mapping[str, Any] | Any) -> TrackerSettings:
             "tracker.assignee",
         ),
         active_states=configured_active_states(config, tracker_raw),
-        terminal_states=string_list(
-            tracker_raw.get("terminal_states"),
-            "tracker.terminal_states",
-            ("Closed", "Cancelled", "Canceled", "Duplicate", "Done"),
-        ),
     )

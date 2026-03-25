@@ -86,6 +86,7 @@ async def test_review_resolution_prefers_pr_head_and_dedupes_targets() -> None:
 
     settings = parse_settings(
         {
+            "failure_state": "Human Review",
             "tracker": {"kind": "memory"},
             "states": {"In Progress": {"prompt": "default"}},
             "review": {

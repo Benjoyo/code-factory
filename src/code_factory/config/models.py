@@ -10,7 +10,7 @@ from .defaults import DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT
 
 @dataclass(frozen=True, slots=True)
 class TrackerSettings:
-    """Tracker integration metadata such as the endpoint, API key, and active states."""
+    """Tracker integration metadata such as the endpoint, API key, and project scope."""
 
     kind: str | None = None
     endpoint: str = ""
@@ -18,13 +18,6 @@ class TrackerSettings:
     project_slug: str | None = None
     assignee: str | None = None
     active_states: tuple[str, ...] = ()
-    terminal_states: tuple[str, ...] = (
-        "Closed",
-        "Cancelled",
-        "Canceled",
-        "Duplicate",
-        "Done",
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +40,7 @@ class AgentSettings:
 
     max_concurrent_agents: int = 10
     max_retry_backoff_ms: int = 300_000
+    max_worker_retries: int = 3
     max_concurrent_agents_by_state: dict[str, int] = field(default_factory=dict)
 
 
@@ -126,6 +120,8 @@ class ReviewSettings:
 class Settings:
     """Root settings model consumed by the orchestrator snapshots."""
 
+    failure_state: str
+    terminal_states: tuple[str, ...]
     tracker: TrackerSettings
     polling: PollingSettings
     workspace: WorkspaceSettings

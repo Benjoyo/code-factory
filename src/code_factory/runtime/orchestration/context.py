@@ -60,6 +60,9 @@ class OrchestratorContext(Protocol):
     async def _cleanup_workspace_after_exit(
         self, issue_id: str, workspace_path: str
     ) -> None: ...
+    async def _retry_or_escalate_worker_exit(
+        self, entry, *, attempt: int, error: str | None
+    ) -> None: ...
 
     async def _dispatch_issue(
         self,
@@ -93,6 +96,8 @@ class OrchestratorContext(Protocol):
         identifier: str | None,
         error: str | None = None,
         workspace_path: str | None = None,
+        state_name: str | None = None,
+        mode: str = "failure",
     ) -> None: ...
 
     def _monotonic_ms(self) -> int: ...

@@ -27,7 +27,7 @@ async def test_integration_worker_driven_lifecycle_runs_hooks_and_cleans_workspa
         monkeypatch=monkeypatch,
         issues=[issue],
         workflow_overrides={
-            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "terminal_states": ["Done", "Canceled"],
             "states": {
                 "Todo": {"prompt": "default"},
                 "Review": {"prompt": "default"},
@@ -131,7 +131,7 @@ async def test_integration_review_to_rework_spans_multiple_worker_lifetimes(
         monkeypatch=monkeypatch,
         issues=[issue],
         workflow_overrides={
-            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "terminal_states": ["Done", "Canceled"],
             "states": {
                 "Todo": {"prompt": "default"},
                 "Review": {"prompt": "default"},
@@ -198,7 +198,7 @@ async def test_integration_state_transitions_start_fresh_prompts(
                 "# prompt: merge\n"
                 "Merge prompt for {{ issue.state }}.\n"
             ),
-            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "terminal_states": ["Done", "Canceled"],
             "states": {
                 "Todo": {"prompt": "default"},
                 "In Progress": {"prompt": "default"},
@@ -248,7 +248,7 @@ async def test_integration_todo_blocked_by_non_terminal_issue_waits_until_unbloc
         tmp_path=tmp_path,
         monkeypatch=monkeypatch,
         issues=[blocker, blocked],
-        workflow_overrides={"tracker": {"terminal_states": ["Done", "Canceled"]}},
+        workflow_overrides={"terminal_states": ["Done", "Canceled"]},
         plans_by_identifier={
             "ENG-301": [
                 TurnPlan(
@@ -303,7 +303,7 @@ async def test_integration_upstream_results_are_available_in_prompt_context(
                 "{% endif %}"
                 "State: {{ issue.state }}\n"
             ),
-            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "terminal_states": ["Done", "Canceled"],
             "states": {"Build": {"prompt": "default"}},
         },
         plans_by_identifier={
@@ -339,7 +339,7 @@ async def test_integration_global_and_state_concurrency_limits(
         monkeypatch=monkeypatch,
         issues=issues,
         workflow_overrides={
-            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "terminal_states": ["Done", "Canceled"],
             "states": {
                 "Todo": {"prompt": "default"},
                 "Review": {"prompt": "default"},
@@ -384,7 +384,7 @@ async def test_integration_non_terminal_reassignment_and_terminal_cancel_behavio
         tmp_path=tmp_path,
         monkeypatch=monkeypatch,
         issues=[cancel_issue],
-        workflow_overrides={"tracker": {"terminal_states": ["Done", "Canceled"]}},
+        workflow_overrides={"terminal_states": ["Done", "Canceled"]},
         plans_by_identifier={
             "ENG-611": [TurnPlan(pause_until_stopped=True)],
             "ENG-612": [TurnPlan(pause_until_stopped=True)],
@@ -420,7 +420,7 @@ async def test_integration_before_run_timeout_aborts_attempt_and_still_runs_afte
         monkeypatch=monkeypatch,
         issues=[issue],
         workflow_overrides={
-            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "terminal_states": ["Done", "Canceled"],
             "hooks": {
                 "before_run": "sleep 0.2",
                 "after_run": hook_script(hook_log, "after_run"),
@@ -465,7 +465,8 @@ async def test_integration_workflow_reload_applies_new_config_and_invalid_reload
     def rewrite(before_run_label: str, active_states: list[str]) -> None:
         write_workflow_file(
             tmp_path / "WORKFLOW.md",
-            tracker={"kind": "memory", "terminal_states": ["Done", "Canceled"]},
+            tracker={"kind": "memory"},
+            terminal_states=["Done", "Canceled"],
             states={state: {"prompt": "default"} for state in active_states},
             polling={"interval_ms": 25},
             workspace={"root": str(tmp_path / "workspaces")},
@@ -479,7 +480,7 @@ async def test_integration_workflow_reload_applies_new_config_and_invalid_reload
         issues=[issue_one, issue_two],
         run_workflow_store=True,
         workflow_overrides={
-            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "terminal_states": ["Done", "Canceled"],
             "states": {"Todo": {"prompt": "default"}},
             "hooks": {"before_run": hook_script(hook_log, "v1")},
         },

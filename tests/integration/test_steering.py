@@ -22,7 +22,7 @@ async def test_integration_observability_steers_active_issue(
         monkeypatch=monkeypatch,
         issues=[issue],
         run_http_server=True,
-        workflow_overrides={"tracker": {"terminal_states": ["Done", "Canceled"]}},
+        workflow_overrides={"terminal_states": ["Done", "Canceled"]},
         plans_by_identifier={"ENG-901": [plan]},
     ) as harness:
         await harness.refresh()

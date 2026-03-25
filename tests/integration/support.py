@@ -323,6 +323,10 @@ class IntegrationHarness:
             "code_factory.runtime.worker.actor.build_coding_agent_runtime",
             lambda settings, tracker: DummyRuntime(self.controller, self.tracker),
         )
+        self.monkeypatch.setattr(
+            "code_factory.runtime.worker.actor.prepare_workspace_repository",
+            lambda *_args, **_kwargs: asyncio.sleep(0),
+        )
         workflow_config = deep_merge(
             {
                 "tracker": {"kind": "memory"},

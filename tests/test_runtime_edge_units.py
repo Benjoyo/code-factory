@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -58,6 +59,15 @@ from code_factory.workflow.store import WorkflowStoreActor
 from code_factory.workspace.hooks import run_hook
 from code_factory.workspace.manager import WorkspaceManager
 from code_factory.workspace.paths import validate_workspace_path
+from code_factory.workspace.repository import (
+    ensure_git_repository,
+    ensure_local_workpad_artifact,
+    head_sha,
+    prepare_workspace_repository,
+    run_repository_command,
+    upstream_name,
+)
+from code_factory.workspace.review_shell import ShellResult
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
 
@@ -82,6 +92,17 @@ def make_actor(
     )
 
 
+def run_git(args: list[str], cwd: Path) -> str:
+    result = subprocess.run(
+        args,
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 @pytest.fixture(autouse=True)
 def patch_issue_worker_workpad(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _noop(*_args: Any, **_kwargs: Any) -> None:
@@ -92,6 +113,9 @@ def patch_issue_worker_workpad(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(
         "code_factory.runtime.worker.actor.sync_workspace_workpad", _noop
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.actor.prepare_workspace_repository", _noop
     )
 
 
@@ -175,6 +199,207 @@ async def test_observability_workspace_and_hook_edge_paths(
     )
     with pytest.raises(WorkspaceError, match="workspace_path_unreadable"):
         validate_workspace_path("/tmp/root", "/tmp/workspace")
+
+
+@pytest.mark.asyncio
+async def test_prepare_workspace_repository_branch_bootstrap_and_workpad_ignore(
+    tmp_path: Path,
+) -> None:
+    remote = tmp_path / "remote.git"
+    seed = tmp_path / "seed"
+    workspace_one = tmp_path / "workspace-one"
+    workspace_two = tmp_path / "workspace-two"
+    workspace_three = tmp_path / "workspace-three"
+    run_git(["git", "init", "--bare", str(remote)], tmp_path)
+    seed.mkdir()
+    run_git(["git", "init", "-b", "main"], seed)
+    run_git(["git", "config", "user.email", "codex@example.com"], seed)
+    run_git(["git", "config", "user.name", "Codex"], seed)
+    (seed / "app.txt").write_text("one\n", encoding="utf-8")
+    run_git(["git", "add", "app.txt"], seed)
+    run_git(["git", "commit", "-m", "initial"], seed)
+    run_git(["git", "remote", "add", "origin", str(remote)], seed)
+    run_git(["git", "push", "-u", "origin", "main"], seed)
+    run_git(["git", "symbolic-ref", "HEAD", "refs/heads/main"], remote)
+    run_git(["git", "checkout", "-b", "codex/eng-2"], seed)
+    run_git(["git", "push", "-u", "origin", "codex/eng-2"], seed)
+    run_git(["git", "checkout", "main"], seed)
+
+    run_git(["git", "clone", str(remote), str(workspace_one)], tmp_path)
+    run_git(["git", "checkout", "-b", "codex/eng-1"], workspace_one)
+    run_git(["git", "checkout", "main"], workspace_one)
+    (workspace_one / ".git" / "info" / "exclude").write_text(
+        "existing-entry",
+        encoding="utf-8",
+    )
+    await prepare_workspace_repository(
+        str(workspace_one),
+        make_issue(identifier="ENG-1", branch_name="codex/eng-1"),
+    )
+    assert run_git(["git", "branch", "--show-current"], workspace_one) == "codex/eng-1"
+    exclude = (workspace_one / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+    assert "/workpad.md" in exclude
+    (workspace_one / "workpad.md").write_text("local notes\n", encoding="utf-8")
+    assert run_git(["git", "status", "--porcelain"], workspace_one) == ""
+    await prepare_workspace_repository(
+        str(workspace_one),
+        make_issue(identifier="ENG-1", branch_name="codex/eng-1"),
+    )
+
+    run_git(["git", "clone", str(remote), str(workspace_two)], tmp_path)
+    await prepare_workspace_repository(
+        str(workspace_two),
+        make_issue(identifier="ENG-2", branch_name="codex/eng-2"),
+    )
+    assert run_git(["git", "branch", "--show-current"], workspace_two) == "codex/eng-2"
+    assert (
+        run_git(
+            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+            workspace_two,
+        )
+        == "origin/codex/eng-2"
+    )
+
+    run_git(["git", "clone", str(remote), str(workspace_three)], tmp_path)
+    await prepare_workspace_repository(
+        str(workspace_three),
+        make_issue(identifier="ENG-3"),
+    )
+    assert (
+        run_git(["git", "branch", "--show-current"], workspace_three) == "codex/eng-3"
+    )
+    assert run_git(["git", "rev-parse", "HEAD"], workspace_three) == run_git(
+        ["git", "rev-parse", "origin/main"], workspace_three
+    )
+    run_git(["git", "checkout", "main"], workspace_three)
+    (workspace_three / "app.txt").write_text("dirty\n", encoding="utf-8")
+    with pytest.raises(WorkspaceError, match="workspace_branch_checkout_dirty"):
+        await prepare_workspace_repository(
+            str(workspace_three),
+            make_issue(identifier="ENG-4"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_prepare_workspace_repository_rejects_tracked_workpad(
+    tmp_path: Path,
+) -> None:
+    remote = tmp_path / "remote.git"
+    seed = tmp_path / "seed"
+    workspace = tmp_path / "workspace"
+    run_git(["git", "init", "--bare", str(remote)], tmp_path)
+    seed.mkdir()
+    run_git(["git", "init", "-b", "main"], seed)
+    run_git(["git", "config", "user.email", "codex@example.com"], seed)
+    run_git(["git", "config", "user.name", "Codex"], seed)
+    (seed / "workpad.md").write_text("tracked\n", encoding="utf-8")
+    run_git(["git", "add", "workpad.md"], seed)
+    run_git(["git", "commit", "-m", "track workpad"], seed)
+    run_git(["git", "remote", "add", "origin", str(remote)], seed)
+    run_git(["git", "push", "-u", "origin", "main"], seed)
+    run_git(["git", "symbolic-ref", "HEAD", "refs/heads/main"], remote)
+    run_git(["git", "clone", str(remote), str(workspace)], tmp_path)
+
+    with pytest.raises(WorkspaceError, match="workspace_workpad_tracked"):
+        await prepare_workspace_repository(
+            str(workspace),
+            make_issue(identifier="ENG-5"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_repository_helper_edge_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(WorkspaceError, match="workspace_repository_missing"):
+        await ensure_git_repository(str(tmp_path))
+
+    async def failed_repo_command(_workspace: str, _command: str) -> ShellResult:
+        return ShellResult(status=1, stdout="", stderr="boom")
+
+    monkeypatch.setattr(
+        "code_factory.workspace.repository.repository_command",
+        failed_repo_command,
+    )
+    assert await upstream_name(str(tmp_path)) is None
+    with pytest.raises(WorkspaceError, match="workspace_repository_command_failed"):
+        await run_repository_command(str(tmp_path), "git status")
+
+    async def blank_repo_command(_workspace: str, _command: str) -> ShellResult:
+        return ShellResult(status=0, stdout="\n", stderr="")
+
+    monkeypatch.setattr(
+        "code_factory.workspace.repository.repository_command",
+        blank_repo_command,
+    )
+    assert await upstream_name(str(tmp_path)) is None
+
+    async def success_repo_command(_workspace: str, _command: str) -> ShellResult:
+        return ShellResult(status=0, stdout="abc123\n", stderr="")
+
+    monkeypatch.setattr(
+        "code_factory.workspace.repository.repository_command",
+        success_repo_command,
+    )
+    assert await head_sha(str(tmp_path)) == "abc123"
+
+    async def noop(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    async def main_branch(_workspace: str) -> str | None:
+        return "main"
+
+    async def huge_status(_workspace: str) -> str:
+        return "x" * 2_001
+
+    monkeypatch.setattr("code_factory.workspace.repository.ensure_git_repository", noop)
+    monkeypatch.setattr(
+        "code_factory.workspace.repository.ensure_local_workpad_artifact",
+        noop,
+    )
+    monkeypatch.setattr(
+        "code_factory.workspace.repository.current_branch_name", main_branch
+    )
+    monkeypatch.setattr(
+        "code_factory.workspace.repository.worktree_status", huge_status
+    )
+    with pytest.raises(WorkspaceError, match="truncated: git status output exceeded"):
+        await prepare_workspace_repository(
+            str(tmp_path), make_issue(identifier="ENG-6")
+        )
+
+    async def relative_repo_command(_workspace: str, command: str) -> ShellResult:
+        if "ls-files" in command:
+            return ShellResult(status=1, stdout="", stderr="")
+        return ShellResult(status=0, stdout="true\n", stderr="")
+
+    async def relative_git_path(_workspace: str, _command: str) -> ShellResult:
+        return ShellResult(status=0, stdout=".git/info/exclude\n", stderr="")
+
+    monkeypatch.setattr(
+        "code_factory.workspace.repository.repository_command",
+        relative_repo_command,
+    )
+    monkeypatch.setattr(
+        "code_factory.workspace.repository.run_repository_command",
+        relative_git_path,
+    )
+    await ensure_local_workpad_artifact(str(tmp_path))
+    assert (tmp_path / ".git" / "info" / "exclude").read_text(
+        encoding="utf-8"
+    ) == "/workpad.md\n"
+
+    absolute_exclude = tmp_path / "absolute-info" / "exclude"
+
+    async def absolute_git_path(_workspace: str, _command: str) -> ShellResult:
+        return ShellResult(status=0, stdout=f"{absolute_exclude}\n", stderr="")
+
+    monkeypatch.setattr(
+        "code_factory.workspace.repository.run_repository_command",
+        absolute_git_path,
+    )
+    await ensure_local_workpad_artifact(str(tmp_path))
+    assert absolute_exclude.read_text(encoding="utf-8") == "/workpad.md\n"
 
 
 @pytest.mark.asyncio

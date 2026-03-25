@@ -50,7 +50,16 @@ def test_config_defaults_and_env_resolution(
     assert settings.tracker.api_key == "env-linear-token"
     assert settings.polling.interval_ms == 30_000
     assert settings.tracker.active_states == ("Todo", "In Progress")
+    assert settings.terminal_states == (
+        "Closed",
+        "Cancelled",
+        "Canceled",
+        "Duplicate",
+        "Done",
+    )
     assert settings.agent.max_retry_backoff_ms == 5_000
+    assert settings.agent.max_worker_retries == 3
+    assert settings.failure_state == "Human Review"
 
     workflow = write_workflow_file(
         tmp_path / "BAD_WORKFLOW.md", polling={"interval_ms": "invalid"}
@@ -62,6 +71,14 @@ def test_config_defaults_and_env_resolution(
         tmp_path / "DEPRECATED_AGENT_KEY.md", agent={"max_turns": 5}
     )
     with pytest.raises(ConfigValidationError, match="agent has unsupported keys"):
+        parse_settings(load_workflow(str(workflow)).config)
+
+    workflow = tmp_path / "MISSING_FAILURE_STATE.md"
+    workflow.write_text(
+        "---\ntracker:\n  kind: linear\n  project_slug: project\nstates:\n  Todo:\n    prompt: default\n---\n# prompt: default\nBody\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigValidationError, match="failure_state is required"):
         parse_settings(load_workflow(str(workflow)).config)
 
 

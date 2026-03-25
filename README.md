@@ -215,6 +215,9 @@ active workflow states:
   `auto_next_state`.
 - Agent-run states may optionally define `allowed_next_states` and
   `failure_state`.
+- Agent-run states may optionally define `completion.require_pushed_head` and
+  `completion.require_pr` to enable native pre-complete readiness checks before
+  state persistence.
 - Agent-run states may optionally define `hooks.before_complete` and
   `hooks.before_complete_max_feedback_loops` to enforce per-state completion
   gates such as tests or lint checks.
@@ -226,8 +229,17 @@ active workflow states:
   that set.
 - When `failure_state` is set, blocked results always route there regardless of
   any agent-supplied `next_state`.
+- `completion.require_pushed_head` requires an attached branch, a clean
+  worktree, an upstream, and local `HEAD` fully pushed to the upstream before
+  the transition is accepted.
+- `completion.require_pr` implies `require_pushed_head` and additionally
+  requires exactly one open PR for the current branch at the current `HEAD`.
+- Before each agent session starts, the harness prepares the issue branch in the
+  workspace and adds `workpad.md` to the local git exclude file so the
+  workspace-local workpad does not dirty the tree.
 - `hooks.before_complete` runs after the agent emits a transition result but
-  before the harness persists the result or updates the tracker state.
+  after native completion checks pass, and before the harness persists the
+  result or updates the tracker state.
 - `before_complete` exit code `0` accepts completion, `2` feeds `stderr` back
   into the same session for another turn up to the configured loop cap, and any
   other non-zero status logs a warning but still allows completion.

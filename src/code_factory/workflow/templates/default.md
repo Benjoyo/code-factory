@@ -2,7 +2,8 @@
 tracker:
   kind: [[CF_TRACKER_KIND]]
   project_slug: [[CF_PROJECT_SLUG]]
-  terminal_states:
+failure_state: [[CF_FAILURE_STATE]]
+terminal_states:
 [[CF_TERMINAL_STATES]]
 states:
 [[CF_STATE_PROFILES]]
@@ -121,7 +122,7 @@ Use the issue tracker only via the `tracker_issue_get`,
 - `linear`: interact with Linear.
 - `commit`: produce clean, logical commits during implementation.
 - `push`: keep remote branch current and publish updates.
-- `pull`: keep branch updated with latest `origin/main` before handoff.
+- `pull`: keep the issue branch updated with the latest remote default base branch before handoff.
 - `land`: when ticket reaches `Merging`, use the `land` skill, which includes the merge loop.
 
 ## Status map
@@ -149,16 +150,19 @@ Use the issue tracker only via the `tracker_issue_get`,
    - `Done` -> do nothing and shut down.
 4. Check whether a PR already exists for the current branch and whether it is closed.
    - If a branch PR exists and is `CLOSED` or `MERGED`, treat prior branch work as non-reusable for this run.
-   - Create a fresh branch from `origin/main` and restart execution flow as a new attempt.
+   - Rebuild the plan from reproduction as a fresh attempt on the harness-prepared issue branch.
 5. Expect a hydrated `workpad.md` file in the workspace before analysis/planning/implementation work begins.
 6. Add a short comment if state and issue content are inconsistent, then proceed with the safest flow.
 
 ## Step 1: Start/continue execution (In Progress or Rework)
 
 1.  The orchestrator hydrates `workpad.md` in the workspace before the run:
+    - The harness ensures `workpad.md` is treated as a local-only workspace artifact and not a tracked repo file.
     - If a live tracker workpad exists, `workpad.md` starts with that content.
     - Otherwise `workpad.md` starts with a lightweight starter structure.
     - Treat `workpad.md` as the source of truth for planning, progress, and handoff notes during the run.
+    - The harness also ensures you start on the issue branch before implementation begins.
+    - The issue branch name may come from tracker metadata or a harness-generated fallback; treat the checked-out branch as canonical for the run.
 2.  Do not perform tracker state transitions yourself; the harness applies the state move from your structured result.
 3.  Immediately reconcile the workpad before new edits:
     - Check off items that are already done.
@@ -175,7 +179,7 @@ Use the issue tracker only via the `tracker_issue_get`,
     - If the ticket description/comment context includes `Validation`, `Test Plan`, or `Testing` sections, copy those requirements into the workpad `Acceptance Criteria` and `Validation` sections as required checkboxes (no optional downgrade).
 7.  Run a principal-style self-review of the plan and refine it in `workpad.md`.
 8.  Before implementing, capture a concrete reproduction signal and record it in the workpad `Notes` section (command/output, screenshot, or deterministic UI behavior).
-9.  Run the `pull` skill to sync with latest `origin/main` before any code edits, then record the pull/sync result in the workpad `Notes`.
+9.  Run the `pull` skill to sync with the latest remote default base branch before any code edits, then record the pull/sync result in the workpad `Notes`.
     - Include a `pull skill evidence` note with:
       - merge source(s),
       - result (`clean` or `conflicts resolved`),
@@ -236,7 +240,7 @@ Use this only when completion is blocked by missing required tools or missing au
 7.  Before every `git push` attempt, run the required validation for your scope and confirm it passes; if it fails, address issues and rerun until green, then commit and push changes.
 8.  Attach PR URL to the issue (prefer attachment; use the synced workpad only if attachment is unavailable).
     - Ensure the GitHub PR has label `code-factory` (add it if missing).
-9.  Merge latest `origin/main` into branch, resolve conflicts, and rerun checks.
+9.  Merge the latest remote default base branch into the issue branch, resolve conflicts, and rerun checks.
 10. Update `workpad.md` with final checklist status and validation notes.
     - Mark completed plan/acceptance/validation checklist items as checked.
     - Add final handoff notes (commit + validation summary) in the same file.
@@ -270,8 +274,8 @@ Use this only when completion is blocked by missing required tools or missing au
 1. Treat `Rework` as a full approach reset, not incremental patching.
 2. Re-read the full issue body and all human comments; explicitly identify what will be done differently this attempt.
 3. Close the existing PR tied to the issue.
-5. Create a fresh branch from `origin/main`.
-6. Start over from the normal kickoff flow:
+4. Stay on the harness-prepared issue branch.
+5. Start over from the normal kickoff flow:
    - Resume in the current active rework state; do not mutate ticket state directly.
    - Rebuild `workpad.md` into a fresh plan/checklist and execute end-to-end.
 
@@ -288,7 +292,7 @@ Use this only when completion is blocked by missing required tools or missing au
 ## Guardrails
 
 - If the branch PR is already closed/merged, do not reuse that branch or prior implementation state when restarting work.
-- For closed/merged branch PRs, create a new branch from `origin/main` and restart from reproduction/planning as if starting fresh.
+- For closed/merged branch PRs, restart from reproduction/planning as if starting fresh, but stay aligned with the harness-prepared issue branch and tracker branch metadata.
 - If issue state is `Backlog`, do not modify it; wait for human to move to `Todo`.
 - Do not edit the issue body/description for planning or progress tracking.
 - Use the hydrated `workpad.md` file as the only workpad working copy during the run.

@@ -20,6 +20,8 @@ class RetryEntry:
     token: str
     error: str | None = None
     workspace_path: str | None = None
+    state_name: str | None = None
+    mode: str = "failure"
 
 
 @dataclass(slots=True)

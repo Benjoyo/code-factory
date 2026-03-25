@@ -67,8 +67,8 @@ def workflow_payload(
             "kind": settings.tracker.kind,
             "project_slug": settings.tracker.project_slug,
             "active_states": list(settings.tracker.active_states),
-            "terminal_states": list(settings.tracker.terminal_states),
         },
+        "terminal_states": list(settings.terminal_states),
         "workspace": {"root": settings.workspace.root},
         "observability": {
             "dashboard_enabled": settings.observability.dashboard_enabled,

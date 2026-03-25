@@ -10,6 +10,7 @@ from rich.table import Table
 
 from code_factory.application.bootstrap import (
     DEFAULT_ACTIVE_STATES,
+    DEFAULT_FAILURE_STATE,
     DEFAULT_TERMINAL_STATES,
     ProjectInitResult,
     build_state_table,
@@ -41,6 +42,7 @@ def sample_values() -> WorkflowTemplateValues:
         tracker_kind="linear",
         project_slug="demo-project",
         git_repo="git@github.com:example/demo.git",
+        failure_state="Human Review",
         active_states=("Todo", "In Progress"),
         terminal_states=("Done", "Canceled"),
         workspace_root="/tmp/code-factory-workspaces",
@@ -56,7 +58,15 @@ def test_render_default_workflow_replaces_template_tokens() -> None:
     assert '"demo-project"' in rendered
     assert "git clone --depth 1 git@github.com:example/demo.git ." in rendered
     assert "make setup" not in rendered
+    assert 'failure_state: "Human Review"' in rendered
     assert '  "Todo":\n    auto_next_state: In Progress' in rendered
+    assert (
+        '  "In Progress":\n'
+        "    prompt: default\n"
+        "    completion:\n"
+        "      require_pushed_head: true\n"
+        "      require_pr: true"
+    ) in rendered
     assert "  max_concurrent_agents: 2" in rendered
     assert "# prompt: default" in rendered
     assert "{{ issue.identifier }}" in rendered
@@ -67,6 +77,7 @@ def test_default_workflow_template_contains_meta_tokens() -> None:
     template = default_workflow_template()
 
     assert token("PROJECT_SLUG") in template
+    assert token("FAILURE_STATE") in template
     assert token("STATE_PROFILES") in template
 
 
@@ -218,6 +229,7 @@ def test_prompt_project_init_collects_all_values(
         lambda label, **kwargs: {
             "Project slug": "demo-project",
             "Git repository": "git@github.com:example/demo.git",
+            "Failure state": DEFAULT_FAILURE_STATE,
             "Workspace root": "/tmp/code-factory-workspaces",
         }[label],
     )
@@ -239,6 +251,7 @@ def test_prompt_project_init_collects_all_values(
             tracker_kind="linear",
             project_slug="demo-project",
             git_repo="git@github.com:example/demo.git",
+            failure_state=DEFAULT_FAILURE_STATE,
             active_states=DEFAULT_ACTIVE_STATES,
             terminal_states=DEFAULT_TERMINAL_STATES,
             workspace_root="/tmp/code-factory-workspaces",

@@ -27,11 +27,13 @@ from .review import parse_review_settings
 from .utils import (
     boolean,
     normalize_state_limits,
+    optional_non_blank_string,
     optional_non_negative_int,
     optional_string,
     positive_int,
     require_mapping,
     resolve_path_value,
+    string_list,
     string_with_default,
 )
 
@@ -52,11 +54,23 @@ def parse_settings(config: Mapping[str, Any]) -> Settings:
         {
             "max_concurrent_agents",
             "max_retry_backoff_ms",
+            "max_worker_retries",
             "max_concurrent_agents_by_state",
         },
     )
+    failure_state = optional_non_blank_string(
+        config.get("failure_state"), "failure_state"
+    )
+    if failure_state is None:
+        raise ConfigValidationError("failure_state is required")
 
     return Settings(
+        failure_state=failure_state,
+        terminal_states=string_list(
+            config.get("terminal_states"),
+            "terminal_states",
+            ("Closed", "Cancelled", "Canceled", "Duplicate", "Done"),
+        ),
         tracker=tracker,
         polling=PollingSettings(
             interval_ms=positive_int(
@@ -78,6 +92,11 @@ def parse_settings(config: Mapping[str, Any]) -> Settings:
                 agent_raw.get("max_retry_backoff_ms"),
                 "agent.max_retry_backoff_ms",
                 300_000,
+            ),
+            max_worker_retries=positive_int(
+                agent_raw.get("max_worker_retries"),
+                "agent.max_worker_retries",
+                3,
             ),
             max_concurrent_agents_by_state=normalize_state_limits(
                 agent_raw.get("max_concurrent_agents_by_state"),

@@ -15,14 +15,11 @@ from ...structured_results import StructuredTurnResult, structured_turn_output_s
 from ...trackers.base import Tracker, build_tracker
 from ...workflow.models import WorkflowSnapshot
 from ...workspace import WorkspaceManager
-from ...workspace.hooks import HookCommandResult, run_hook_command
+from ...workspace.repository import prepare_workspace_repository
 from ..messages import AgentWorkerUpdate, WorkerExited
 from ..support import maybe_aclose
 from .completion import (
-    before_complete_feedback_prompt,
-    before_complete_hook_env,
-    before_complete_issue_context,
-    emit_before_complete_update,
+    run_pre_complete_turns,
 )
 from .results import build_prompt_issue_data, persist_state_result
 from .utils import tracker_state_is_terminal
@@ -72,6 +69,7 @@ class IssueWorker:
         try:
             workspace = await self.workspace_manager.create_for_issue(self.issue)
             self.workspace_path = workspace.path
+            await prepare_workspace_repository(workspace.path, self.issue)
             await self.workspace_manager.run_before_run_hook(workspace.path, self.issue)
             if self.stop_event.is_set():
                 normal = True
@@ -151,15 +149,34 @@ class IssueWorker:
             )
         if self.stop_event.is_set():
             return
-        result = await self._run_state_turns(session, current_issue, profile)
+        result = await run_pre_complete_turns(
+            run_turn=lambda prompt: self._require_agent_runtime().run_turn(
+                session,
+                prompt,
+                current_issue,
+                on_message=self._on_agent_message,
+                output_schema=structured_turn_output_schema(
+                    profile.allowed_next_states
+                ),
+            ),
+            settings=self.workflow_snapshot.settings,
+            workspace_path=self.workspace_path,
+            issue=current_issue,
+            profile=profile,
+            queue=self.queue,
+            issue_id=self.issue.id,
+            failure_state=self.workflow_snapshot.failure_state_for_state(
+                current_issue.state
+            ),
+            initial_prompt=await self._state_prompt(current_issue),
+            should_stop=self.stop_event.is_set,
+        )
         if self.stop_event.is_set():
             return
         target_state = self._target_state(
             current_issue, result.decision, result.next_state
         )
-        if not (
-            result.decision == "blocked" and profile.failure_state is not None
-        ) and not profile.allows_next_state(target_state):
+        if result.decision != "blocked" and not profile.allows_next_state(target_state):
             raise RuntimeError(
                 f"invalid_next_state: {current_issue.state!r} -> {target_state!r}"
             )
@@ -190,75 +207,6 @@ class IssueWorker:
             issue_data=issue_data,
         )
 
-    async def _run_state_turns(
-        self, session: CodingAgentSession, issue: Issue, profile
-    ) -> StructuredTurnResult:
-        prompt = await self._state_prompt(issue)
-        feedback_attempts = 0
-        while True:
-            result = await self._require_agent_runtime().run_turn(
-                session,
-                prompt,
-                issue,
-                on_message=self._on_agent_message,
-                output_schema=structured_turn_output_schema(
-                    profile.allowed_next_states
-                ),
-            )
-            if self.stop_event.is_set():
-                return result
-            hook = profile.hooks.before_complete
-            if result.decision != "transition" or not hook:
-                return result
-            hook_result = await self._run_before_complete_hook(issue, result, hook)
-            if hook_result.status == 0:
-                await emit_before_complete_update(
-                    self.queue, self.issue.id, "before_complete_passed", hook_result
-                )
-                return result
-            if hook_result.status != 2:
-                LOGGER.warning(
-                    "before_complete hook failed but completion will continue issue_id=%s issue_identifier=%s workspace=%s status=%s stderr=%s",
-                    issue.id or "n/a",
-                    issue.identifier or "n/a",
-                    self.workspace_path or "n/a",
-                    hook_result.status,
-                    hook_result.stderr.rstrip() or "<no stderr>",
-                )
-                await emit_before_complete_update(
-                    self.queue, self.issue.id, "before_complete_warned", hook_result
-                )
-                return result
-            await emit_before_complete_update(
-                self.queue, self.issue.id, "before_complete_blocked", hook_result
-            )
-            feedback_attempts += 1
-            if feedback_attempts > profile.hooks.before_complete_max_feedback_loops:
-                raise RuntimeError("before_complete_feedback_limit_exhausted")
-            prompt = before_complete_feedback_prompt(
-                result,
-                hook_result.stderr,
-                feedback_attempts,
-                profile.hooks.before_complete_max_feedback_loops,
-            )
-
-    async def _run_before_complete_hook(
-        self,
-        issue: Issue,
-        result: StructuredTurnResult,
-        command: str,
-    ) -> HookCommandResult:
-        if self.workspace_path is None:
-            raise RuntimeError("missing_workspace_for_before_complete")
-        return await run_hook_command(
-            self.workflow_snapshot.settings,
-            command,
-            self.workspace_path,
-            before_complete_issue_context(issue),
-            "before_complete",
-            env=before_complete_hook_env(issue, result),
-        )
-
     def _target_state(self, issue: Issue, decision: str, next_state: str | None) -> str:
         profile = self.workflow_snapshot.state_profile(issue.state)
         if profile is None:
@@ -268,9 +216,7 @@ class IssueWorker:
                 raise RuntimeError("missing_next_state_for_transition")
             target_state = next_state
         elif decision == "blocked":
-            target_state = profile.failure_state or next_state
-            if target_state is None:
-                raise RuntimeError("missing_failure_state_for_blocked_result")
+            target_state = self.workflow_snapshot.failure_state_for_state(issue.state)
         else:
             raise RuntimeError(f"unsupported_turn_decision: {decision!r}")
         if (

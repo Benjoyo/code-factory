@@ -25,7 +25,7 @@ async def test_integration_worker_errors_retry_with_capped_backoff_and_recover(
         monkeypatch=monkeypatch,
         issues=[issue],
         workflow_overrides={
-            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "terminal_states": ["Done", "Canceled"],
             "agent": {"max_retry_backoff_ms": 70},
         },
         plans_by_identifier={
@@ -67,7 +67,7 @@ async def test_integration_stall_timeout_restarts_worker_and_recovers(
         monkeypatch=monkeypatch,
         issues=[issue],
         workflow_overrides={
-            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "terminal_states": ["Done", "Canceled"],
             "codex": {"stall_timeout_ms": 40},
             "agent": {"max_retry_backoff_ms": 60},
         },
@@ -106,7 +106,7 @@ async def test_integration_dispatch_refresh_failures_and_stale_revalidation_do_n
         tmp_path=tmp_path,
         monkeypatch=monkeypatch,
         issues=[issue],
-        workflow_overrides={"tracker": {"terminal_states": ["Done", "Canceled"]}},
+        workflow_overrides={"terminal_states": ["Done", "Canceled"]},
         plans_by_identifier={"ENG-1001": [TurnPlan(result=transition_result("Done"))]},
     ) as harness:
         actor = harness.actor
@@ -179,7 +179,7 @@ async def test_integration_retry_poll_failure_then_recovery(
         monkeypatch=monkeypatch,
         issues=[issue],
         workflow_overrides={
-            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "terminal_states": ["Done", "Canceled"],
             "agent": {"max_retry_backoff_ms": 60},
         },
         plans_by_identifier={
@@ -243,7 +243,7 @@ async def test_integration_retry_releases_missing_issue_and_reschedules_when_slo
         monkeypatch=monkeypatch,
         issues=[missing_issue, running_issue],
         workflow_overrides={
-            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "terminal_states": ["Done", "Canceled"],
             "agent": {"max_concurrent_agents": 1, "max_retry_backoff_ms": 60},
         },
         plans_by_identifier={
@@ -289,7 +289,7 @@ async def test_integration_retry_releases_missing_issue_and_reschedules_when_slo
         monkeypatch=monkeypatch,
         issues=[retry_issue, slot_holder],
         workflow_overrides={
-            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "terminal_states": ["Done", "Canceled"],
             "agent": {"max_concurrent_agents": 1, "max_retry_backoff_ms": 60},
         },
         plans_by_identifier={
@@ -346,7 +346,7 @@ async def test_integration_retry_terminal_cleanup_uses_state_refresh_when_candid
         tmp_path=tmp_path,
         monkeypatch=monkeypatch,
         issues=[issue],
-        workflow_overrides={"tracker": {"terminal_states": ["Done", "Canceled"]}},
+        workflow_overrides={"terminal_states": ["Done", "Canceled"]},
         plans_by_identifier={"ENG-1041": [TurnPlan(error=RuntimeError("boom"))]},
     ) as harness:
         await harness.refresh()
@@ -393,7 +393,7 @@ async def test_integration_reconciliation_refresh_failure_non_active_and_missing
         monkeypatch=monkeypatch,
         issues=[issue_one],
         workflow_overrides={
-            "tracker": {"terminal_states": ["Done", "Canceled"]},
+            "terminal_states": ["Done", "Canceled"],
             "states": {"Todo": {"prompt": "default"}},
             "codex": {"stall_timeout_ms": 0},
         },
@@ -457,7 +457,7 @@ async def test_integration_cleanup_failures_and_unknown_runtime_messages_do_not_
         tmp_path=tmp_path,
         monkeypatch=monkeypatch,
         issues=[issue],
-        workflow_overrides={"tracker": {"terminal_states": ["Done", "Canceled"]}},
+        workflow_overrides={"terminal_states": ["Done", "Canceled"]},
         plans_by_identifier={"ENG-1061": [TurnPlan(pause_until_stopped=True)]},
     ) as harness:
         await harness.refresh()

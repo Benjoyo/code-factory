@@ -21,6 +21,7 @@ class WorkflowTemplateValues:
     tracker_kind: str
     project_slug: str
     git_repo: str
+    failure_state: str
     active_states: tuple[str, ...]
     terminal_states: tuple[str, ...]
     workspace_root: str
@@ -45,6 +46,7 @@ def render_default_workflow(values: WorkflowTemplateValues) -> str:
         "TRACKER_KIND": yaml_string(values.tracker_kind),
         "PROJECT_SLUG": yaml_string(values.project_slug),
         "GIT_REPO": shlex.quote(values.git_repo),
+        "FAILURE_STATE": yaml_string(values.failure_state),
         "STATE_PROFILES": yaml_state_profiles(values.active_states),
         "TERMINAL_STATES": yaml_list(values.terminal_states),
         "WORKSPACE_ROOT": yaml_string(values.workspace_root),
@@ -87,12 +89,22 @@ def yaml_state_profiles(values: tuple[str, ...]) -> str:
 
     rendered: list[str] = []
     for value in values:
-        if value.strip().lower() == "todo":
+        normalized = value.strip().lower()
+        if normalized == "todo":
             rendered.append(
                 f"  {yaml_string(value)}:\n    auto_next_state: In Progress"
             )
             continue
-        rendered.append(f"  {yaml_string(value)}:\n    prompt: default")
+        lines = [f"  {yaml_string(value)}:", "    prompt: default"]
+        if normalized in {"in progress", "rework"}:
+            lines.extend(
+                [
+                    "    completion:",
+                    "      require_pushed_head: true",
+                    "      require_pr: true",
+                ]
+            )
+        rendered.append("\n".join(lines))
     return "\n".join(rendered)
 
 

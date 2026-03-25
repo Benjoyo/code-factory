@@ -18,13 +18,20 @@ DEFAULT_PROMPT = "# prompt: default\nYou are an agent for this repository."
 
 def default_workflow_config() -> dict[str, Any]:
     return {
+        "failure_state": "Human Review",
+        "terminal_states": [
+            "Closed",
+            "Cancelled",
+            "Canceled",
+            "Duplicate",
+            "Done",
+        ],
         "tracker": {
             "kind": "linear",
             "endpoint": "https://api.linear.app/graphql",
             "api_key": "token",
             "project_slug": "project",
             "assignee": None,
-            "terminal_states": ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
         },
         "states": {
             "Todo": {"auto_next_state": "In Progress"},
@@ -35,6 +42,7 @@ def default_workflow_config() -> dict[str, Any]:
         "agent": {
             "max_concurrent_agents": 10,
             "max_retry_backoff_ms": 300_000,
+            "max_worker_retries": 3,
             "max_concurrent_agents_by_state": {},
         },
         "codex": {

@@ -360,8 +360,11 @@ Fields:
   - If `$VAR_NAME` resolves to an empty string, treat the key as missing.
 - `project_slug` (string)
   - Required for dispatch when `tracker.kind == "linear"`.
-- `active_states` (list of strings)
-  - Default: `Todo`, `In Progress`
+
+Top-level workflow fields related to state policy:
+
+- `active_states` (derived internal set)
+  - Derived from the keys of top-level `states`.
 - `terminal_states` (list of strings)
   - Default: `Closed`, `Cancelled`, `Canceled`, `Duplicate`, `Done`
 
@@ -582,13 +585,17 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `tracker.endpoint`: string, default `https://api.linear.app/graphql` when `tracker.kind=linear`
 - `tracker.api_key`: string or `$VAR`, canonical env `LINEAR_API_KEY` when `tracker.kind=linear`
 - `tracker.project_slug`: string, required when `tracker.kind=linear`
-- `tracker.terminal_states`: list of strings, default `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]`
+- `terminal_states`: list of strings, default `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]`
 - `states`: object mapping tracker state names to state profiles, required
 - `states.<state>.prompt`: string or non-empty list of strings referencing prompt section ids
 - `states.<state>.codex.model`: string or null, optional
 - `states.<state>.codex.reasoning_effort`: string or null, optional
 - `states.<state>.codex.skills`: list of strings or null, optional, repo-local allowlist of
   direct child directories under `.agents/skills`
+- `states.<state>.completion.require_pushed_head`: boolean, default `false`, optional for
+  agent-run states
+- `states.<state>.completion.require_pr`: boolean, default `false`, optional for agent-run
+  states and implies `require_pushed_head`
 - `states.<state>.hooks.before_complete`: shell script or null, optional for agent-run states
 - `states.<state>.hooks.before_complete_max_feedback_loops`: integer, default `3`, optional for
   agent-run states
@@ -2005,9 +2012,17 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - Optional workspace population/synchronization errors are surfaced
 - Temporary artifacts (`tmp`, `.elixir_ls`) are removed during prep
 - `after_create` hook runs only on new workspace creation
+- Before each agent run, the workspace is prepared on the issue branch and `workpad.md` is
+  added to the local git exclude file; tracked `workpad.md` files are rejected
 - `before_run` hook runs before each attempt and failure/timeouts abort the current attempt
 - `after_run` hook runs after each attempt and failure/timeouts are logged and ignored
 - `before_remove` hook runs on cleanup and failures/timeouts are ignored
+- `states.<state>.completion.require_pushed_head` blocks completion until the workspace is on
+  an attached branch, the worktree is clean, the branch has an upstream, and local `HEAD`
+  matches upstream `HEAD`
+- `states.<state>.completion.require_pr` implies `require_pushed_head` and additionally blocks
+  completion until exactly one open PR exists for the current branch at local `HEAD`
+- Native completion readiness checks run before any configured `before_complete` hook
 - `states.<state>.hooks.before_complete` runs after a transition result and before state
   persistence/tracker transition
 - `states.<state>.hooks.before_complete` exit status `0` accepts completion, status `2` feeds

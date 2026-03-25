@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
 from datetime import UTC, datetime
 
 from ...config import validate_dispatch_settings
@@ -10,11 +9,16 @@ from ...workspace import WorkspaceManager
 from ..support import monotonic_ms
 from ..worker import IssueWorker
 from .context import OrchestratorContext
-from .models import RetryEntry, RunningEntry
+from .failure_policy import (
+    RETRY_MODE_WAIT,
+    exhausted_retry_summary,
+    retry_attempt_exhausted,
+    transition_issue_to_failure_state,
+)
+from .models import RunningEntry
 from .policy import (
     available_slots,
     candidate_issue,
-    failure_retry_delay,
     normalize_retry_attempt,
     sort_issues_for_dispatch,
     state_slots_available,
@@ -118,12 +122,39 @@ class DispatchingMixin:
         try:
             await self.tracker.update_issue_state(issue.id, profile.auto_next_state)
         except Exception as exc:
-            self._schedule_issue_retry(
-                issue.id,
-                normalize_retry_attempt(attempt) + 1,
-                identifier=issue.identifier,
-                error=f"auto transition failed: {exc!r}",
-            )
+            next_attempt = normalize_retry_attempt(attempt) + 1
+            if retry_attempt_exhausted(
+                self.workflow_snapshot, mode="failure", attempt=next_attempt
+            ):
+                try:
+                    await transition_issue_to_failure_state(
+                        self.workflow_snapshot,
+                        self.tracker,
+                        issue,
+                        summary=exhausted_retry_summary(
+                            f"auto transition failed: {exc!r}",
+                            attempt=next_attempt,
+                            max_retries=self.settings.agent.max_worker_retries,
+                        ),
+                    )
+                except Exception as escalation_exc:
+                    self._schedule_issue_retry(
+                        issue.id,
+                        next_attempt,
+                        identifier=issue.identifier,
+                        error=f"failure escalation failed: {escalation_exc!r}",
+                        state_name=issue.state,
+                    )
+                else:
+                    self._release_issue_claim(issue.id)
+            else:
+                self._schedule_issue_retry(
+                    issue.id,
+                    next_attempt,
+                    identifier=issue.identifier,
+                    error=f"auto transition failed: {exc!r}",
+                    state_name=issue.state,
+                )
             return
         refreshed_issue = await self._refresh_retry_issue(issue.id)
         self.claimed.discard(issue.id)
@@ -145,6 +176,8 @@ class DispatchingMixin:
                 normalize_retry_attempt(attempt) + 1,
                 identifier=refreshed_issue.identifier,
                 error="no available orchestrator slots",
+                state_name=refreshed_issue.state,
+                mode=RETRY_MODE_WAIT,
             )
             return
         self._release_issue_claim(issue.id)
@@ -166,126 +199,3 @@ class DispatchingMixin:
         ) and not todo_issue_blocked_by_non_terminal(self.settings, candidate):
             return candidate
         return None
-
-    async def _run_due_retries(self: OrchestratorContext, now_ms: int) -> None:
-        due_retries = sorted(
-            (
-                entry
-                for entry in self.retry_entries.values()
-                if entry.due_at_ms <= now_ms
-            ),
-            key=lambda entry: entry.due_at_ms,
-        )
-        for entry in due_retries:
-            current = self.retry_entries.get(entry.issue_id)
-            if current is None or current.token != entry.token:
-                continue
-            self.retry_entries.pop(entry.issue_id, None)
-            await self._handle_retry_entry(entry)
-
-    async def _handle_retry_entry(self: OrchestratorContext, entry: RetryEntry) -> None:
-        try:
-            issues = await self.tracker.fetch_candidate_issues()
-        except Exception as exc:
-            self._schedule_issue_retry(
-                entry.issue_id,
-                entry.attempt + 1,
-                identifier=entry.identifier,
-                error=f"retry poll failed: {exc!r}",
-                workspace_path=entry.workspace_path,
-            )
-            return
-        issue = next(
-            (candidate for candidate in issues if candidate.id == entry.issue_id), None
-        )
-        if issue is None:
-            issue = await self._refresh_retry_issue(entry.issue_id)
-        if issue is None:
-            self._release_issue_claim(entry.issue_id)
-            return
-        if terminal_issue_state(self.settings, issue.state):
-            await self._cleanup_retry_issue_workspace(issue, entry.workspace_path)
-            self._release_issue_claim(entry.issue_id)
-            return
-        if candidate_issue(
-            self.settings, issue
-        ) and not todo_issue_blocked_by_non_terminal(self.settings, issue):
-            if available_slots(
-                self.settings, self.running
-            ) > 0 and state_slots_available(self.settings, self.running, issue):
-                await self._dispatch_issue(
-                    issue, attempt=entry.attempt, workspace_path=entry.workspace_path
-                )
-            else:
-                self._schedule_issue_retry(
-                    issue.id or entry.issue_id,
-                    entry.attempt + 1,
-                    identifier=issue.identifier,
-                    error="no available orchestrator slots",
-                    workspace_path=entry.workspace_path,
-                )
-            return
-        self._release_issue_claim(entry.issue_id)
-
-    async def _refresh_retry_issue(
-        self: OrchestratorContext, issue_id: str
-    ) -> Issue | None:
-        try:
-            issues = await self.tracker.fetch_issue_states_by_ids([issue_id])
-        except Exception:
-            return None
-        return issues[0] if issues else None
-
-    async def _cleanup_retry_issue_workspace(
-        self: OrchestratorContext,
-        issue: Issue,
-        workspace_path: str | None,
-    ) -> None:
-        manager = (
-            self._workspace_manager_for_path(workspace_path)
-            if workspace_path
-            else WorkspaceManager(self.workflow_snapshot.settings)
-        )
-        try:
-            if workspace_path:
-                await manager.remove(workspace_path)
-            elif issue.identifier:
-                await manager.remove_issue_workspaces(issue.identifier)
-        except Exception:
-            return
-
-    def _schedule_issue_retry(
-        self: OrchestratorContext,
-        issue_id: str,
-        attempt: int | None,
-        *,
-        identifier: str | None,
-        error: str | None = None,
-        workspace_path: str | None = None,
-    ) -> None:
-        previous = self.retry_entries.get(issue_id)
-        next_attempt = (
-            attempt
-            if isinstance(attempt, int)
-            else ((previous.attempt + 1) if previous else 1)
-        )
-        delay_ms = failure_retry_delay(
-            self.FAILURE_RETRY_BASE_MS,
-            self.settings.agent.max_retry_backoff_ms,
-            next_attempt,
-        )
-        self.retry_entries[issue_id] = RetryEntry(
-            issue_id=issue_id,
-            identifier=identifier or (previous.identifier if previous else issue_id),
-            attempt=next_attempt,
-            due_at_ms=monotonic_ms() + delay_ms,
-            token=uuid.uuid4().hex,
-            error=error or (previous.error if previous else None),
-            workspace_path=workspace_path
-            or (previous.workspace_path if previous else None),
-        )
-        self.claimed.add(issue_id)
-
-    def _release_issue_claim(self: OrchestratorContext, issue_id: str) -> None:
-        self.claimed.discard(issue_id)
-        self.retry_entries.pop(issue_id, None)

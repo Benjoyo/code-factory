@@ -6,9 +6,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from ..config.utils import non_negative_int, optional_non_blank_string, require_mapping
+from ..config.utils import optional_non_blank_string, require_mapping
 from ..errors import ConfigValidationError
 from ..issues import normalize_issue_state
+from .state_controls import (
+    StateCompletionOverride,
+    StateHooksOverride,
+    parse_state_completion,
+    parse_state_hooks,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,20 +27,13 @@ class StateCodexOverride:
 
 
 @dataclass(frozen=True, slots=True)
-class StateHooksOverride:
-    """Optional completion hooks enforced for one tracker state."""
-
-    before_complete: str | None = None
-    before_complete_max_feedback_loops: int = 3
-
-
-@dataclass(frozen=True, slots=True)
 class WorkflowStateProfile:
     """Prompt and transition settings selected for a specific tracker state."""
 
     state_name: str
     prompt_refs: tuple[str, ...] = ()
     codex: StateCodexOverride = StateCodexOverride()
+    completion: StateCompletionOverride = StateCompletionOverride()
     hooks: StateHooksOverride = StateHooksOverride()
     allowed_next_states: tuple[str, ...] = ()
     failure_state: str | None = None
@@ -98,6 +97,7 @@ def parse_state_profiles(
         unexpected_keys = set(profile.keys()) - {
             "prompt",
             "codex",
+            "completion",
             "hooks",
             "allowed_next_states",
             "failure_state",
@@ -122,7 +122,12 @@ def parse_state_profiles(
             profile.get("auto_next_state"), f"{field_name}.auto_next_state"
         )
         codex = _codex_override(profile.get("codex"), field_name)
-        hooks = _hooks_override(profile.get("hooks"), field_name)
+        completion = parse_state_completion(profile.get("completion"), field_name)
+        hooks = parse_state_hooks(
+            profile.get("hooks"),
+            field_name,
+            allow_feedback_loops_without_hook=completion.enabled,
+        )
         if prompt_refs and auto_next_state is not None:
             raise ConfigValidationError(
                 f"{field_name} cannot define both prompt and auto_next_state"
@@ -143,6 +148,10 @@ def parse_state_profiles(
             raise ConfigValidationError(
                 f"{field_name}.hooks is not supported for auto states"
             )
+        if auto_next_state is not None and completion.enabled:
+            raise ConfigValidationError(
+                f"{field_name}.completion is not supported for auto states"
+            )
         if (
             failure_state is not None
             and normalize_issue_state(failure_state) == normalized_state
@@ -154,6 +163,7 @@ def parse_state_profiles(
             state_name=state_name,
             prompt_refs=prompt_refs,
             codex=codex,
+            completion=completion,
             hooks=hooks,
             allowed_next_states=allowed_next_states,
             failure_state=failure_state,
@@ -215,33 +225,6 @@ def _codex_override(raw_codex: Any, field_name: str) -> StateCodexOverride:
             codex.get("reasoning_effort"), f"{codex_field}.reasoning_effort"
         ),
         skills=_skill_name_list(codex.get("skills"), f"{codex_field}.skills"),
-    )
-
-
-def _hooks_override(raw_hooks: Any, field_name: str) -> StateHooksOverride:
-    hooks_field = f"{field_name}.hooks"
-    hooks = require_mapping(raw_hooks, hooks_field)
-    unexpected_keys = set(hooks.keys()) - {
-        "before_complete",
-        "before_complete_max_feedback_loops",
-    }
-    if unexpected_keys:
-        names = ", ".join(sorted(map(str, unexpected_keys)))
-        raise ConfigValidationError(f"{hooks_field} has unsupported keys: {names}")
-    before_complete = optional_non_blank_string(
-        hooks.get("before_complete"), f"{hooks_field}.before_complete"
-    )
-    if before_complete is None and "before_complete_max_feedback_loops" in hooks:
-        raise ConfigValidationError(
-            f"{hooks_field}.before_complete_max_feedback_loops requires {hooks_field}.before_complete"
-        )
-    return StateHooksOverride(
-        before_complete=before_complete,
-        before_complete_max_feedback_loops=non_negative_int(
-            hooks.get("before_complete_max_feedback_loops"),
-            f"{hooks_field}.before_complete_max_feedback_loops",
-            3,
-        ),
     )
 
 

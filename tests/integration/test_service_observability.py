@@ -31,7 +31,7 @@ async def test_integration_observability_http_endpoints_and_method_errors(
         monkeypatch=monkeypatch,
         issues=[issue],
         run_http_server=True,
-        workflow_overrides={"tracker": {"terminal_states": ["Done", "Canceled"]}},
+        workflow_overrides={"terminal_states": ["Done", "Canceled"]},
         plans_by_identifier={"ENG-901": [TurnPlan(pause_until_stopped=True)]},
     ) as harness:
         await harness.refresh()

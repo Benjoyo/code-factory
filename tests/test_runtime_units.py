@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import pytest
 
+import code_factory.runtime.worker.readiness as readiness_module
 from code_factory.issues import IssueComment
 from code_factory.runtime.messages import (
     AgentWorkerUpdate,
@@ -49,8 +50,10 @@ from code_factory.runtime.subprocess.process_tree import ProcessTree
 from code_factory.runtime.worker.actor import IssueWorker
 from code_factory.runtime.worker.completion import (
     before_complete_feedback_prompt,
+    before_complete_update,
     emit_before_complete_update,
 )
+from code_factory.runtime.worker.readiness import native_readiness_result
 from code_factory.runtime.worker.results import (
     build_prompt_issue_data,
     parse_results_by_state,
@@ -67,6 +70,7 @@ from code_factory.structured_results import StructuredTurnResult
 from code_factory.trackers.memory import MemoryTracker
 from code_factory.workspace.hooks import HookCommandResult
 from code_factory.workspace.manager import WorkspaceManager
+from code_factory.workspace.review_resolution import ReviewError
 from code_factory.workspace.workpad import WORKPAD_FILENAME, workspace_workpad_path
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
@@ -94,6 +98,9 @@ def patch_issue_worker_workpad(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(
         "code_factory.runtime.worker.actor.sync_workspace_workpad", _noop
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.actor.prepare_workspace_repository", _noop
     )
 
 
@@ -560,8 +567,9 @@ async def test_issue_worker_state_edge_paths_and_result_helpers(
         orchestrator_queue=asyncio.Queue(),
         tracker=tracker,
     )
-    with pytest.raises(RuntimeError, match="missing_failure_state_for_blocked_result"):
-        no_failure_worker._target_state(make_issue(), "blocked", None)
+    assert no_failure_worker._target_state(make_issue(), "blocked", None) == (
+        no_failure_snapshot.settings.failure_state
+    )
     with pytest.raises(RuntimeError, match="unsupported_turn_decision"):
         worker._target_state(make_issue(), "continue", "Done")
     with pytest.raises(RuntimeError, match="next_state_must_not_equal_current_state"):
@@ -582,6 +590,7 @@ async def test_issue_worker_state_edge_paths_and_result_helpers(
             next_state="Review",
         )
     )  # type: ignore[assignment]
+    invalid_worker.workspace_path = workspace_path
     with pytest.raises(RuntimeError, match="invalid_next_state"):
         await invalid_worker._run_state(Session())
 
@@ -645,6 +654,22 @@ async def test_issue_worker_state_edge_paths_and_result_helpers(
     await blocked_worker._run_state(Session())
     blocked_issue = await blocked_tracker.fetch_issue_states_by_ids(["issue-4"])
     assert blocked_issue[0].state == "Blocked"
+    missing_workspace_worker = IssueWorker(
+        issue=make_issue(id="issue-5", identifier="ENG-5"),
+        workflow_snapshot=snapshot,
+        orchestrator_queue=asyncio.Queue(),
+        tracker=MemoryTracker([make_issue(id="issue-5", identifier="ENG-5")]),
+    )
+    missing_workspace_worker._agent_runtime = FakeRuntime(
+        StructuredTurnResult(
+            decision="blocked",
+            summary="blocked",
+            next_state="Elsewhere",
+        )
+    )  # type: ignore[assignment]
+    missing_workspace_worker.workspace_path = None
+    with pytest.raises(RuntimeError, match="missing_workspace_for_workpad_sync"):
+        await missing_workspace_worker._run_state(Session())
 
     stop_after_refresh_worker = IssueWorker(
         issue=make_issue(id="issue-1", identifier="ENG-1"),
@@ -900,7 +925,7 @@ async def test_issue_worker_before_complete_hook_paths(
         return hook_results.pop(0)
 
     monkeypatch.setattr(
-        "code_factory.runtime.worker.actor.run_hook_command", fake_hook_command
+        "code_factory.runtime.worker.completion.run_hook_command", fake_hook_command
     )
 
     retry_tracker = MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")])
@@ -946,7 +971,7 @@ async def test_issue_worker_before_complete_hook_paths(
         return warned_results.pop(0)
 
     monkeypatch.setattr(
-        "code_factory.runtime.worker.actor.run_hook_command", fake_warn_hook
+        "code_factory.runtime.worker.completion.run_hook_command", fake_warn_hook
     )
     warned_tracker = MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")])
     warned_runtime = FakeRuntime(
@@ -969,7 +994,7 @@ async def test_issue_worker_before_complete_hook_paths(
         return HookCommandResult(status=0, stdout="", stderr="")
 
     monkeypatch.setattr(
-        "code_factory.runtime.worker.actor.run_hook_command", fake_blocked_hook
+        "code_factory.runtime.worker.completion.run_hook_command", fake_blocked_hook
     )
     blocked_tracker = MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")])
     blocked_runtime = FakeRuntime(
@@ -978,7 +1003,7 @@ async def test_issue_worker_before_complete_hook_paths(
     blocked_worker = await run_worker(tracker=blocked_tracker, runtime=blocked_runtime)
     await blocked_worker._run_state(Session())
     blocked_issue = await blocked_tracker.fetch_issue_states_by_ids(["issue-1"])
-    assert blocked_issue[0].state == "Done"
+    assert blocked_issue[0].state == snapshot.settings.failure_state
     assert blocked_hook_calls == []
 
     exhausted_results = [HookCommandResult(status=2, stdout="", stderr="still broken")]
@@ -995,7 +1020,8 @@ async def test_issue_worker_before_complete_hook_paths(
         return exhausted_results[0]
 
     monkeypatch.setattr(
-        "code_factory.runtime.worker.actor.run_hook_command", fake_exhausted_hook
+        "code_factory.runtime.worker.completion.run_hook_command",
+        fake_exhausted_hook,
     )
     exhausted_tracker = MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")])
     exhausted_runtime = FakeRuntime(
@@ -1015,10 +1041,9 @@ async def test_issue_worker_before_complete_hook_paths(
     exhausted_worker = await run_worker(
         tracker=exhausted_tracker, runtime=exhausted_runtime
     )
-    with pytest.raises(RuntimeError, match="before_complete_feedback_limit_exhausted"):
-        await exhausted_worker._run_state(Session())
+    await exhausted_worker._run_state(Session())
     exhausted_issue = await exhausted_tracker.fetch_issue_states_by_ids(["issue-1"])
-    assert exhausted_issue[0].state == "In Progress"
+    assert exhausted_issue[0].state == snapshot.settings.failure_state
 
     missing_workspace_worker = await run_worker(
         tracker=MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")]),
@@ -1032,15 +1057,386 @@ async def test_issue_worker_before_complete_hook_paths(
     )
     missing_workspace_worker.workspace_path = None
     with pytest.raises(RuntimeError, match="missing_workspace_for_before_complete"):
-        await missing_workspace_worker._run_before_complete_hook(
-            make_issue(id="issue-1", identifier="ENG-1"),
+        await missing_workspace_worker._run_state(Session())
+
+
+@pytest.mark.asyncio
+async def test_issue_worker_native_readiness_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "allowed_next_states": ["Done"],
+                    "completion": {"require_pushed_head": True, "require_pr": True},
+                    "hooks": {"before_complete": "uv run pytest -q"},
+                },
+            },
+        )
+    )
+
+    class Session:
+        async def stop(self) -> None:
+            return None
+
+    class FakeRuntime:
+        def __init__(self, results: list[StructuredTurnResult]) -> None:
+            self.results = list(results)
+            self.prompts: list[str] = []
+
+        async def run_turn(
+            self,
+            session: Any,
+            prompt: str,
+            issue: Any,
+            *,
+            on_message=None,
+            output_schema=None,
+        ) -> StructuredTurnResult:
+            self.prompts.append(prompt)
+            return self.results.pop(0)
+
+    native_results = [
+        HookCommandResult(status=2, stdout="", stderr="push your branch"),
+        HookCommandResult(status=0, stdout="ok", stderr=""),
+    ]
+    hook_calls: list[str] = []
+
+    async def fake_native(*_args: Any, **_kwargs: Any) -> HookCommandResult | None:
+        return native_results.pop(0)
+
+    async def fake_hook_command(
+        settings: Any,
+        command: str,
+        workspace: str,
+        issue_context: dict[str, str | None],
+        hook_name: str,
+        *,
+        env: dict[str, str | None] | None = None,
+    ) -> HookCommandResult:
+        hook_calls.append(hook_name)
+        return HookCommandResult(status=0, stdout="hook ok", stderr="")
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.completion.native_readiness_result",
+        fake_native,
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.completion.run_hook_command", fake_hook_command
+    )
+
+    worker = IssueWorker(
+        issue=make_issue(id="issue-1", identifier="ENG-1"),
+        workflow_snapshot=snapshot,
+        orchestrator_queue=asyncio.Queue(),
+        tracker=MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")]),
+    )
+    worker.workspace_path = str(tmp_path / "workspace")
+    worker._agent_runtime = FakeRuntime(
+        [
             StructuredTurnResult(
                 decision="transition",
-                summary="done",
+                summary="first",
                 next_state="Done",
             ),
-            "uv run pytest -q",
+            StructuredTurnResult(
+                decision="transition",
+                summary="second",
+                next_state="Done",
+            ),
+        ]
+    )  # type: ignore[assignment]
+
+    await worker._run_state(Session())
+    updated_issue = await worker.tracker.fetch_issue_states_by_ids(["issue-1"])
+    assert updated_issue[0].state == "Done"
+    assert hook_calls == ["before_complete"]
+    assert "push your branch" in worker._agent_runtime.prompts[1]  # type: ignore[union-attr]
+
+    updates: list[AgentWorkerUpdate] = []
+    while not worker.queue.empty():
+        update = await worker.queue.get()
+        assert isinstance(update, AgentWorkerUpdate)
+        updates.append(update)
+    assert updates[0].update["event"] == "before_complete_blocked"
+    assert updates[0].update["gate_source"] == "native"
+    assert updates[0].update["gate_name"] == "transition_readiness"
+    assert any(
+        update.update.get("gate_source") == "hook"
+        and update.update.get("event") == "before_complete_passed"
+        for update in updates
+    )
+
+
+@pytest.mark.asyncio
+async def test_issue_worker_native_readiness_exhaustion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "allowed_next_states": ["Done"],
+                    "completion": {"require_pushed_head": True},
+                    "hooks": {"before_complete_max_feedback_loops": 1},
+                },
+            },
         )
+    )
+
+    class Session:
+        async def stop(self) -> None:
+            return None
+
+    class FakeRuntime:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run_turn(
+            self,
+            session: Any,
+            prompt: str,
+            issue: Any,
+            *,
+            on_message=None,
+            output_schema=None,
+        ) -> StructuredTurnResult:
+            self.calls += 1
+            return StructuredTurnResult(
+                decision="transition",
+                summary=f"pass {self.calls}",
+                next_state="Done",
+            )
+
+    async def fake_native(*_args: Any, **_kwargs: Any) -> HookCommandResult | None:
+        return HookCommandResult(status=2, stdout="", stderr="still not pushed")
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.completion.native_readiness_result",
+        fake_native,
+    )
+
+    tracker = MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")])
+    worker = IssueWorker(
+        issue=make_issue(id="issue-1", identifier="ENG-1"),
+        workflow_snapshot=snapshot,
+        orchestrator_queue=asyncio.Queue(),
+        tracker=tracker,
+    )
+    worker.workspace_path = str(tmp_path / "workspace")
+    worker._agent_runtime = FakeRuntime()  # type: ignore[assignment]
+
+    await worker._run_state(Session())
+    updated_issue = await tracker.fetch_issue_states_by_ids(["issue-1"])
+    assert updated_issue[0].state == snapshot.settings.failure_state
+
+
+@pytest.mark.asyncio
+async def test_native_readiness_result_edge_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "completion": {"require_pr": True},
+                },
+            },
+        )
+    )
+    profile = snapshot.state_profile("In Progress")
+    assert profile is not None
+    issue = make_issue(identifier="ENG-1", branch_name="codex/eng-1")
+
+    async def repo_ok(_workspace: str) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.ensure_git_repository", repo_ok
+    )
+
+    async def repo_missing(_workspace: str) -> None:
+        raise RuntimeError("missing")
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.ensure_git_repository", repo_missing
+    )
+    result = await native_readiness_result(str(tmp_path), issue, profile)
+    assert result is not None
+    assert "not a git repository" in result.stderr
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.ensure_git_repository", repo_ok
+    )
+
+    async def branch_none(_workspace: str) -> str | None:
+        return None
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.current_branch_name", branch_none
+    )
+    result = await native_readiness_result(str(tmp_path), issue, profile)
+    assert result is not None
+    assert "detached" in result.stderr
+
+    async def wrong_branch(_workspace: str) -> str | None:
+        return "codex/other"
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.current_branch_name", wrong_branch
+    )
+    result = await native_readiness_result(str(tmp_path), issue, profile)
+    assert result is not None
+    assert "does not match tracker branch" in result.stderr
+
+    async def correct_branch(_workspace: str) -> str | None:
+        return "codex/eng-1"
+
+    async def dirty_status(_workspace: str) -> str:
+        return " M file.py"
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.current_branch_name", correct_branch
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.worktree_status", dirty_status
+    )
+    result = await native_readiness_result(str(tmp_path), issue, profile)
+    assert result is not None
+    assert "worktree is dirty" in result.stderr
+
+    async def clean_status(_workspace: str) -> str:
+        return ""
+
+    async def no_upstream(_workspace: str) -> str | None:
+        return None
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.worktree_status", clean_status
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.upstream_name", no_upstream
+    )
+    result = await native_readiness_result(str(tmp_path), issue, profile)
+    assert result is not None
+    assert "has no upstream" in result.stderr
+
+    async def with_upstream(_workspace: str) -> str | None:
+        return "origin/codex/eng-1"
+
+    async def mismatched_head(_workspace: str, ref: str = "HEAD") -> str:
+        return "local" if ref == "HEAD" else "remote"
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.upstream_name", with_upstream
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.head_sha", mismatched_head
+    )
+    result = await native_readiness_result(str(tmp_path), issue, profile)
+    assert result is not None
+    assert "not fully pushed" in result.stderr
+
+    async def matched_head(_workspace: str, ref: str = "HEAD") -> str:
+        return "same"
+
+    async def gh_auth_fail(*_args: Any, **_kwargs: Any) -> None:
+        raise ReviewError("gh auth failed")
+
+    monkeypatch.setattr("code_factory.runtime.worker.readiness.head_sha", matched_head)
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.ensure_github_ready", gh_auth_fail
+    )
+    result = await native_readiness_result(str(tmp_path), issue, profile)
+    assert result is not None
+    assert "gh auth failed" in result.stderr
+
+    async def gh_auth_ok(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    async def no_pr(*_args: Any, **_kwargs: Any) -> tuple[int, str, str]:
+        raise ReviewError("No open PR found for branch codex/eng-1.")
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.ensure_github_ready", gh_auth_ok
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.fetch_pull_request", no_pr
+    )
+    result = await native_readiness_result(str(tmp_path), issue, profile)
+    assert result is not None
+    assert "No open PR found" in result.stderr
+
+    async def stale_pr(*_args: Any, **_kwargs: Any) -> tuple[int, str, str]:
+        return 1, "https://example/pr/1", "different"
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.fetch_pull_request", stale_pr
+    )
+    result = await native_readiness_result(str(tmp_path), issue, profile)
+    assert result is not None
+    assert "PR head does not match" in result.stderr
+
+    async def matching_pr(*_args: Any, **_kwargs: Any) -> tuple[int, str, str]:
+        return 1, "https://example/pr/1", "same"
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.readiness.fetch_pull_request", matching_pr
+    )
+    result = await native_readiness_result(str(tmp_path), issue, profile)
+    assert result is not None
+    assert result.status == 0
+    assert "https://example/pr/1" in result.stdout
+
+    pushed_snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "PUSHED_HEAD_ONLY.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "completion": {"require_pushed_head": True},
+                },
+            },
+        )
+    )
+    pushed_profile = pushed_snapshot.state_profile("In Progress")
+    assert pushed_profile is not None
+    result = await native_readiness_result(str(tmp_path), issue, pushed_profile)
+    assert result is not None
+    assert result.status == 0
+    assert result.stdout == "same"
+
+
+@pytest.mark.asyncio
+async def test_readiness_capture_uses_review_shell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, str, dict[str, str] | None]] = []
+
+    async def fake_capture_shell(
+        command: str,
+        *,
+        cwd: str,
+        env: dict[str, str] | None = None,
+    ) -> Any:
+        calls.append((command, cwd, env))
+        return "ok"
+
+    monkeypatch.setattr(
+        "code_factory.workspace.review_shell.capture_shell", fake_capture_shell
+    )
+    assert await readiness_module._capture("git status", cwd=str(tmp_path)) == "ok"
+    assert calls == [("git status", str(tmp_path), None)]
 
 
 @pytest.mark.asyncio
@@ -1056,6 +1452,12 @@ async def test_before_complete_helper_edge_paths() -> None:
         3,
     )
     assert "truncated: before_complete stderr exceeded 12000 characters" in prompt
+    update = before_complete_update(
+        "before_complete_passed",
+        HookCommandResult(status=0, stdout="ok", stderr=""),
+    )
+    assert "gate_source" not in update
+    assert "gate_name" not in update
 
     queue: asyncio.Queue[Any] = asyncio.Queue()
     await emit_before_complete_update(
@@ -1101,6 +1503,9 @@ async def test_orchestrator_dispatch_and_reconciliation_paths(
     monkeypatch.setattr(
         "code_factory.runtime.orchestration.reconciliation.asyncio.create_task", spawn
     )
+    monkeypatch.setattr(
+        "code_factory.runtime.orchestration.recovery.asyncio.create_task", spawn
+    )
 
     actor.tracker = MemoryTracker([issue])
     await actor._dispatch_issue(issue, attempt=2)
@@ -1114,7 +1519,8 @@ async def test_orchestrator_dispatch_and_reconciliation_paths(
     )
     actor.running["issue-1"].worker = FakeWorker(issue=issue)
     await actor._reconcile_stalled_running_issues()
-    await asyncio.sleep(0)
+    await asyncio.gather(*created_tasks)
+    created_tasks.clear()
     assert "stall" in stopped
 
     actor.running["issue-1"].stopping = False
@@ -1130,7 +1536,8 @@ async def test_orchestrator_dispatch_and_reconciliation_paths(
     await actor._handle_worker_exited(
         WorkerExited("issue-1", "ENG-1", actor.running["issue-1"].workspace_path, True)
     )
-    await asyncio.sleep(0)
+    await asyncio.gather(*created_tasks)
+    created_tasks.clear()
     cleanup_message = await actor.queue.get()
     assert isinstance(cleanup_message, WorkerCleanupComplete)
 
@@ -1164,7 +1571,9 @@ async def test_orchestrator_dispatch_and_reconciliation_paths(
     actor._record_session_completion_totals(entry)
     assert actor.agent_totals["seconds_running"] >= 0
 
-    actor._schedule_issue_retry("issue-2", None, identifier="ENG-2")
+    actor._schedule_issue_retry(
+        "issue-2", None, identifier="ENG-2", state_name="In Progress"
+    )
     assert "issue-2" in actor.retry_entries
     actor._release_issue_claim("issue-2")
     assert "issue-2" not in actor.retry_entries
@@ -1195,6 +1604,7 @@ async def test_orchestrator_auto_dispatch_and_reconciliation_edge_paths(
         make_issue(id="issue-1", identifier="ENG-1", state="Todo")
     )
     assert "issue-1" in failing_actor.retry_entries
+    assert failing_actor.retry_entries["issue-1"].state_name == "Todo"
 
     class MissingRefreshTracker(MemoryTracker):
         async def fetch_issue_states_by_ids(self, issue_ids: list[str]) -> list[Any]:
@@ -1228,6 +1638,7 @@ async def test_orchestrator_auto_dispatch_and_reconciliation_edge_paths(
         blocked_actor.retry_entries["issue-1"].error
         == "no available orchestrator slots"
     )
+    assert blocked_actor.retry_entries["issue-1"].mode == "wait"
 
     release_dir = tmp_path / "release"
     release_dir.mkdir()
@@ -1271,6 +1682,38 @@ async def test_orchestrator_auto_dispatch_and_reconciliation_edge_paths(
         actor.retry_entries["issue-3"].error
         == "worker exited without completing a state transition"
     )
+
+    exhausted_dir = tmp_path / "exhausted"
+    exhausted_dir.mkdir()
+    exhausted_actor = make_actor(
+        exhausted_dir, workflow_overrides={"agent": {"max_worker_retries": 1}}
+    )
+    exhausted_actor.tracker = MemoryTracker(
+        [make_issue(id="issue-9", identifier="ENG-9", state="In Progress")]
+    )
+    exhausted_entry = RunningEntry(
+        issue_id="issue-9",
+        identifier="ENG-9",
+        issue=make_issue(id="issue-9", identifier="ENG-9", state="In Progress"),
+        workspace_path=str(exhausted_dir / "workspaces" / "ENG-9"),
+        worker=object(),
+        started_at=datetime.now(UTC),
+        retry_attempt=1,
+    )
+    exhausted_actor.running["issue-9"] = exhausted_entry
+    exhausted_actor.claimed.add("issue-9")
+    await exhausted_actor._handle_worker_exited(
+        WorkerExited(
+            issue_id="issue-9",
+            identifier="ENG-9",
+            workspace_path=exhausted_entry.workspace_path,
+            normal=False,
+            reason="boom",
+        )
+    )
+    refreshed = await exhausted_actor.tracker.fetch_issue_states_by_ids(["issue-9"])
+    assert refreshed[0].state == exhausted_actor.settings.failure_state
+    assert "issue-9" not in exhausted_actor.retry_entries
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,7 @@ from ..workflow.template import WorkflowTemplateValues, initialize_workflow
 DEFAULT_TRACKER_KIND = "linear"
 DEFAULT_ACTIVE_STATES = ("Todo", "In Progress", "Merging", "Rework")
 DEFAULT_TERMINAL_STATES = ("Canceled", "Duplicate", "Done")
+DEFAULT_FAILURE_STATE = "Human Review"
 DEFAULT_MAX_CONCURRENT_AGENTS = 2
 
 
@@ -63,6 +64,11 @@ def prompt_project_init(
         console=prompt_console,
         default=detect_git_repo(resolved_target),
     )
+    failure_state = prompt_non_empty(
+        "Failure state",
+        console=prompt_console,
+        default=DEFAULT_FAILURE_STATE,
+    )
     active_states = prompt_state_list(
         prompt_console,
         label="Active states",
@@ -87,6 +93,7 @@ def prompt_project_init(
         tracker_kind=tracker_kind,
         project_slug=project_slug,
         git_repo=git_repo,
+        failure_state=failure_state,
         active_states=active_states,
         terminal_states=terminal_states,
         workspace_root=workspace_root,

@@ -29,11 +29,15 @@ from .control import ControlMixin
 from .dispatching import DispatchingMixin
 from .models import RetryEntry, RunningEntry
 from .reconciliation import ReconciliationMixin
+from .recovery import RecoveryMixin
+from .retrying import RetryingMixin
 
 LOGGER = logging.getLogger(__name__)
 
 
-class OrchestratorActor(DispatchingMixin, ReconciliationMixin, ControlMixin):
+class OrchestratorActor(
+    DispatchingMixin, RetryingMixin, ReconciliationMixin, RecoveryMixin, ControlMixin
+):
     """Actor responsible for synchronizing tracker data, dispatching workers, and replying to clients."""
 
     FAILURE_RETRY_BASE_MS: ClassVar[int] = 10_000
@@ -103,7 +107,7 @@ class OrchestratorActor(DispatchingMixin, ReconciliationMixin, ControlMixin):
         """Clean up any leftover workspaces for issues in terminal states at startup."""
         try:
             issues = await self.tracker.fetch_issues_by_states(
-                list(self.settings.tracker.terminal_states)
+                list(self.settings.terminal_states)
             )
         except Exception as exc:
             LOGGER.warning(

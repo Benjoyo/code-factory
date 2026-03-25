@@ -32,6 +32,9 @@ def patch_issue_worker_workpad(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "code_factory.runtime.worker.actor.sync_workspace_workpad", _noop
     )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.actor.prepare_workspace_repository", _noop
+    )
 
 
 @pytest.mark.asyncio
