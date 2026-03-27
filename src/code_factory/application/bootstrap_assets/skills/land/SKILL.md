@@ -12,11 +12,11 @@ description:
 
 - Ensure the PR is conflict-free with the remote default base branch.
 - Keep CI green and fix failures when they occur.
-- Squash-merge the PR once checks pass.
+- Squash-merge the PR once checks pass and delete the merged head branch.
+- Avoid discretionary code changes during merge; prefer conflict resolution and
+  other strictly merge-blocking fixes only.
 - Do not yield to the user until the PR is merged; keep the watcher loop running
   unless blocked.
-- No need to delete remote branches after merge; the repo auto-deletes head
-  branches.
 
 ## Preconditions
 
@@ -37,8 +37,8 @@ description:
 7. Watch checks until complete.
 8. If checks fail, pull logs, fix the issue, commit with the `commit` skill,
    push with the `push` skill, and re-run checks.
-9. When all checks are green and review feedback is addressed, squash-merge and
-   delete the branch using the PR title/body for the merge subject/body.
+9. When all checks are green and review feedback is addressed, squash-merge
+   with `--delete-branch` using the PR title/body for the merge subject/body.
 10. **Context guard:** Before implementing review feedback, confirm it does not
     conflict with the user’s stated intent or task context. If it conflicts,
     respond inline with a justification and ask the user before changing code.
@@ -94,8 +94,8 @@ if ! gh pr checks --watch; then
   exit 1
 fi
 
-# Squash-merge (remote branches auto-delete on merge in this repo)
-gh pr merge --squash --subject "$pr_title" --body "$pr_body"
+# Squash-merge and explicitly delete the local + remote head branch
+gh pr merge --squash --delete-branch --subject "$pr_title" --body "$pr_body"
 ```
 
 ## Async Watch Helper
@@ -118,6 +118,10 @@ Exit codes:
 - If checks fail, pull details with `gh pr checks` and `gh run view --log`, then
   fix locally, commit with the `commit` skill, push with the `push` skill, and
   re-run the watch.
+- Never remove or narrow already-implemented behavior solely because it was not
+  in the original ticket text. Only make code changes that are strictly
+  required to land the already-approved branch, such as merge-conflict
+  resolution or other merge-blocking fixes.
 - Use judgment to identify flaky failures. If a failure is a flake (e.g., a
   timeout on only one platform), you may proceed without fixing it.
 - If CI pushes an auto-fix commit (authored by GitHub Actions), it does not

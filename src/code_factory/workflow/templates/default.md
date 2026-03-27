@@ -108,12 +108,19 @@ Use the issue tracker only via the `tracker_issue_get`,
 - Treat the hydrated `workpad.md` file as the working copy for progress, and the synced tracker workpad as the persisted copy.
 - Do not post separate "done"/summary comments outside the synced workpad.
 - Treat any ticket-authored `Validation`, `Test Plan`, or `Testing` section as non-negotiable acceptance input: mirror it in the workpad and execute it before considering the work complete.
+- Treat explicit user steering during the run as authoritative task input.
+  If steering changes scope, requirements, or acceptance criteria, record that
+  change in `workpad.md` immediately and update the main tracker ticket so the
+  tracker description matches the current agreed scope.
 - When meaningful out-of-scope improvements are discovered during execution,
   file a separate Linear issue instead of expanding scope. The follow-up issue
   must include a clear title, description, and acceptance criteria, be placed in
   `Backlog`, be assigned to the same project as the current issue, link the
   current issue as `related`, and use `blockedBy` when the follow-up depends on
   the current issue.
+- Do not treat explicit user steering as an out-of-scope improvement. Once
+  steered work is accepted, treat it as part of the ticket scope for planning,
+  implementation, validation, review, and merge.
 - Operate autonomously end-to-end unless blocked by missing requirements, secrets, or permissions.
 - Use the blocked-access escape hatch only for true external blockers (missing required tools/auth) after exhausting documented fallbacks.
 
@@ -123,7 +130,7 @@ Use the issue tracker only via the `tracker_issue_get`,
 - `commit`: produce clean, logical commits during implementation.
 - `push`: keep remote branch current and publish updates.
 - `pull`: keep the issue branch updated with the latest remote default base branch before handoff.
-- `land`: when ticket reaches `Merging`, use the `land` skill, which includes the merge loop.
+- `land`: when ticket reaches `Merging`, use the `land` skill, which includes the merge loop and branch deletion on successful merge.
 
 ## Status map
 
@@ -132,7 +139,7 @@ Use the issue tracker only via the `tracker_issue_get`,
   - Special case: if a PR is already attached, treat as feedback/rework loop (run full PR feedback sweep, address or explicitly push back, revalidate, return to `Human Review`).
 - `In Progress` -> implementation actively underway.
 - `Human Review` -> inactive handoff state; the harness moves tickets here when implementation is complete, then a human reviews and later moves the ticket to `Merging` or `Rework`.
-- `Merging` -> approved by human; execute the `land` skill flow (do not call `gh pr merge` directly).
+- `Merging` -> approved by human; execute the `land` skill flow to merge and delete the head branch (do not call `gh pr merge` directly).
 - `Rework` -> reviewer requested changes; planning + implementation required.
 - `Done` -> terminal state; no further action required.
 
@@ -145,7 +152,7 @@ Use the issue tracker only via the `tracker_issue_get`,
    - `Todo` -> if encountered, treat it as a workflow misconfiguration or stale tracker state; do not transition it yourself.
    - `In Progress` -> continue execution flow from the current hydrated workpad.
    - `Human Review` -> inactive handoff state; do nothing.
-   - `Merging` -> on entry, use the `land` skill; do not call `gh pr merge` directly.
+   - `Merging` -> on entry, use the `land` skill to merge the PR and delete the merged head branch; do not call `gh pr merge` directly.
    - `Rework` -> run rework flow.
    - `Done` -> do nothing and shut down.
 4. Check whether a PR already exists for the current branch and whether it is closed.
@@ -168,6 +175,9 @@ Use the issue tracker only via the `tracker_issue_get`,
     - Check off items that are already done.
     - Expand/fix the plan so it is comprehensive for current scope.
     - Ensure `Acceptance Criteria` and `Validation` are current and still make sense for the task.
+    - If the user has steered the run since the last sync, log the steering
+      request and resulting scope change in `workpad.md`, then update the main
+      tracker ticket to keep the title/description/acceptance criteria aligned.
 4.  Start work by writing/updating a hierarchical plan in `workpad.md`.
 5.  Ensure the workpad includes a compact environment stamp at the top as a code fence line:
     - Format: `<host>:<abs-workdir>@<short-sha>`
@@ -227,6 +237,9 @@ Use this only when completion is blocked by missing required tools or missing au
     - Update `workpad.md` immediately after each meaningful milestone (for example: reproduction complete, code change landed, validation run, review feedback addressed).
     - Never leave completed work unchecked in the plan.
     - For tickets that started as `Todo` with an attached PR, run the full PR feedback sweep protocol immediately after kickoff and before new feature work.
+    - If user steering changes requirements mid-run, update the workpad and the
+      tracker ticket before continuing so later reviewers and merge-state agents
+      see the current intended scope.
 5.  Run validation/tests required for the scope.
     - Mandatory gate: execute all ticket-provided `Validation`/`Test Plan`/ `Testing` requirements when present; treat unmet items as incomplete work.
     - Prefer a targeted proof that directly demonstrates the behavior you changed.
@@ -266,7 +279,10 @@ Use this only when completion is blocked by missing required tools or missing au
 
 1. `Human Review` is not an active agent state in the default workflow.
 2. A human reviews there and moves the ticket to `Merging` or `Rework`.
-3. When the issue is in `Merging`, use the `land` skill and run it in a loop until the PR is merged. Do not call `gh pr merge` directly.
+3. When the issue is in `Merging`, use the `land` skill and run it in a loop until the PR is merged and the merged head branch is deleted. Do not call `gh pr merge` directly.
+   - Merge-state posture is conservative: do not make discretionary product or scope edits there.
+   - Prefer no code changes beyond merge-conflict resolution and other strictly merge-blocking fixes.
+   - Never remove already-implemented behavior solely because the original ticket text is stale.
 4. After merge is complete, finish the turn with a structured result targeting `Done`.
 
 ## Step 4: Rework handling
@@ -294,7 +310,10 @@ Use this only when completion is blocked by missing required tools or missing au
 - If the branch PR is already closed/merged, do not reuse that branch or prior implementation state when restarting work.
 - For closed/merged branch PRs, restart from reproduction/planning as if starting fresh, but stay aligned with the harness-prepared issue branch and tracker branch metadata.
 - If issue state is `Backlog`, do not modify it; wait for human to move to `Todo`.
-- Do not edit the issue body/description for planning or progress tracking.
+- Do not edit the issue body/description for planning or progress tracking alone.
+  Exception: when explicit user steering changes scope, requirements, or
+  acceptance criteria, update the main ticket so it reflects the current agreed
+  work.
 - Use the hydrated `workpad.md` file as the only workpad working copy during the run.
 - If `workpad_sync` is unavailable in-session, rely on the orchestrator's final pre-transition sync. Only report blocked if both in-session sync and the orchestrator sync path are unavailable.
 - Temporary proof edits are allowed only for local verification and must be reverted before commit.

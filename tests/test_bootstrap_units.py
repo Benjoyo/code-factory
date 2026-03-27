@@ -71,6 +71,9 @@ def test_render_default_workflow_replaces_template_tokens() -> None:
     assert "# prompt: default" in rendered
     assert "{{ issue.identifier }}" in rendered
     assert "Blocked-by tickets:" in rendered
+    assert "merge and delete the head branch" in rendered
+    assert "Treat explicit user steering during the run as authoritative task input." in rendered
+    assert "Never remove already-implemented behavior solely because the original ticket text is stale" in rendered
 
 
 def test_default_workflow_template_contains_meta_tokens() -> None:
@@ -305,6 +308,12 @@ def test_copy_bootstrap_skills_copies_packaged_tree(tmp_path: Path) -> None:
     copy_bootstrap_skills(destination)
 
     assert (destination / "debug" / "SKILL.md").is_file()
+    assert "--delete-branch" in (destination / "land" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Avoid discretionary code changes during merge" in (
+        destination / "land" / "SKILL.md"
+    ).read_text(encoding="utf-8")
 
 
 def test_remove_existing_path_handles_file_and_directory(tmp_path: Path) -> None:
