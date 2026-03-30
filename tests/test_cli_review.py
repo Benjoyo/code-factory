@@ -10,6 +10,7 @@ from code_factory.cli import (
     build_cli_config,
     normalize_cli_args,
 )
+from code_factory.errors import ReviewError
 
 runner = CliRunner()
 
@@ -47,3 +48,25 @@ def test_review_command_resolves_workflow_and_keep(tmp_path: Path, monkeypatch) 
     assert calls == [
         (build_cli_config(workflow, None, None).workflow_path, ["main", "ENG-1"], True)
     ]
+
+
+def test_review_command_surfaces_review_errors(tmp_path: Path, monkeypatch) -> None:
+    workflow = tmp_path / "WORKFLOW.md"
+    workflow.write_text("prompt\n", encoding="utf-8")
+
+    async def fake_run_review_session(
+        workflow_path: str,
+        targets: list[str],
+        *,
+        keep: bool,
+        console=None,
+    ) -> None:
+        raise ReviewError("review failed")
+
+    monkeypatch.setattr("code_factory.cli.run_review_session", fake_run_review_session)
+    result = runner.invoke(
+        typer.main.get_command(app),
+        ["review", "main", "--workflow", str(workflow)],
+    )
+    assert result.exit_code == 1
+    assert "review failed" in result.output

@@ -458,8 +458,7 @@ async def test_create_worktree_fetches_ticket_branch_when_pr_head_is_missing(
     assert calls == [
         (f"git worktree add --detach {worktree} deadbeef", "/repo"),
         (
-            "git fetch origin "
-            "refs/heads/codex/ben-24:refs/remotes/origin/codex/ben-24",
+            "git fetch origin refs/heads/codex/ben-24:refs/remotes/origin/codex/ben-24",
             "/repo",
         ),
         (f"git worktree add --detach {worktree} deadbeef", "/repo"),

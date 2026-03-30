@@ -1,8 +1,8 @@
 # Workflow Prompt Templates
 
 For runnable workflows, the Markdown body of `WORKFLOW.md` is a set of named
-prompt sections. The runtime selects and composes sections based on the current
-issue state before rendering the worker turn for that state.
+sections. Agent-run state prompts come from `# prompt:` sections, and reusable
+AI review overlays come from `# review:` sections.
 
 Sections are declared with level-1 headings:
 
@@ -12,6 +12,9 @@ Shared instructions.
 
 # prompt: merge
 Merge-only instructions.
+
+# review: security
+Focus on auth, permissions, and data-exposure bugs.
 ```
 
 `states.<state>.prompt` in frontmatter may reference one section or a list of
@@ -20,9 +23,10 @@ blank line between them, in order.
 
 ## How rendering works
 
-- When top-level `states` is present, the body is first parsed into named `# prompt: <id>` sections.
-- In stateful workflows, every non-empty line in the body must belong to a named prompt section.
+- When top-level `states` is present, the body is first parsed into named `# prompt: <id>` and `# review: <id>` sections.
+- In stateful workflows, every non-empty line in the body must belong to a named section.
 - Duplicate prompt section ids are invalid.
+- Duplicate review section ids are invalid.
 - The effective prompt for the current state is composed before rendering.
 - The composed prompt is rendered with a strict [Liquid](https://liquidtemplater.com/)-compatible engine (`python-liquid` with `StrictUndefined`).
 - Unknown variables fail rendering.
@@ -136,7 +140,7 @@ Common mistakes:
 - Referencing variables that do not exist, such as `ticket`, `issue.body`, or `workflow`.
 - Using an unknown filter or custom helper that the Liquid engine does not provide.
 - Assuming `attempt` is always an integer.
-- Leaving stray non-empty body content outside `# prompt: <id>` sections in a stateful workflow.
+- Leaving stray non-empty body content outside named sections in a stateful workflow.
 - Writing a blank effective prompt and expecting repository-specific instructions to appear automatically.
 
 ## Writing a good template
@@ -228,6 +232,9 @@ Implement and validate the requested change.
 
 # prompt: merge
 Land the attached PR and move the issue to Done.
+
+# review: security
+Look for security regressions in the candidate patch.
 ```
 
 ## Built-in fallback prompt

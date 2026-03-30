@@ -161,8 +161,7 @@ async def upstream_head_sha(workspace: str) -> str | None:
     remote, merge_ref = config
     remote_result = await repository_command(
         workspace,
-        "git ls-remote --exit-code "
-        f"{shlex.quote(remote)} {shlex.quote(merge_ref)}",
+        f"git ls-remote --exit-code {shlex.quote(remote)} {shlex.quote(merge_ref)}",
     )
     first_line = remote_result.stdout.strip().splitlines()
     if remote_result.status != 0 or not first_line:
@@ -230,7 +229,12 @@ async def _upstream_config(workspace: str, branch: str) -> tuple[str, str] | Non
     )
     remote = remote_result.stdout.strip()
     merge_ref = merge_result.stdout.strip()
-    if remote_result.status != 0 or merge_result.status != 0 or not remote or not merge_ref:
+    if (
+        remote_result.status != 0
+        or merge_result.status != 0
+        or not remote
+        or not merge_ref
+    ):
         return None
     return remote, merge_ref
 

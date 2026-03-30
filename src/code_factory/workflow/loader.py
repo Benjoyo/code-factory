@@ -15,7 +15,7 @@ from ..errors import WorkflowLoadError
 from .models import FileStamp, WorkflowDefinition
 
 DEFAULT_WORKFLOW_FILENAME = "WORKFLOW.md"
-PROMPT_SECTION_HEADING = re.compile(r"^#\s+prompt:\s*(.+?)\s*$")
+SECTION_HEADING = re.compile(r"^#\s+(prompt|review):\s*(.+?)\s*$")
 
 
 def workflow_file_path(selected_path: str | None = None) -> str:
@@ -46,11 +46,15 @@ def parse_workflow(content: str) -> WorkflowDefinition:
     front_matter_lines, prompt_lines = split_front_matter(content)
     config = front_matter_yaml_to_map(front_matter_lines)
     prompt = "\n".join(prompt_lines).strip()
-    prompt_sections = parse_prompt_sections(prompt_lines) if "states" in config else {}
+    prompt_sections: dict[str, str] = {}
+    review_sections: dict[str, str] = {}
+    if "states" in config:
+        prompt_sections, review_sections = parse_named_sections(prompt_lines)
     return WorkflowDefinition(
         config=config,
         prompt_template="" if prompt_sections else prompt,
         prompt_sections=prompt_sections,
+        review_sections=review_sections,
     )
 
 
@@ -97,24 +101,36 @@ def front_matter_yaml_to_map(lines: list[str]) -> dict[str, Any]:
 def parse_prompt_sections(lines: list[str]) -> dict[str, str]:
     """Parse named prompt sections for multi-state workflows."""
 
-    sections: dict[str, str] = {}
+    prompt_sections, _review_sections = parse_named_sections(lines)
+    return prompt_sections
+
+
+def parse_named_sections(lines: list[str]) -> tuple[dict[str, str], dict[str, str]]:
+    """Parse named prompt and review sections from the workflow body."""
+
+    sections = {"prompt": {}, "review": {}}
+    current_kind: str | None = None
     current_name: str | None = None
     current_lines: list[str] = []
     for line in lines:
-        section_match = PROMPT_SECTION_HEADING.match(line)
+        section_match = SECTION_HEADING.match(line)
         if section_match is not None:
-            current_name = finalize_prompt_section(
-                sections, current_name, current_lines
+            current_kind, current_name = finalize_named_section(
+                sections, current_kind, current_name, current_lines
             )
             current_lines = []
-            prompt_name = section_match.group(1).strip()
-            if not prompt_name:
-                raise WorkflowLoadError("workflow_prompt_section_name_blank")
-            if prompt_name in sections or prompt_name == current_name:
+            section_kind = section_match.group(1).strip()
+            section_name = section_match.group(2).strip()
+            if not section_name:
+                raise WorkflowLoadError(f"workflow_{section_kind}_section_name_blank")
+            if section_name in sections[section_kind] or (
+                section_kind == current_kind and section_name == current_name
+            ):
                 raise WorkflowLoadError(
-                    ("workflow_prompt_section_duplicate", prompt_name)
+                    (f"workflow_{section_kind}_section_duplicate", section_name)
                 )
-            current_name = prompt_name
+            current_kind = section_kind
+            current_name = section_name
             continue
         if current_name is None:
             if line.strip():
@@ -122,10 +138,10 @@ def parse_prompt_sections(lines: list[str]) -> dict[str, str]:
             continue
         current_lines.append(line)
 
-    finalize_prompt_section(sections, current_name, current_lines)
-    if not sections:
+    finalize_named_section(sections, current_kind, current_name, current_lines)
+    if not sections["prompt"]:
         raise WorkflowLoadError("workflow_prompt_sections_missing")
-    return sections
+    return sections["prompt"], sections["review"]
 
 
 def finalize_prompt_section(
@@ -137,6 +153,21 @@ def finalize_prompt_section(
         return None
     sections[current_name] = "\n".join(current_lines).strip()
     return None
+
+
+def finalize_named_section(
+    sections: dict[str, dict[str, str]],
+    current_kind: str | None,
+    current_name: str | None,
+    current_lines: list[str],
+) -> tuple[str | None, str | None]:
+    """Write the current named section back into the parsed section map."""
+
+    if current_name is None:
+        return None, None
+    assert current_kind is not None
+    sections[current_kind][current_name] = "\n".join(current_lines).strip()
+    return None, None
 
 
 def current_stamp(path: str) -> FileStamp:

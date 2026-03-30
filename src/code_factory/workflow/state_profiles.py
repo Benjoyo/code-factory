@@ -9,6 +9,7 @@ from typing import Any
 from ..config.utils import optional_non_blank_string, require_mapping
 from ..errors import ConfigValidationError
 from ..issues import normalize_issue_state
+from .review_profiles import WorkflowReviewType, parse_state_review_refs
 from .state_controls import (
     StateCompletionOverride,
     StateHooksOverride,
@@ -32,6 +33,7 @@ class WorkflowStateProfile:
 
     state_name: str
     prompt_refs: tuple[str, ...] = ()
+    ai_review_refs: tuple[str, ...] = ()
     codex: StateCodexOverride = StateCodexOverride()
     completion: StateCompletionOverride = StateCompletionOverride()
     hooks: StateHooksOverride = StateHooksOverride()
@@ -72,10 +74,13 @@ class WorkflowStateProfile:
 
 
 def parse_state_profiles(
-    config: Mapping[str, Any], prompt_sections: Mapping[str, str]
+    config: Mapping[str, Any],
+    prompt_sections: Mapping[str, str],
+    review_types: Mapping[str, WorkflowReviewType] | None = None,
 ) -> dict[str, WorkflowStateProfile]:
     """Validate and normalize optional state profiles from workflow front matter."""
 
+    resolved_review_types = review_types or {}
     raw_states = config.get("states")
     if raw_states is None:
         return {}
@@ -96,6 +101,7 @@ def parse_state_profiles(
         profile = require_mapping(raw_profile, field_name)
         unexpected_keys = set(profile.keys()) - {
             "prompt",
+            "ai_review",
             "codex",
             "completion",
             "hooks",
@@ -110,6 +116,11 @@ def parse_state_profiles(
             profile.get("prompt"),
             field_name,
             prompt_sections,
+        )
+        ai_review_refs = parse_state_review_refs(
+            profile.get("ai_review"),
+            field_name,
+            resolved_review_types,
         )
         allowed_next_states = _state_name_list(
             profile.get("allowed_next_states"),
@@ -148,6 +159,10 @@ def parse_state_profiles(
             raise ConfigValidationError(
                 f"{field_name}.hooks is not supported for auto states"
             )
+        if auto_next_state is not None and ai_review_refs:
+            raise ConfigValidationError(
+                f"{field_name}.ai_review is not supported for auto states"
+            )
         if auto_next_state is not None and completion.enabled:
             raise ConfigValidationError(
                 f"{field_name}.completion is not supported for auto states"
@@ -162,6 +177,7 @@ def parse_state_profiles(
         profiles[normalized_state] = WorkflowStateProfile(
             state_name=state_name,
             prompt_refs=prompt_refs,
+            ai_review_refs=ai_review_refs,
             codex=codex,
             completion=completion,
             hooks=hooks,

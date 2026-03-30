@@ -90,7 +90,8 @@ For `tracker.api_key` and `tracker.assignee`:
 ## `states`
 
 `states` defines the active workflow states, selects prompt sections for each
-agent-run state, and optionally configures harness-owned transitions.
+agent-run state, optionally configures harness-owned transitions, and may attach
+reusable AI review types to agent-run states.
 
 ### Fields
 
@@ -98,6 +99,7 @@ agent-run state, and optionally configures harness-owned transitions.
 | --- | --- | --- | --- |
 | `states` | object | none | Required. Keys are active tracker states. |
 | `states.<state>.prompt` | string or non-empty list of strings | none | Required for agent-run states. References named `# prompt: <id>` sections from the Markdown body. |
+| `states.<state>.ai_review` | string or non-empty list of strings | none | Optional for agent-run states. References reusable `ai_review.types` definitions by name. |
 | `states.<state>.codex.model` | string or `null` | inherit global `codex.model` | Optional per-state Codex model override for agent-run states only. |
 | `states.<state>.codex.reasoning_effort` | string or `null` | inherit global `codex.reasoning_effort` | Optional per-state reasoning override for agent-run states only. |
 | `states.<state>.allowed_next_states` | list of strings | unrestricted | Optional allowlist for harness-applied transitions. Also constrains the turn schema `next_state` enum when present. |
@@ -113,11 +115,15 @@ Rules:
   - agent-run via `prompt`
   - harness-run via `auto_next_state`
 - `states.<state>.prompt` may reference one prompt section or several prompt sections.
+- `states.<state>.ai_review` may reference one review type or several review types.
 - Prompt references are matched exactly after trimming.
 - Referencing a missing prompt section is invalid.
+- Review references are matched case-insensitively after trimming.
+- Referencing a missing review type is invalid.
 - Only `codex.model` and `codex.reasoning_effort` may be overridden per state.
 - `prompt` and `auto_next_state` are mutually exclusive.
 - `codex` overrides are rejected for auto states.
+- `ai_review` is rejected for auto states.
 - `allowed_next_states` must be a list of non-blank state names with no duplicate normalized values.
 - `failure_state` and `auto_next_state` must be non-blank strings when present.
 - `failure_state` must not equal the current state.
@@ -127,6 +133,7 @@ Runtime behavior:
 
 - Active states are derived from `states` keys.
 - Agent-run states start a fresh coding-agent session and render the referenced prompt section bodies concatenated with a blank line between sections, in listed order.
+- Agent-run states may additionally request zero, one, or several reusable AI review types for later runtime review slices.
 - Auto states do not start an agent. The harness moves the issue directly to `auto_next_state`.
 - Successful agent turns return structured output with `decision`, `summary`, and optional `next_state`, and the harness performs the validated state transition.
 - `allowed_next_states` constrains agent-selected `next_state` values in the turn schema when it is configured.
@@ -140,6 +147,9 @@ states:
     auto_next_state: In Progress
   "In Progress":
     prompt: default
+    ai_review:
+      - security
+      - frontend
     allowed_next_states:
       - Review
       - Blocked
@@ -149,6 +159,51 @@ states:
     codex:
       model: gpt-5.4-mini
       reasoning_effort: low
+```
+
+## `ai_review`
+
+`ai_review` defines reusable workflow-facing AI review types. This namespace is
+separate from the existing top-level `review` settings used for operator-side
+human review worktrees.
+
+### Fields
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `ai_review.types` | object | `{}` | Optional mapping of reusable review type definitions. |
+| `ai_review.types.<name>.prompt` | string | none | Required. References a named `# review: <id>` section from the Markdown body. |
+| `ai_review.types.<name>.model` | string or `null` | `null` | Optional review-model override. |
+| `ai_review.types.<name>.reasoning_effort` | string or `null` | `null` | Optional review reasoning override. |
+| `ai_review.types.<name>.lines_changed` | non-negative integer or `null` | `null` | Optional changed-line threshold for future runtime slices. |
+| `ai_review.types.<name>.paths.only` | non-empty list of strings | `[]` | Optional path trigger requiring every changed path to match at least one glob. |
+| `ai_review.types.<name>.paths.include` | non-empty list of strings | `[]` | Optional path trigger requiring at least one changed path to match. |
+| `ai_review.types.<name>.paths.exclude` | non-empty list of strings | `[]` | Optional path trigger requiring no changed path to match. |
+
+Rules:
+
+- `ai_review.types` keys must not be blank.
+- Review type names are matched case-insensitively after trimming.
+- Duplicate normalized review type names are invalid.
+- `prompt` must reference an existing `# review: <id>` section.
+- `paths` only supports `only`, `include`, and `exclude`.
+- Path-glob lists must contain non-blank strings and may not be empty when present.
+
+Minimal example:
+
+```yaml
+ai_review:
+  types:
+    security:
+      prompt: security
+      model: gpt-5.4-mini
+      reasoning_effort: high
+      lines_changed: 25
+      paths:
+        include:
+          - src/**
+        exclude:
+          - tests/**
 ```
 
 ## `polling`

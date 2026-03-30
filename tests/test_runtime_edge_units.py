@@ -421,10 +421,7 @@ async def test_repository_helper_edge_paths(
             return ShellResult(status=0, stdout="refs/heads/feature/test\n", stderr="")
         if command == "git rev-parse @{upstream}":
             return ShellResult(status=128, stdout="", stderr="missing")
-        if (
-            command
-            == "git ls-remote --exit-code origin refs/heads/feature/test"
-        ):
+        if command == "git ls-remote --exit-code origin refs/heads/feature/test":
             return ShellResult(
                 status=0,
                 stdout="deadbeef\trefs/heads/feature/test\n",

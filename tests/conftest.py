@@ -11,6 +11,7 @@ import yaml
 from code_factory.config import parse_settings
 from code_factory.issues import Issue
 from code_factory.workflow import WorkflowSnapshot, current_stamp, load_workflow
+from code_factory.workflow.review_profiles import parse_review_types
 from code_factory.workflow.state_profiles import parse_state_profiles
 
 DEFAULT_PROMPT = "# prompt: default\nYou are an agent for this repository."
@@ -104,7 +105,10 @@ def write_workflow_file(
 def make_snapshot(workflow_path: Path) -> WorkflowSnapshot:
     definition = load_workflow(str(workflow_path))
     settings = parse_settings(definition.config)
-    state_profiles = parse_state_profiles(definition.config, definition.prompt_sections)
+    ai_review_types = parse_review_types(definition.config, definition.review_sections)
+    state_profiles = parse_state_profiles(
+        definition.config, definition.prompt_sections, ai_review_types
+    )
     return WorkflowSnapshot(
         version=1,
         path=str(workflow_path),
@@ -112,6 +116,7 @@ def make_snapshot(workflow_path: Path) -> WorkflowSnapshot:
         definition=definition,
         settings=settings,
         state_profiles=state_profiles,
+        ai_review_types=ai_review_types,
     )
 
 

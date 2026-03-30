@@ -203,7 +203,10 @@ class LinearOpsWriteMixin(LinearOpsReadMixin):
             )
         upload_url = str(upload["uploadUrl"])
         asset_url = str(upload["assetUrl"])
-        headers = {"Content-Type": content_type, "Cache-Control": "public, max-age=31536000"}
+        headers = {
+            "Content-Type": content_type,
+            "Cache-Control": "public, max-age=31536000",
+        }
         headers.update(
             {
                 item["key"]: item["value"]

@@ -9,6 +9,7 @@ from typing import Any
 from ..config.models import Settings
 from ..errors import ConfigValidationError
 from ..issues import normalize_issue_state
+from .review_profiles import WorkflowReviewType, normalize_review_name
 from .state_profiles import WorkflowStateProfile
 
 
@@ -34,6 +35,7 @@ class WorkflowDefinition:
     config: dict[str, Any]
     prompt_template: str
     prompt_sections: dict[str, str] = field(default_factory=dict)
+    review_sections: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +48,7 @@ class WorkflowSnapshot:
     definition: WorkflowDefinition
     settings: Settings
     state_profiles: dict[str, WorkflowStateProfile] = field(default_factory=dict)
+    ai_review_types: dict[str, WorkflowReviewType] = field(default_factory=dict)
     loaded_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
@@ -100,6 +103,19 @@ class WorkflowSnapshot:
         if profile is None or profile.failure_state is None:
             return self.settings.failure_state
         return profile.failure_state
+
+    def ai_review_type(self, review_name: str) -> WorkflowReviewType | None:
+        return self.ai_review_types.get(normalize_review_name(review_name))
+
+    def ai_review_types_for_state(
+        self, state_name: str | None
+    ) -> tuple[WorkflowReviewType, ...]:
+        profile = self.state_profile(state_name)
+        if profile is None or not profile.ai_review_refs:
+            return ()
+        return tuple(
+            self.ai_review_types[review_ref] for review_ref in profile.ai_review_refs
+        )
 
     def state_profile(self, state_name: str | None) -> WorkflowStateProfile | None:
         return self.state_profiles.get(normalize_issue_state(state_name))

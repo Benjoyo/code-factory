@@ -11,7 +11,6 @@ import webbrowser
 from pathlib import Path
 
 from rich.console import Console
-from rich.table import Table
 
 from ..config import parse_settings
 from ..errors import ReviewError
@@ -20,8 +19,9 @@ from ..workflow.loader import load_workflow
 from .paths import canonicalize, safe_identifier
 from .review_browser import wait_for_http_ready
 from .review_models import ReviewTarget, RunningReviewServer
+from .review_output import emit_prefixed_output, print_review_summary
 from .review_resolution import resolve_repo_root, resolve_review_targets
-from .review_shell import capture_shell
+from .review_shell import ShellResult, capture_shell
 from .review_templates import (
     build_review_environment,
     build_review_launch,
@@ -100,7 +100,7 @@ class ReviewRunner:
                     )
                     running.append(entry)
                     log_tasks.extend(_log_tasks(self._console, entry))
-            _print_summary(self._console, running)
+            print_review_summary(self._console, running)
             await _open_review_urls(self._console, running)
             await _wait_for_exit(running)
         finally:
@@ -120,7 +120,7 @@ class ReviewRunner:
             cwd=worktree,
             env=build_review_environment(target, worktree=worktree, port=None),
         )
-        _emit_prefixed_output(
+        emit_prefixed_output(
             self._console, f"{target.target}:prepare", result.stdout, result.stderr
         )
         if result.status != 0:
@@ -152,11 +152,7 @@ def _worktree_path(root: str, target: str) -> str:
     return canonicalize(os.path.join(root, safe_identifier(target)))
 
 
-async def _create_worktree(
-    repo_root: str,
-    worktree: str,
-    target: ReviewTarget,
-) -> None:
+async def _create_worktree(repo_root: str, worktree: str, target: ReviewTarget) -> None:
     os.makedirs(os.path.dirname(worktree), exist_ok=True)
     if os.path.exists(worktree):
         raise ReviewError(f"Review worktree already exists: {worktree}")
@@ -253,30 +249,6 @@ async def _cancel_log_tasks(tasks: list[asyncio.Task[None]]) -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-def _print_summary(console: Console, running: list[RunningReviewServer]) -> None:
-    table = Table(title="Code Factory Review")
-    table.add_column("Target")
-    table.add_column("Server")
-    table.add_column("PID")
-    table.add_column("Port")
-    table.add_column("URL", overflow="fold")
-    table.add_column("Ref")
-    table.add_column("PR", overflow="fold")
-    table.add_column("Path", overflow="fold")
-    for entry in running:
-        table.add_row(
-            entry.target.target,
-            entry.launch.name,
-            str(entry.process.pid or ""),
-            str(entry.launch.port or ""),
-            entry.launch.url or "",
-            entry.head_sha,
-            entry.target.pr_url or "",
-            entry.worktree,
-        )
-    console.print(table)
-
-
 async def _open_review_urls(
     console: Console, running: list[RunningReviewServer]
 ) -> None:
@@ -296,19 +268,4 @@ async def _open_review_urls(
             console.print(
                 f"[warn]Failed to open browser for {entry.target.target}:{entry.launch.name} "
                 f"({url})[/warn]"
-            )
-
-
-def _emit_prefixed_output(
-    console: Console,
-    label: str,
-    stdout: str,
-    stderr: str,
-) -> None:
-    for stream_name, text in (("stdout", stdout), ("stderr", stderr)):
-        for line in text.splitlines():
-            console.print(
-                f"[{label}:{stream_name}] {line}",
-                markup=False,
-                highlight=False,
             )

@@ -69,7 +69,8 @@ Important boundary:
 2. `Config Layer`
    - Exposes typed getters for workflow config values.
    - Applies defaults and environment variable indirection.
-   - Performs validation used by the orchestrator before dispatch.
+   - Performs validation used by the orchestrator before dispatch, including
+     reusable AI review definitions referenced by workflow states.
 
 3. `Issue Tracker Client`
    - Fetches candidate issues in active states.
@@ -175,6 +176,10 @@ Parsed `WORKFLOW.md` payload:
   - YAML front matter root object.
 - `prompt_template` (string)
   - Markdown body after front matter, trimmed.
+- `prompt_sections` (map)
+  - Named `# prompt: <id>` bodies when the workflow uses stateful sections.
+- `review_sections` (map)
+  - Named `# review: <id>` bodies for reusable AI review overlays.
 
 #### 4.1.3 Service Config (Typed View)
 
@@ -312,15 +317,18 @@ Parsing rules:
 - Prompt body is trimmed before use.
 - If front matter contains `states`, the prompt body switches to named-section mode:
   - Prompt sections are declared with level-1 headings matching `# prompt: <id>`.
-  - Section content is the body until the next prompt heading.
-  - Non-empty content outside prompt sections is invalid.
+  - Review sections are declared with level-1 headings matching `# review: <id>`.
+  - Section content is the body until the next named section heading.
+  - Non-empty content outside named sections is invalid.
   - Duplicate prompt ids are invalid.
+  - Duplicate review ids are invalid.
 
 Returned workflow object:
 
 - `config`: front matter root object (not nested under a `config` key).
 - `prompt_template`: empty string after prompt sections are extracted.
 - `prompt_sections`: prompt-section map.
+- `review_sections`: review-section map.
 
 ### 5.3 Front Matter Schema
 
@@ -333,6 +341,7 @@ Top-level keys:
 - `agent`
 - `codex`
 - `states`
+- `ai_review`
 
 Unknown keys should be ignored for forward compatibility.
 
@@ -474,8 +483,8 @@ fields locally if they want stricter startup checks.
 
 The Markdown body of `WORKFLOW.md` is the per-issue prompt template.
 
-If `states` is present, the body becomes a set of named prompt sections instead
-of one monolithic prompt.
+If `states` is present, the body becomes a set of named prompt and review
+sections instead of one monolithic prompt.
 
 Rendering requirements:
 
@@ -588,6 +597,8 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `terminal_states`: list of strings, default `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]`
 - `states`: object mapping tracker state names to state profiles, required
 - `states.<state>.prompt`: string or non-empty list of strings referencing prompt section ids
+- `states.<state>.ai_review`: string or non-empty list of strings referencing reusable AI review
+  type ids, optional for agent-run states only
 - `states.<state>.codex.model`: string or null, optional
 - `states.<state>.codex.reasoning_effort`: string or null, optional
 - `states.<state>.codex.skills`: list of strings or null, optional, repo-local allowlist of
@@ -599,6 +610,14 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `states.<state>.hooks.before_complete`: shell script or null, optional for agent-run states
 - `states.<state>.hooks.before_complete_max_feedback_loops`: integer, default `3`, optional for
   agent-run states
+- `ai_review.types`: object mapping reusable AI review type names to definitions, optional
+- `ai_review.types.<name>.prompt`: string referencing a `# review:` section id
+- `ai_review.types.<name>.model`: string or null, optional
+- `ai_review.types.<name>.reasoning_effort`: string or null, optional
+- `ai_review.types.<name>.lines_changed`: non-negative integer or null, optional
+- `ai_review.types.<name>.paths.only`: non-empty list of strings, optional
+- `ai_review.types.<name>.paths.include`: non-empty list of strings, optional
+- `ai_review.types.<name>.paths.exclude`: non-empty list of strings, optional
 - `polling.interval_ms`: integer, default `30000`
 - `workspace.root`: path, default `<system-temp>/code-factory-workspaces`
 - `hooks.after_create`: shell script or null
