@@ -96,7 +96,7 @@ Work only in the provided repository copy. Do not touch any other path.
 Use the issue tracker only via the `tracker_issue_get`,
 `tracker_issue_search`, `tracker_issue_create`, `tracker_issue_update`,
 `tracker_comment_create`, `tracker_comment_update`, `tracker_pr_link`,
-`tracker_file_upload`, and `workpad_sync` tools.
+and `tracker_file_upload` tools.
 
 ## Default posture
 
@@ -105,7 +105,7 @@ Use the issue tracker only via the `tracker_issue_get`,
 - Spend extra effort up front on planning and verification design before implementation.
 - Reproduce first: always confirm the current behavior/issue signal before changing code so the fix target is explicit.
 - Keep `workpad.md` and linked PR metadata current; the harness owns ticket state transitions.
-- Treat the hydrated `workpad.md` file as the working copy for progress, and the synced tracker workpad as the persisted copy.
+- Treat the hydrated `workpad.md` file as the working copy for progress. The orchestrator syncs it back to the tracker automatically during the run and again before any state transition.
 - Do not post separate "done"/summary comments outside the synced workpad.
 - Treat any ticket-authored `Validation`, `Test Plan`, or `Testing` section as non-negotiable acceptance input: mirror it in the workpad and execute it before considering the work complete.
 - Treat explicit user steering during the run as authoritative task input.
@@ -168,6 +168,7 @@ Use the issue tracker only via the `tracker_issue_get`,
     - If a live tracker workpad exists, `workpad.md` starts with that content.
     - Otherwise `workpad.md` starts with a lightweight starter structure.
     - Treat `workpad.md` as the source of truth for planning, progress, and handoff notes during the run.
+    - The orchestrator watches `workpad.md` and syncs tracker updates automatically with a trailing debounce of about 10 seconds.
     - The harness also ensures you start on the issue branch before implementation begins.
     - The issue branch name may come from tracker metadata or a harness-generated fallback; treat the checked-out branch as canonical for the run.
 2.  Do not perform tracker state transitions yourself; the harness applies the state move from your structured result.
@@ -194,7 +195,7 @@ Use the issue tracker only via the `tracker_issue_get`,
       - merge source(s),
       - result (`clean` or `conflicts resolved`),
       - resulting `HEAD` short SHA.
-10. Compact context and proceed to execution.
+
 
 ## PR feedback sweep protocol (required)
 
@@ -267,7 +268,6 @@ Use this only when completion is blocked by missing required tools or missing au
     - Confirm every required ticket-provided validation/test-plan item is explicitly marked complete in the workpad.
     - Repeat this check-address-verify loop until no outstanding comments remain and checks are fully passing.
     - Re-open and refresh `workpad.md` before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
-    - Call `workpad_sync` when you need the tracker copy updated before the orchestrator's final pre-transition sync.
 12. Only then finish the turn with a structured result that transitions the ticket to `Human Review`.
     - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, finish the turn with a structured `blocked` result targeting `Human Review`.
 13. For `Todo` tickets that already had a PR attached at kickoff:
@@ -315,7 +315,6 @@ Use this only when completion is blocked by missing required tools or missing au
   acceptance criteria, update the main ticket so it reflects the current agreed
   work.
 - Use the hydrated `workpad.md` file as the only workpad working copy during the run.
-- If `workpad_sync` is unavailable in-session, rely on the orchestrator's final pre-transition sync. Only report blocked if both in-session sync and the orchestrator sync path are unavailable.
 - Temporary proof edits are allowed only for local verification and must be reverted before commit.
 - If out-of-scope improvements are found, create a separate Backlog issue rather
   than expanding current scope, and include a clear
@@ -326,4 +325,4 @@ Use this only when completion is blocked by missing required tools or missing au
 - `Human Review` is an inactive handoff state in this workflow; do not expect to run there.
 - If state is terminal (`Done`), do nothing and shut down.
 - Keep issue text concise, specific, and reviewer-oriented.
-- If blocked and no workpad exists yet, add the blocker brief to `workpad.md` and sync it before returning the blocked result.
+- If blocked and no workpad exists yet, add the blocker brief to `workpad.md`; the orchestrator will sync it automatically and also flush again before failure-state handling.

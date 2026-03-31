@@ -23,6 +23,7 @@ from ..messages import (
     WorkerExited,
     WorkflowReloadError,
     WorkflowUpdated,
+    WorkpadHydrated,
 )
 from ..support import maybe_aclose, monotonic_ms
 from .control import ControlMixin
@@ -31,6 +32,7 @@ from .models import RetryEntry, RunningEntry
 from .reconciliation import ReconciliationMixin
 from .recovery import RecoveryMixin
 from .retrying import RetryingMixin
+from .workpad_autosync import start_workpad_autosync
 
 LOGGER = logging.getLogger(__name__)
 
@@ -157,6 +159,8 @@ class OrchestratorActor(
             self.workflow_reload_error = repr(message.error)
         elif isinstance(message, AgentWorkerUpdate):
             self._integrate_agent_update(message.issue_id, message.update)
+        elif isinstance(message, WorkpadHydrated):
+            await start_workpad_autosync(self, message)
         elif isinstance(message, WorkerExited):
             await self._handle_worker_exited(message)
         elif isinstance(message, WorkerCleanupComplete):
@@ -207,6 +211,7 @@ class OrchestratorActor(
     async def _handle_due_deadlines(self) -> None:
         """Run polls or retries when their deadlines have become due."""
         now_ms = monotonic_ms()
+        await self._run_due_retries(now_ms)
         if (
             self.poll_check_in_progress
             and isinstance(self.poll_run_due_at_ms, int)
@@ -223,7 +228,6 @@ class OrchestratorActor(
             self.next_poll_due_at_ms = None
             self.poll_run_due_at_ms = now_ms + self.POLL_TRANSITION_RENDER_DELAY_MS
             return
-        await self._run_due_retries(now_ms)
 
     def _next_timeout_seconds(self) -> float | None:
         deadlines = [

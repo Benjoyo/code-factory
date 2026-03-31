@@ -1,8 +1,8 @@
 ---
 name: linear
 description: |
-  Tracker operations for CodeFactory agent runs. Use the flat `tracker_*` and
-  `workpad_sync` tools for ticket work. Do not use raw tracker access in agent flows.
+  Tracker operations for CodeFactory agent runs. Use the flat `tracker_*`
+  tools for ticket work. Do not use raw tracker access in agent flows.
 ---
 
 # Tracker Operations
@@ -32,9 +32,10 @@ Treat that file as the working copy for plan, acceptance criteria, validation
 notes, and final handoff summary.
 
 - Edit `workpad.md` locally throughout the run.
-- Use `workpad_sync` when you want the tracker comment updated immediately.
-- CodeFactory also syncs the local workpad automatically before it persists the
-  final state/result transition.
+- CodeFactory syncs the local workpad back to the tracker automatically during
+  the run with a debounce of about 10 seconds.
+- CodeFactory also syncs the local workpad again before it persists the final
+  state/result transition.
 
 ## Write
 
@@ -53,8 +54,7 @@ Use these write tools for explicit mutations:
 ## Common Workflows
 
 - Inspect issue context with `tracker_issue_get` before making assumptions.
-- Keep `workpad.md` current locally, then call `workpad_sync` when you need the
-  tracker copy refreshed before the end-of-run sync.
+- Keep `workpad.md` current locally and let CodeFactory handle the tracker syncs.
 - Create follow-up tickets in the same project when scope spillover is real.
 - Attach PRs and validation media as part of the handoff, not as separate
   tracking chores.

@@ -17,6 +17,7 @@ from .context import OrchestratorContext
 from .policy import active_issue_state, next_retry_attempt, terminal_issue_state
 from .snapshot import snapshot_payload
 from .tokens import apply_token_delta, extract_rate_limits, extract_token_delta
+from .workpad_autosync import stop_workpad_autosync
 
 
 class ReconciliationMixin:
@@ -120,6 +121,7 @@ class ReconciliationMixin:
         entry = self.running.get(message.issue_id)
         if entry is None:
             return
+        await stop_workpad_autosync(self, message.issue_id, flush=not message.completed)
         self._record_session_completion_totals(entry)
         if entry.stopping:
             await self._handle_stopping_worker_exit(message, entry)
@@ -243,7 +245,9 @@ class ReconciliationMixin:
 
     async def _shutdown_runtime(self: OrchestratorContext) -> None:
         """Stop all running workers and close the tracker when shutting down."""
-        for entry in list(self.running.values()):
+        for issue_id, entry in list(self.running.items()):
+            with contextlib.suppress(Exception):
+                await stop_workpad_autosync(self, issue_id, flush=True)
             with contextlib.suppress(Exception):
                 await entry.worker.stop("shutdown")
         await maybe_aclose(self.tracker)

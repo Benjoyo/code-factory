@@ -171,11 +171,12 @@ class RetryingMixin:
             self.settings.agent.max_retry_backoff_ms,
             next_attempt,
         )
+        due_at_ms = monotonic_ms() + delay_ms
         self.retry_entries[issue_id] = RetryEntry(
             issue_id=issue_id,
             identifier=identifier or (previous.identifier if previous else issue_id),
             attempt=next_attempt,
-            due_at_ms=monotonic_ms() + delay_ms,
+            due_at_ms=due_at_ms,
             token=uuid.uuid4().hex,
             error=error or (previous.error if previous else None),
             workspace_path=workspace_path
@@ -183,6 +184,21 @@ class RetryingMixin:
             state_name=state_name or (previous.state_name if previous else None),
             mode=mode if previous is None else mode or previous.mode,
         )
+        poll_check_in_progress = getattr(self, "poll_check_in_progress", False)
+        next_poll_due_at_ms = getattr(self, "next_poll_due_at_ms", None)
+        poll_run_due_at_ms = getattr(self, "poll_run_due_at_ms", None)
+        if (
+            not poll_check_in_progress
+            and isinstance(next_poll_due_at_ms, int)
+            and next_poll_due_at_ms < due_at_ms
+        ):
+            self.next_poll_due_at_ms = due_at_ms
+        if (
+            poll_check_in_progress
+            and isinstance(poll_run_due_at_ms, int)
+            and poll_run_due_at_ms < due_at_ms
+        ):
+            self.poll_run_due_at_ms = due_at_ms
         self.claimed.add(issue_id)
 
     def _release_issue_claim(self: OrchestratorContext, issue_id: str) -> None:

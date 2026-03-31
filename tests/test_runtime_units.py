@@ -20,6 +20,7 @@ from code_factory.runtime.messages import (
     WorkerExited,
     WorkflowReloadError,
     WorkflowUpdated,
+    WorkpadHydrated,
 )
 from code_factory.runtime.orchestration.actor import OrchestratorActor
 from code_factory.runtime.orchestration.models import RetryEntry, RunningEntry
@@ -76,7 +77,11 @@ from code_factory.workspace.review_surface import (
     WorktreeReviewSelection,
     WorktreeReviewSurface,
 )
-from code_factory.workspace.workpad import WORKPAD_FILENAME, workspace_workpad_path
+from code_factory.workspace.workpad import (
+    WORKPAD_FILENAME,
+    workpad_content_hash,
+    workspace_workpad_path,
+)
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
 
@@ -365,6 +370,7 @@ async def test_workspace_workpad_helpers_fallback_paths(tmp_path: Path) -> None:
     path = await hydrate_workspace_workpad(settings, tracker, issue, str(workspace))
     assert path == workspace_workpad_path(str(workspace))
     assert Path(path).read_text(encoding="utf-8") == DEFAULT_WORKPAD_BODY
+    assert "### QA Plan" in DEFAULT_WORKPAD_BODY
 
     existing_body = f"{WORKPAD_HEADER}\n\nexisting\n"
     await tracker.create_comment(issue.id or "", existing_body)
@@ -524,11 +530,25 @@ async def test_issue_worker_paths(
     fake_runtime = FakeRuntime()
     worker.workspace_manager = FakeManager()  # type: ignore[assignment]
     worker._agent_runtime = fake_runtime  # type: ignore[assignment]
+    workpad_path = tmp_path / "workspace" / "workpad.md"
+
+    async def fake_hydrate(*_args: Any, **_kwargs: Any) -> str:
+        workpad_path.parent.mkdir(parents=True, exist_ok=True)
+        workpad_path.write_text("hydrated\n", encoding="utf-8")
+        return str(workpad_path)
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.actor.hydrate_workspace_workpad",
+        fake_hydrate,
+    )
     await worker.run()
     updates: list[Any] = []
     while not queue.empty():
         updates.append(await queue.get())
     assert any(isinstance(update, AgentWorkerUpdate) for update in updates)
+    hydrated = next(update for update in updates if isinstance(update, WorkpadHydrated))
+    assert hydrated.workpad_path == str(workpad_path)
+    assert hydrated.content_hash == workpad_content_hash(str(workpad_path))
     exited = next(update for update in updates if isinstance(update, WorkerExited))
     assert isinstance(exited, WorkerExited)
     assert exited.normal is True
@@ -2215,6 +2235,7 @@ async def test_orchestrator_dispatch_and_reconciliation_paths(
     issue = make_issue(id="issue-1", identifier="ENG-1", state="Todo")
     stopped: list[str | None] = []
     created_tasks: list[asyncio.Task[Any]] = []
+    autosync_calls: list[tuple[str, bool]] = []
     real_create_task = asyncio.create_task
 
     class FakeWorker:
@@ -2243,6 +2264,12 @@ async def test_orchestrator_dispatch_and_reconciliation_paths(
     )
     monkeypatch.setattr(
         "code_factory.runtime.orchestration.recovery.asyncio.create_task", spawn
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.orchestration.reconciliation.stop_workpad_autosync",
+        lambda _context, issue_id, *, flush: asyncio.sleep(
+            0, result=autosync_calls.append((issue_id, flush))
+        ),
     )
 
     actor.tracker = MemoryTracker([issue])
@@ -2276,6 +2303,7 @@ async def test_orchestrator_dispatch_and_reconciliation_paths(
     )
     await asyncio.gather(*created_tasks)
     created_tasks.clear()
+    assert ("issue-1", True) in autosync_calls
     cleanup_message = await actor.queue.get()
     assert isinstance(cleanup_message, WorkerCleanupComplete)
 
@@ -2322,6 +2350,13 @@ async def test_orchestrator_auto_dispatch_and_reconciliation_edge_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     actor = make_actor(tmp_path)
+    autosync_calls: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        "code_factory.runtime.orchestration.reconciliation.stop_workpad_autosync",
+        lambda _context, issue_id, *, flush: asyncio.sleep(
+            0, result=autosync_calls.append((issue_id, flush))
+        ),
+    )
     actor.tracker = MemoryTracker(
         [make_issue(id="issue-1", identifier="ENG-1", state="Todo")]
     )
@@ -2420,6 +2455,7 @@ async def test_orchestrator_auto_dispatch_and_reconciliation_edge_paths(
         actor.retry_entries["issue-3"].error
         == "worker exited without completing a state transition"
     )
+    assert ("issue-3", True) in autosync_calls
 
     exhausted_dir = tmp_path / "exhausted"
     exhausted_dir.mkdir()
@@ -2455,6 +2491,41 @@ async def test_orchestrator_auto_dispatch_and_reconciliation_edge_paths(
 
 
 @pytest.mark.asyncio
+async def test_completed_worker_exit_skips_autosync_flush(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor = make_actor(tmp_path)
+    calls: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        "code_factory.runtime.orchestration.reconciliation.stop_workpad_autosync",
+        lambda _context, issue_id, *, flush: asyncio.sleep(
+            0, result=calls.append((issue_id, flush))
+        ),
+    )
+    actor.running["issue-10"] = RunningEntry(
+        issue_id="issue-10",
+        identifier="ENG-10",
+        issue=make_issue(id="issue-10", identifier="ENG-10", state="In Progress"),
+        workspace_path="/tmp/workspaces/ENG-10",
+        worker=object(),
+        started_at=datetime.now(UTC),
+    )
+    actor.claimed.add("issue-10")
+
+    await actor._handle_worker_exited(
+        WorkerExited(
+            issue_id="issue-10",
+            identifier="ENG-10",
+            workspace_path="/tmp/workspaces/ENG-10",
+            normal=True,
+            completed=True,
+        )
+    )
+
+    assert calls == [("issue-10", False)]
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_message_and_refresh_paths(tmp_path: Path) -> None:
     actor = make_actor(tmp_path)
     actor.next_poll_due_at_ms = actor._monotonic_ms() + 1_000
@@ -2487,6 +2558,90 @@ async def test_orchestrator_message_and_refresh_paths(tmp_path: Path) -> None:
 
     await actor._handle_message(WorkflowReloadError("boom"))
     assert actor.workflow_reload_error == "'boom'"
+
+
+@pytest.mark.asyncio
+async def test_workpad_hydrated_message_starts_autosync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor = make_actor(tmp_path)
+    issue = make_issue(id="issue-7", identifier="ENG-7", state="In Progress")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    workpad_path = workspace / "workpad.md"
+    workpad_path.write_text("hydrated\n", encoding="utf-8")
+    actor.running["issue-7"] = RunningEntry(
+        issue_id="issue-7",
+        identifier="ENG-7",
+        issue=issue,
+        workspace_path=str(workspace),
+        worker=object(),
+        started_at=datetime.now(UTC),
+    )
+
+    class FakeWatch:
+        def __call__(self, *_args: Any, **_kwargs: Any) -> FakeWatch:
+            return self
+
+        def __aiter__(self) -> FakeWatch:
+            return self
+
+        async def __anext__(self) -> Any:
+            await asyncio.Future()
+            raise StopAsyncIteration
+
+    monkeypatch.setattr(
+        "code_factory.runtime.orchestration.workpad_autosync.awatch",
+        FakeWatch(),
+    )
+
+    await actor._handle_message(
+        WorkpadHydrated(
+            issue_id="issue-7",
+            workspace_path=str(workspace),
+            workpad_path=str(workpad_path.resolve()),
+            content_hash=workpad_content_hash(str(workpad_path)),
+        )
+    )
+
+    entry = actor.running["issue-7"]
+    assert entry.workpad_path == str(workpad_path.resolve())
+    assert entry.workpad_watch_task is not None
+    entry.workpad_watch_task.cancel()
+    await asyncio.gather(entry.workpad_watch_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_shutdown_runtime_stops_workpad_autosync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor = make_actor(tmp_path)
+    stopped: list[tuple[str, bool]] = []
+    worker_reasons: list[str | None] = []
+
+    class FakeWorker:
+        async def stop(self, reason: str | None = None) -> None:
+            worker_reasons.append(reason)
+
+    actor.running["issue-8"] = RunningEntry(
+        issue_id="issue-8",
+        identifier="ENG-8",
+        issue=make_issue(id="issue-8", identifier="ENG-8", state="In Progress"),
+        workspace_path=str(tmp_path / "workspace"),
+        worker=FakeWorker(),
+        started_at=datetime.now(UTC),
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.orchestration.reconciliation.stop_workpad_autosync",
+        lambda _context, issue_id, *, flush: asyncio.sleep(
+            0, result=stopped.append((issue_id, flush))
+        ),
+    )
+
+    await actor._shutdown_runtime()
+
+    assert stopped == [("issue-8", True)]
+    assert worker_reasons == ["shutdown"]
 
 
 @pytest.mark.asyncio

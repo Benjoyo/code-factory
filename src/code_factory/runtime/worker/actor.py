@@ -16,7 +16,8 @@ from ...trackers.base import Tracker, build_tracker
 from ...workflow.models import WorkflowSnapshot
 from ...workspace import WorkspaceManager
 from ...workspace.repository import prepare_workspace_repository
-from ..messages import AgentWorkerUpdate, WorkerExited
+from ...workspace.workpad import workpad_content_hash
+from ..messages import AgentWorkerUpdate, WorkerExited, WorkpadHydrated
 from ..support import maybe_aclose
 from .completion import (
     run_pre_complete_turns,
@@ -75,12 +76,21 @@ class IssueWorker:
                 normal = True
                 reason = "stopped"
                 return
-            await hydrate_workspace_workpad(
+            workpad_path = await hydrate_workspace_workpad(
                 self.workflow_snapshot.settings,
                 self.tracker,
                 self.issue,
                 workspace.path,
             )
+            if self.issue.id and isinstance(workpad_path, str):
+                await self.queue.put(
+                    WorkpadHydrated(
+                        issue_id=self.issue.id,
+                        workspace_path=workspace.path,
+                        workpad_path=workpad_path,
+                        content_hash=workpad_content_hash(workpad_path),
+                    )
+                )
             if self._agent_runtime is None:
                 self._agent_runtime = build_coding_agent_runtime(
                     self.workflow_snapshot.settings_for_state(self.issue.state),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -57,3 +58,8 @@ class RunningEntry:
     last_stop_reason: str | None = None
     post_exit_retry_attempt: int | None = None
     post_exit_retry_error: str | None = None
+    workpad_path: str | None = None
+    workpad_last_synced_hash: str | None = None
+    workpad_watch_task: asyncio.Task[None] | None = None
+    workpad_debounce_task: asyncio.Task[None] | None = None
+    workpad_sync_task: asyncio.Task[None] | None = None

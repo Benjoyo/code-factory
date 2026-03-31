@@ -46,8 +46,10 @@ invocations like `cf --no-guardrails` are routed to `cf serve`.
 
 ## Ticket Surfaces
 
-Agent sessions use the shared `tracker_read`, `tracker_write`, and `workpad`
-tools for ticket work. Operators use the CLI for the same surface area:
+Agent sessions use the flat `tracker_issue_*`, `tracker_comment_*`,
+`tracker_pr_link`, and `tracker_file_upload` tools for ticket work. The
+orchestrator manages `workpad.md` synchronization automatically during the run.
+Operators use the CLI for the same ticket surface area:
 
 ```bash
 cf issue get ISSUE

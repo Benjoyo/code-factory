@@ -446,7 +446,7 @@ async def test_messages_helpers_and_metadata() -> None:
     assert message_params({"params": {"x": 1}}) == {"x": 1}
     assert message_params({}) == {}
     assert tool_call_name({"tool": " tracker_issue_get "}) == "tracker_issue_get"
-    assert tool_call_name({"name": " workpad_sync "}) == "workpad_sync"
+    assert tool_call_name({"name": " tracker_file_upload "}) == "tracker_file_upload"
     assert tool_call_name({"tool": " "}) is None
     assert needs_input("turn/input_required", {}) is True
     assert needs_input("other", {"params": {"requiresInput": True}}) is True

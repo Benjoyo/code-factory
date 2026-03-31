@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from ...config.models import Settings
@@ -11,11 +12,14 @@ from ...trackers.base import Tracker
 from ...workspace.workpad import WORKPAD_FILENAME, workspace_workpad_path
 
 WORKPAD_HEADER = "## Codex Workpad"
+_SYNC_LOCKS: dict[str, asyncio.Lock] = {}
 DEFAULT_WORKPAD_BODY = """## Codex Workpad
 
 ### Plan
 
 ### Acceptance Criteria
+
+### QA Plan
 
 ### Validation
 
@@ -43,23 +47,26 @@ async def sync_workspace_workpad(
 ) -> None:
     """Persist the workspace-local workpad file back to the tracker."""
 
-    if settings.tracker.kind == "linear" and issue.identifier:
-        tracker_ops = build_tracker_ops(settings, allowed_roots=(workspace,))
-        try:
-            await tracker_ops.sync_workpad(issue.identifier, file_path=WORKPAD_FILENAME)
-        finally:
-            await tracker_ops.close()
-        return
-    if not issue.id:
-        raise RuntimeError("missing_issue_id_for_workpad_sync")
-    body = Path(workspace_workpad_path(workspace)).read_text(encoding="utf-8")
-    existing = await _fallback_workpad_comment(tracker, issue)
-    if existing is None:
-        await tracker.create_comment(issue.id, body)
-        return
-    if existing.id is None:
-        raise RuntimeError("missing_workpad_comment_id")
-    await tracker.update_comment(existing.id, body)
+    async with _sync_lock(workspace):
+        if settings.tracker.kind == "linear" and issue.identifier:
+            tracker_ops = build_tracker_ops(settings, allowed_roots=(workspace,))
+            try:
+                await tracker_ops.sync_workpad(
+                    issue.identifier, file_path=WORKPAD_FILENAME
+                )
+            finally:
+                await tracker_ops.close()
+            return
+        if not issue.id:
+            raise RuntimeError("missing_issue_id_for_workpad_sync")
+        body = Path(workspace_workpad_path(workspace)).read_text(encoding="utf-8")
+        existing = await _fallback_workpad_comment(tracker, issue)
+        if existing is None:
+            await tracker.create_comment(issue.id, body)
+            return
+        if existing.id is None:
+            raise RuntimeError("missing_workpad_comment_id")
+        await tracker.update_comment(existing.id, body)
 
 
 async def _load_workpad_body(
@@ -90,3 +97,11 @@ async def _fallback_workpad_comment(
         if isinstance(comment.body, str) and comment.body.startswith(WORKPAD_HEADER):
             return comment
     return None
+
+
+def _sync_lock(workspace: str) -> asyncio.Lock:
+    lock = _SYNC_LOCKS.get(workspace)
+    if lock is None:
+        lock = asyncio.Lock()
+        _SYNC_LOCKS[workspace] = lock
+    return lock

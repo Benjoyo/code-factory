@@ -72,14 +72,6 @@ class FakeTrackerOps:
         self.calls.append(("upload_file", {"file_path": file_path}))
         return {"asset_url": "https://example.com/file.png"}
 
-    async def sync_workpad(
-        self, issue: str, *, body: str | None = None, file_path: str | None = None
-    ) -> dict:
-        self.calls.append(
-            ("sync_workpad", {"issue": issue, "body": body, "file_path": file_path})
-        )
-        return {"comment_id": "workpad-1", "created": body == "hello\n"}
-
 
 def test_tool_specs_are_registry_driven() -> None:
     assert supported_tool_names() == [
@@ -91,7 +83,6 @@ def test_tool_specs_are_registry_driven() -> None:
         "tracker_comment_update",
         "tracker_pr_link",
         "tracker_file_upload",
-        "workpad_sync",
     ]
     specs = {item["name"]: item for item in tool_specs()}
     assert set(specs) == set(supported_tool_names())
@@ -106,7 +97,6 @@ def test_tool_specs_are_registry_driven() -> None:
     ]
     assert specs["tracker_pr_link"]["inputSchema"]["required"] == ["url"]
     assert specs["tracker_file_upload"]["inputSchema"]["required"] == ["file_path"]
-    assert "required" not in specs["workpad_sync"]["inputSchema"]
 
 
 @pytest.mark.asyncio
@@ -223,7 +213,6 @@ async def test_write_tools_default_current_context_and_forward_supported_fields(
             {"file_path": "artifacts/failure.png"},
         )
     ).success
-    assert (await executor.execute("workpad_sync", {})).success
 
     assert ops.calls == [
         (
@@ -266,32 +255,6 @@ async def test_write_tools_default_current_context_and_forward_supported_fields(
             },
         ),
         ("upload_file", {"file_path": "artifacts/failure.png"}),
-        ("sync_workpad", {"issue": "ENG-1", "body": None, "file_path": "workpad.md"}),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_workpad_sync_uses_fixed_workspace_file_and_current_issue(
-    tmp_path: Path,
-) -> None:
-    ops = FakeTrackerOps()
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    workpad = workspace / "workpad.md"
-    workpad.write_text("hello\n", encoding="utf-8")
-
-    executor = DynamicToolExecutor(
-        ops,
-        allowed_roots=(str(workspace),),
-        current_issue="ENG-1",
-        current_project="proj-1",
-    )
-    outcome = await executor.execute("workpad_sync", {})
-
-    assert outcome.event == "tool_call_completed"
-    assert outcome.success is True
-    assert ops.calls == [
-        ("sync_workpad", {"issue": "ENG-1", "body": None, "file_path": "workpad.md"})
     ]
 
 
@@ -374,13 +337,6 @@ async def test_all_tool_handlers_surface_tracker_failures() -> None:
         async def upload_file(self, file_path: str) -> dict:
             raise TrackerClientError(("tracker_operation_failed", "upload failed"))
 
-        async def sync_workpad(
-            self, issue: str, *, body: str | None = None, file_path: str | None = None
-        ) -> dict:
-            raise TrackerClientError(
-                ("tracker_operation_failed", "workpad sync failed")
-            )
-
     executor = DynamicToolExecutor(
         FailingTrackerOps(), current_issue="ENG-1", current_project="proj-1"
     )
@@ -400,7 +356,6 @@ async def test_all_tool_handlers_surface_tracker_failures() -> None:
             {"file_path": "artifacts/failure.png"},
             "upload failed",
         ),
-        "workpad_sync": ({}, "workpad sync failed"),
     }
     for tool_name, (arguments, expected_message) in expectations.items():
         outcome = await executor.execute(tool_name, arguments)

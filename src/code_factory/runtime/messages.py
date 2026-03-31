@@ -32,6 +32,16 @@ class AgentWorkerUpdate:
 
 
 @dataclass(slots=True)
+class WorkpadHydrated:
+    """Signals that the worker prepared the local workpad for a running issue."""
+
+    issue_id: str
+    workspace_path: str
+    workpad_path: str
+    content_hash: str | None
+
+
+@dataclass(slots=True)
 class WorkerExited:
     """Terminal worker status emitted when a session exits or is stopped."""
 

@@ -259,7 +259,6 @@ from .attachment_tools import tracker_file_upload, tracker_pr_link
 from .comment_tools import tracker_comment_create, tracker_comment_update
 from .issue_read import tracker_issue_get, tracker_issue_search
 from .issue_write import tracker_issue_create, tracker_issue_update
-from .workpad_tools import workpad_sync
 
 TOOLS: tuple[ToolDefinition[Any], ...] = (
     tracker_issue_get,
@@ -271,5 +270,4 @@ TOOLS: tuple[ToolDefinition[Any], ...] = (
     tracker_comment_update,
     tracker_pr_link,
     tracker_file_upload,
-    workpad_sync,
 )

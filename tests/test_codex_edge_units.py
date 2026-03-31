@@ -77,9 +77,6 @@ from code_factory.coding_agents.codex.tools.results import (
     ToolExecutionOutcome,
     ToolResult,
 )
-from code_factory.coding_agents.codex.tools.workpad_tools import (
-    WorkpadSyncInput,
-)
 from code_factory.errors import AppServerError, TrackerClientError, WorkflowLoadError
 from code_factory.prompts import build_prompt
 from code_factory.prompts.review_assets import review_output_schema
@@ -215,13 +212,6 @@ async def test_dynamic_tool_executor_validation_and_error_paths(
     )
     with pytest.raises(ValidationError, match="Field required"):
         TrackerFileUploadInput.model_validate({})
-
-    assert WorkpadSyncInput.model_validate({}) == WorkpadSyncInput()
-    with pytest.raises(ValidationError) as excinfo:
-        WorkpadSyncInput.model_validate({"extra": True})
-    assert _validation_error_payload("workpad_sync", excinfo.value) == {
-        "error": {"message": "workpad_sync: unexpected field: `extra`"}
-    }
 
     assert json.loads(encode_payload({"a": 1})) == {"a": 1}
     assert encode_payload("raw") == "'raw'"
