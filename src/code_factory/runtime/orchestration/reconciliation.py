@@ -185,6 +185,8 @@ class ReconciliationMixin:
         if isinstance(update.get("turn_id"), str):
             entry.turn_id = update["turn_id"]
         entry.last_agent_event = update.get("event")
+        if isinstance(update.get("activity_phase"), str):
+            entry.activity_phase = update["activity_phase"]
         if update.get("event") in {"turn_completed", "turn_failed", "turn_cancelled"}:
             entry.turn_id = None
         if update.get("runtime_pid") is not None:

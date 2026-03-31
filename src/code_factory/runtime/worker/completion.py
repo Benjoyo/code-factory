@@ -10,6 +10,11 @@ from ...issues import Issue
 from ...structured_results import StructuredTurnResult
 from ...workflow.models import WorkflowSnapshot, WorkflowStateProfile
 from ...workspace.hooks import HookCommandResult, run_hook_command
+from ..activity_phase import (
+    EXECUTION_PHASE,
+    QUALITY_GATES_PHASE,
+    emit_activity_phase_update,
+)
 from .ai_review import run_ai_review_gate
 from .pre_complete_feedback import (
     before_complete_exhausted_summary,
@@ -62,6 +67,12 @@ async def run_pre_complete_turns(
     prompt = initial_prompt
     feedback_attempts = 0
     while True:
+        await emit_activity_phase_update(
+            queue,
+            issue_id,
+            event="execution_started",
+            activity_phase=EXECUTION_PHASE,
+        )
         result = await run_turn(prompt)
         if should_stop():
             return result
@@ -70,6 +81,12 @@ async def run_pre_complete_turns(
         if workspace_path is None:
             raise RuntimeError("missing_workspace_for_before_complete")
 
+        await emit_activity_phase_update(
+            queue,
+            issue_id,
+            event="quality_gates_started",
+            activity_phase=QUALITY_GATES_PHASE,
+        )
         native_result = await native_readiness_result(workspace_path, issue, profile)
         if native_result is not None:
             next_result = await _handle_gate_result(
@@ -92,6 +109,12 @@ async def run_pre_complete_turns(
 
         hook = profile.hooks.before_complete
         if hook is not None:
+            await emit_activity_phase_update(
+                queue,
+                issue_id,
+                event="quality_gates_started",
+                activity_phase=QUALITY_GATES_PHASE,
+            )
             hook_result = await run_before_complete_hook(
                 settings,
                 hook,

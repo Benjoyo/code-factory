@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from ...issues import Issue
+from ..activity_phase import EXECUTION_PHASE
 
 
 @dataclass(slots=True)
@@ -49,6 +50,7 @@ class RunningEntry:
     agent_last_reported_output_tokens: int = 0
     agent_last_reported_total_tokens: int = 0
     turn_count: int = 0
+    activity_phase: str = EXECUTION_PHASE
     stopping: bool = False
     stop_requested_at: datetime | None = None
     cleanup_workspace: bool = False

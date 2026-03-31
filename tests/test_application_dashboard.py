@@ -69,6 +69,7 @@ def test_render_status_dashboard_includes_summary_running_and_backoff_sections()
             {
                 "identifier": "ENG-1",
                 "state": "In Progress",
+                "activity_phase": "Execution",
                 "runtime_pid": "12345",
                 "runtime_seconds": 126,
                 "turn_count": 3,
@@ -121,6 +122,7 @@ def test_render_status_dashboard_includes_summary_running_and_backoff_sections()
     assert "Dashboard:" in rendered and "127.0.0.1:4000" in rendered
     assert "Next refresh:" in rendered and "3s" in rendered
     assert "Running" in rendered and "ENG-1" in rendered
+    assert "PHASE" in rendered and "Execution" in rendered
     assert "Backoff queue" in rendered and "ENG-2" in rendered
 
 
@@ -318,6 +320,7 @@ def test_dashboard_tables_use_stable_column_widths() -> None:
                 {
                     "identifier": "ENG-12345",
                     "state": "In Progress",
+                    "activity_phase": "Quality Gates",
                     "runtime_pid": "12345",
                     "runtime_seconds": 126,
                     "turn_count": 3,
@@ -334,6 +337,7 @@ def test_dashboard_tables_use_stable_column_widths() -> None:
     assert [column.width for column in running_table.columns[:-1]] == [
         1,
         8,
+        14,
         14,
         8,
         12,
@@ -361,6 +365,44 @@ def test_dashboard_tables_use_stable_column_widths() -> None:
     assert retry_table.columns[-1].width is None
     assert retry_table.columns[-1].min_width == 24
     assert retry_table.columns[-1].ratio == 1
+
+
+def test_running_renderable_shows_activity_phase_values() -> None:
+    stream = StringIO()
+    Console(file=stream, width=160).print(
+        _running_renderable(
+            [
+                {
+                    "identifier": "ENG-1",
+                    "state": "In Progress",
+                    "activity_phase": "Execution",
+                    "runtime_seconds": 1,
+                    "turn_count": 1,
+                    "total_tokens": 1,
+                },
+                {
+                    "identifier": "ENG-2",
+                    "state": "In Progress",
+                    "activity_phase": "Quality Gates",
+                    "runtime_seconds": 1,
+                    "turn_count": 1,
+                    "total_tokens": 1,
+                },
+                {
+                    "identifier": "ENG-3",
+                    "state": "In Progress",
+                    "activity_phase": "AI Review",
+                    "runtime_seconds": 1,
+                    "turn_count": 1,
+                    "total_tokens": 1,
+                },
+            ]
+        )
+    )
+    rendered = stream.getvalue()
+    assert "Execution" in rendered
+    assert "Quality Gates" in rendered
+    assert "AI Review" in rendered
 
 
 def test_dashboard_format_helpers_cover_remaining_branches() -> None:

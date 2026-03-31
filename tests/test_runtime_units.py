@@ -179,6 +179,7 @@ async def test_runtime_policy_and_snapshot_helpers(tmp_path: Path) -> None:
         now_ms=100,
     )
     assert payload["running"][0]["issue_id"] == "issue-1"
+    assert payload["running"][0]["activity_phase"] == "Execution"
     assert payload["retrying"][0]["attempt"] == 2
     assert payload["workflow"]["agent"]["max_concurrent_agents"] == 2
     assert payload["polling"]["next_poll_in_ms"] == 400
@@ -198,6 +199,72 @@ async def test_runtime_policy_and_snapshot_helpers(tmp_path: Path) -> None:
         )["workflow"]["reload_error"]
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_integrate_agent_update_tracks_sticky_activity_phase(
+    tmp_path: Path,
+) -> None:
+    actor = make_actor(tmp_path)
+    entry = RunningEntry(
+        issue_id="issue-1",
+        identifier="ENG-1",
+        issue=make_issue(id="issue-1", identifier="ENG-1", state="In Progress"),
+        workspace_path="/tmp/workspaces/ENG-1",
+        worker=object(),
+        started_at=datetime.now(UTC),
+    )
+    actor.running["issue-1"] = entry
+
+    assert actor.running["issue-1"].activity_phase == "Execution"
+
+    actor._integrate_agent_update(
+        "issue-1",
+        {
+            "event": "quality_gates_started",
+            "timestamp": datetime.now(UTC),
+            "activity_phase": "Quality Gates",
+        },
+    )
+    assert actor.running["issue-1"].activity_phase == "Quality Gates"
+
+    actor._integrate_agent_update(
+        "issue-1",
+        {
+            "event": "notification",
+            "timestamp": datetime.now(UTC),
+            "message_summary": "running checks",
+        },
+    )
+    assert actor.running["issue-1"].activity_phase == "Quality Gates"
+
+    actor._integrate_agent_update(
+        "issue-1",
+        {
+            "event": "ai_review_started",
+            "timestamp": datetime.now(UTC),
+            "activity_phase": "AI Review",
+        },
+    )
+    actor._integrate_agent_update(
+        "issue-1",
+        {
+            "event": "review_started",
+            "timestamp": datetime.now(UTC),
+            "message_summary": "review thread booted",
+        },
+    )
+    assert actor.running["issue-1"].activity_phase == "AI Review"
+
+    actor._integrate_agent_update(
+        "issue-1",
+        {
+            "event": "execution_started",
+            "timestamp": datetime.now(UTC),
+            "activity_phase": "Execution",
+        },
+    )
+    assert actor.running["issue-1"].activity_phase == "Execution"
 
 
 def test_runtime_token_helpers() -> None:
@@ -458,9 +525,11 @@ async def test_issue_worker_paths(
     worker.workspace_manager = FakeManager()  # type: ignore[assignment]
     worker._agent_runtime = fake_runtime  # type: ignore[assignment]
     await worker.run()
-    update = await queue.get()
-    exited = await queue.get()
-    assert isinstance(update, AgentWorkerUpdate)
+    updates: list[Any] = []
+    while not queue.empty():
+        updates.append(await queue.get())
+    assert any(isinstance(update, AgentWorkerUpdate) for update in updates)
+    exited = next(update for update in updates if isinstance(update, WorkerExited))
     assert isinstance(exited, WorkerExited)
     assert exited.normal is True
     assert await worker._refresh_issue_state(make_issue(id=None)) is None
@@ -726,7 +795,10 @@ async def test_issue_worker_state_edge_paths_and_result_helpers(
     )  # type: ignore[assignment]
     with caplog.at_level("ERROR"):
         await cleanup_worker.run()
-    exited = await cleanup_worker.queue.get()
+    updates: list[Any] = []
+    while not cleanup_worker.queue.empty():
+        updates.append(await cleanup_worker.queue.get())
+    exited = next(update for update in updates if isinstance(update, WorkerExited))
     assert isinstance(exited, WorkerExited)
     assert exited.completed is True
     assert any(
@@ -1186,9 +1258,18 @@ async def test_issue_worker_native_readiness_paths(
         update = await worker.queue.get()
         assert isinstance(update, AgentWorkerUpdate)
         updates.append(update)
-    assert updates[0].update["event"] == "before_complete_blocked"
-    assert updates[0].update["gate_source"] == "native"
-    assert updates[0].update["gate_name"] == "transition_readiness"
+    assert updates[0].update["event"] == "execution_started"
+    assert updates[0].update["activity_phase"] == "Execution"
+    assert updates[1].update["event"] == "quality_gates_started"
+    assert updates[1].update["activity_phase"] == "Quality Gates"
+    assert updates[2].update["event"] == "before_complete_blocked"
+    assert updates[2].update["gate_source"] == "native"
+    assert updates[2].update["gate_name"] == "transition_readiness"
+    assert any(
+        update.update["event"] == "execution_started"
+        and update.update.get("activity_phase") == "Execution"
+        for update in updates[3:]
+    )
     assert any(
         update.update.get("gate_source") == "hook"
         and update.update.get("event") == "before_complete_passed"
@@ -1441,6 +1522,11 @@ async def test_issue_worker_ai_review_feedback_loop(
         update = await worker.queue.get()
         assert isinstance(update, AgentWorkerUpdate)
         updates.append(update)
+    assert any(
+        update.update["event"] == "ai_review_started"
+        and update.update.get("activity_phase") == "AI Review"
+        for update in updates
+    )
     assert any(update.update["event"] == "ai_review_completed" for update in updates)
     completed = next(
         update.update
@@ -1750,6 +1836,10 @@ async def test_run_ai_review_gate_resolves_auto_scope_to_branch(
 
     assert result is None
     assert captured_scope == ["branch"]
+    phase_update = await queue.get()
+    assert isinstance(phase_update, AgentWorkerUpdate)
+    assert phase_update.update["event"] == "ai_review_started"
+    assert phase_update.update["activity_phase"] == "AI Review"
     update = await queue.get()
     assert isinstance(update, AgentWorkerUpdate)
     assert update.update["event"] == "ai_review_completed"

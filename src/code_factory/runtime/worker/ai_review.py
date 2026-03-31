@@ -26,6 +26,10 @@ from ...workspace.review_surface import (
     WorktreeReviewSelection,
     select_worktree_review_types,
 )
+from ..activity_phase import (
+    AI_REVIEW_PHASE,
+    emit_activity_phase_update,
+)
 from ..messages import AgentWorkerUpdate
 
 
@@ -119,6 +123,12 @@ async def run_ai_review_gate(
 ) -> tuple[int, str, StructuredTurnResult | None] | None:
     if not profile.ai_review_refs:
         return None
+    await emit_activity_phase_update(
+        queue,
+        issue_id,
+        event="ai_review_started",
+        activity_phase=AI_REVIEW_PHASE,
+    )
     try:
         ai_review = await run_ai_review_pass(
             runtime=runtime,
