@@ -41,7 +41,9 @@ async def run_review_session(
     )
     if _interactive_review_supported():
         try:
-            await run_review_textual_session(runner, resolved_target, settings.review)
+            await run_review_textual_session(
+                runner, repo_root, resolved_target, settings.review
+            )
             return
         except ReviewUiUnavailableError:
             pass
@@ -54,6 +56,7 @@ async def run_review_session(
 
 async def run_review_textual_session(
     runner: ReviewRunner,
+    repo_root: str,
     target: ReviewTarget,
     review: ReviewSettings,
 ) -> None:
@@ -62,6 +65,7 @@ async def run_review_textual_session(
     except Exception as exc:  # pragma: no cover - import failure depends on env
         raise ReviewUiUnavailableError(str(exc)) from exc
     app = ReviewTextualApp(
+        repo_root=repo_root,
         target=target,
         servers=review.servers,
         prepare_enabled=bool(review.prepare),

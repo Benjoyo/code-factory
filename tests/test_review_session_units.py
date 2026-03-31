@@ -57,8 +57,9 @@ async def test_run_review_session_prefers_textual_in_interactive_mode(
         lambda *_args, **_kwargs: True,
     )
 
-    async def fake_tui(runner, resolved_target, review) -> None:
+    async def fake_tui(runner, repo_root, resolved_target, review) -> None:
         calls.append(resolved_target.target)
+        assert repo_root == "/repo"
         assert review.servers[0].name == "web"
 
     monkeypatch.setattr(
@@ -101,7 +102,7 @@ async def test_run_review_session_falls_back_to_console_when_ui_unavailable(
         lambda *_args, **_kwargs: True,
     )
 
-    async def fail_tui(runner, resolved_target, review) -> None:
+    async def fail_tui(runner, repo_root, resolved_target, review) -> None:
         raise ReviewUiUnavailableError("boom")
 
     monkeypatch.setattr(
@@ -140,7 +141,7 @@ async def test_run_review_textual_session_success_and_error_paths(
         "code_factory.workspace.review_textual_app.ReviewTextualApp", FakeApp
     )
     runner = cast(Any, SimpleNamespace(run=lambda *args, **kwargs: asyncio.sleep(0)))
-    await run_review_textual_session(runner, target, review)
+    await run_review_textual_session(runner, "/repo", target, review)
 
     class FailingApp(FakeApp):
         def __init__(self, **kwargs: Any) -> None:
@@ -151,14 +152,22 @@ async def test_run_review_textual_session_success_and_error_paths(
         "code_factory.workspace.review_textual_app.ReviewTextualApp", FailingApp
     )
     with pytest.raises(ReviewError, match="session failed"):
-        await run_review_textual_session(runner, target, review)
+        await run_review_textual_session(runner, "/repo", target, review)
 
 
 @pytest.mark.asyncio
 async def test_review_textual_app_handles_warnings_button_paths_and_worker_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    target = ReviewTarget("ENG-1", "ticket", "ENG-1", 1, "sha")
+    target = ReviewTarget(
+        "ENG-1",
+        "ticket",
+        "ENG-1",
+        1,
+        "sha",
+        pr_number=12,
+        pr_url="https://example/pr/12",
+    )
     servers = (ReviewServerSettings(name="web", command="run web"),)
 
     async def failing_session(observer, stop_event: asyncio.Event) -> None:
@@ -166,6 +175,7 @@ async def test_review_textual_app_handles_warnings_button_paths_and_worker_error
         raise RuntimeError("boom")
 
     app = ReviewTextualApp(
+        repo_root="/repo",
         target=target,
         servers=servers,
         prepare_enabled=True,
@@ -179,6 +189,7 @@ async def test_review_textual_app_handles_warnings_button_paths_and_worker_error
         await stop_event.wait()
 
     browser_app = ReviewTextualApp(
+        repo_root="/repo",
         target=target,
         servers=servers,
         prepare_enabled=True,
@@ -186,7 +197,7 @@ async def test_review_textual_app_handles_warnings_button_paths_and_worker_error
     )
     async with browser_app.run_test() as pilot:
         await pilot.pause()
-        await browser_app.action_open_browser()
+        await browser_app.action_open_preview()
         status = browser_app.query_one("#status")
         assert "warned" not in str(status.render())
 
@@ -196,15 +207,15 @@ async def test_review_textual_app_handles_warnings_button_paths_and_worker_error
             "code_factory.workspace.review_textual_app.webbrowser.open",
             lambda _url: True,
         )
-        await browser_app.action_open_browser()
+        await browser_app.action_open_preview()
         monkeypatch.setattr(
             "code_factory.workspace.review_textual_app.webbrowser.open",
             lambda _url: False,
         )
-        button = browser_app.query_one("#browser-button", Button)
+        button = browser_app.query_one("#preview-button", Button)
         await browser_app.on_button_pressed(Button.Pressed(button))
         await pilot.pause()
-        assert "Failed to open browser" in str(
+        assert "Failed to open preview" in str(
             browser_app.query_one("#status").render()
         )
         await browser_app.on_button_pressed(Button.Pressed(Button("Other", id="other")))

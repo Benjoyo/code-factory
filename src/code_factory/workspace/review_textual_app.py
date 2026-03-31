@@ -7,6 +7,7 @@ import webbrowser
 from collections.abc import Awaitable, Callable, Sequence
 
 from textual.app import App, ComposeResult
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import (
     Button,
@@ -22,6 +23,7 @@ from textual.widgets import (
 from .paths import safe_identifier
 from .review_models import ReviewTarget, RunningReviewServer
 from .review_observer import NullReviewObserver, ReviewObserver
+from .review_textual_composer import CommentCountsUpdated, ReviewCommentComposer
 
 ReviewSession = Callable[[ReviewObserver, asyncio.Event], Awaitable[None]]
 
@@ -78,35 +80,63 @@ class ReviewTextualApp(App[None]):
     Screen {
         layout: vertical;
     }
+    #body {
+        height: 1fr;
+        padding: 0 1 1 1;
+    }
+    #review-tabs {
+        height: 1fr;
+    }
+    TabPane {
+        padding: 1 1 0 1;
+    }
     #overview {
         height: auto;
     }
     #overview-table {
         height: 1fr;
     }
-    #browser-button {
-        margin: 1 0;
-        width: 24;
+    #overview-actions {
+        height: auto;
+        margin-top: 1;
+        align: left middle;
+    }
+    #preview-button,
+    #pr-button {
+        width: 18;
+        height: 3;
+    }
+    #pr-button {
+        margin-left: 1;
+    }
+    #submission-summary {
+        width: 1fr;
+        text-align: right;
+        color: $text-muted;
     }
     #status {
         height: auto;
         color: yellow;
+        margin-top: 1;
     }
     """
     BINDINGS = [
         ("q", "request_close", "Quit"),
-        ("b", "open_browser", "Open Browser"),
+        ("b", "open_preview", "Open Preview"),
+        ("p", "open_pr", "Open PR"),
     ]
 
     def __init__(
         self,
         *,
+        repo_root: str,
         target: ReviewTarget,
         servers: Sequence,
         prepare_enabled: bool,
         run_session: ReviewSession,
     ) -> None:
         super().__init__()
+        self._repo_root = repo_root
         self._target = target
         self._servers = tuple(servers)
         self._prepare_enabled = prepare_enabled
@@ -114,6 +144,11 @@ class ReviewTextualApp(App[None]):
         self._stop_event = asyncio.Event()
         self._row_urls: list[str | None] = []
         self._selected_row = 0
+        self._comment_enabled = (
+            target.kind == "ticket"
+            and target.pr_number is not None
+            and target.pr_url is not None
+        )
         self._log_ids = {
             server.name: f"log-{safe_identifier(server.name)}"
             for server in self._servers
@@ -122,26 +157,43 @@ class ReviewTextualApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with TabbedContent(initial="overview"):
-            with TabPane("Overview", id="overview"):
-                yield DataTable(id="overview-table", cursor_type="row")
-                yield Button("Open Browser", id="browser-button", disabled=True)
-                yield Static("", id="status")
-            for server in self._servers:
-                with TabPane(server.name, id=f"tab-{safe_identifier(server.name)}"):
-                    yield Log(id=self._log_ids[server.name], auto_scroll=True)
-            with TabPane("Prepare", id="prepare"):
-                yield Log(id="prepare-log", auto_scroll=True)
+        with Vertical(id="body"):
+            with TabbedContent(initial="overview", id="review-tabs"):
+                with TabPane("Overview", id="overview"):
+                    yield DataTable(id="overview-table", cursor_type="row")
+                    with Horizontal(id="overview-actions"):
+                        yield Button("Open Preview", id="preview-button", disabled=True)
+                        if self._target.pr_url is not None:
+                            yield Button("Open PR", id="pr-button")
+                            yield Static(
+                                self._submission_summary_text(0, 0),
+                                id="submission-summary",
+                            )
+                    yield Static("", id="status")
+                for server in self._servers:
+                    with TabPane(server.name, id=f"tab-{safe_identifier(server.name)}"):
+                        yield Log(id=self._log_ids[server.name], auto_scroll=True)
+                with TabPane("Prepare", id="prepare"):
+                    yield Log(id="prepare-log", auto_scroll=True)
+            if self._comment_enabled:
+                yield ReviewCommentComposer(
+                    repo_root=self._repo_root, target=self._target
+                )
         yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#overview-table", DataTable)
+        status = self.query_one("#status", Static)
         table.add_columns("Target", "Server", "PID", "Port", "URL", "Ref", "PR", "Path")
-        table.focus()
+        status.display = False
         if not self._prepare_enabled:
             self.query_one("#prepare-log", Log).write_line(
                 "No review.prepare command configured."
             )
+        if self._comment_enabled:
+            self.query_one(ReviewCommentComposer).focus_input()
+        else:
+            table.focus()
         self.run_worker(self._run_session_worker(), group="review", exclusive=True)
 
     async def _run_session_worker(self) -> None:
@@ -154,21 +206,29 @@ class ReviewTextualApp(App[None]):
 
     async def action_request_close(self) -> None:
         self._stop_event.set()
-        self.query_one("#status", Static).update("Stopping review session...")
+        self._set_status("Stopping review session...")
 
-    async def action_open_browser(self) -> None:
+    async def action_open_preview(self) -> None:
         url = self._selected_url()
         if url is None:
             return
         opened = await asyncio.to_thread(webbrowser.open, url)
         if not opened:
-            self.query_one("#status", Static).update(
-                f"Failed to open browser for {url}"
-            )
+            self._set_status(f"Failed to open preview for {url}")
+
+    async def action_open_pr(self) -> None:
+        pr_url = self._target.pr_url
+        if pr_url is None:
+            return
+        opened = await asyncio.to_thread(webbrowser.open, pr_url)
+        if not opened:
+            self._set_status(f"Failed to open pull request for {pr_url}")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "browser-button":
-            await self.action_open_browser()
+        if event.button.id == "preview-button":
+            await self.action_open_preview()
+        if event.button.id == "pr-button":
+            await self.action_open_pr()
 
     def on_server_started(self, message: ServerStarted) -> None:
         entry = message.entry
@@ -204,11 +264,23 @@ class ReviewTextualApp(App[None]):
         )
 
     def on_warning_raised(self, message: WarningRaised) -> None:
-        self.query_one("#status", Static).update(message.message)
+        self._set_status(message.message)
         self.query_one("#prepare-log", Log).write_line(f"[warning] {message.message}")
 
+    def on_comment_counts_updated(self, message: CommentCountsUpdated) -> None:
+        if not self._comment_enabled:
+            return
+        self.query_one("#submission-summary", Static).update(
+            self._submission_summary_text(message.bug_count, message.change_count)
+        )
+
+    def _set_status(self, message: str) -> None:
+        status = self.query_one("#status", Static)
+        status.update(message)
+        status.display = bool(message)
+
     def _refresh_browser_button(self) -> None:
-        self.query_one("#browser-button", Button).disabled = (
+        self.query_one("#preview-button", Button).disabled = (
             self._selected_url() is None
         )
 
@@ -219,3 +291,9 @@ class ReviewTextualApp(App[None]):
         if not isinstance(row, int) or row < 0 or row >= len(self._row_urls):
             return None
         return self._row_urls[row]
+
+    def _submission_summary_text(self, bug_count: int, change_count: int) -> str:
+        return (
+            f"Bugs submitted: {bug_count}  "
+            f"Changes submitted: {change_count}"
+        )
