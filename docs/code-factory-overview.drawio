@@ -1,0 +1,183 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.6.6 Chrome/144.0.7559.236 Electron/40.8.4 Safari/537.36" version="29.6.6">
+  <diagram id="r4pCMM-CyhGS7-OMCcar" name="Page-1">
+    <mxGraphModel dx="1546" dy="1116" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="900" math="0" shadow="0" adaptiveColors="auto">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="2" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=18;fontStyle=1;" value="Operator / developer" vertex="1">
+          <mxGeometry height="90" width="150" x="40" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=16;fontStyle=1;" value="Linear&#xa;Issues, states, comments,&#xa;branch links" vertex="1">
+          <mxGeometry height="130" width="220" x="230" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=16;fontStyle=1;" value="GitHub&#xa;Repo, branches, pull requests" vertex="1">
+          <mxGeometry height="130" width="220" x="230" y="530" as="geometry" />
+        </mxCell>
+        <mxCell id="5" parent="1" style="swimlane;whiteSpace=wrap;html=1;rounded=1;horizontal=1;startSize=36;fillColor=#f5f5f5;strokeColor=#666666;fontSize=20;fontStyle=1;" value="Code Factory" vertex="1">
+          <mxGeometry height="810" width="920" x="500" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="6" parent="5" style="swimlane;whiteSpace=wrap;html=1;rounded=1;horizontal=1;startSize=32;fillColor=#ffffff;strokeColor=#666666;fontSize=18;fontStyle=1;" value="Orchestrator server (cf serve)" vertex="1">
+          <mxGeometry height="540" width="880" x="20" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="10" parent="6" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=14;" value="WORKFLOW.md loader&#xa;Reads config, prompts, review settings&#xa;and hot-reloads changes" vertex="1">
+          <mxGeometry height="100" width="230" x="20" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="11" parent="6" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;" value="Poll + reconcile loop&#xa;Decides dispatch, stop, retry" vertex="1">
+          <mxGeometry height="100" width="240" x="320" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="12" parent="6" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;" value="Runtime state&#xa;Workers, retry queue, token totals, metrics" vertex="1">
+          <mxGeometry height="100" width="230" x="620" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="13" parent="6" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;" value="Linear adapter&#xa;Reads tracker data and normalizes it" vertex="1">
+          <mxGeometry height="100" width="230" x="20" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="Iz2y-6rjlVPj_tg3eYH_-51" edge="1" parent="6" source="14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="13" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="14" parent="6" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;" value="Workspace manager&#xa;Creates isolated per-issue workspaces&#xa;and runs hooks" vertex="1">
+          <mxGeometry height="100" width="240" x="320" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="15" parent="6" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;" value="Worker pool&#xa;Launches Codex app-server sessions" vertex="1">
+          <mxGeometry height="100" width="230" x="620" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="16" parent="6" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=15;fontStyle=1;" value="Per-issue execution workspace&#xa;Repo checkout + issue branch + rendered prompt + tracker tools" vertex="1">
+          <mxGeometry height="130" width="650" x="100" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="17" parent="6" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;" value="Issue context" vertex="1">
+          <mxGeometry height="50" width="150" x="140" y="430" as="geometry" />
+        </mxCell>
+        <mxCell id="18" parent="6" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;" value="Codex session" vertex="1">
+          <mxGeometry height="50" width="150" x="360" y="430" as="geometry" />
+        </mxCell>
+        <mxCell id="19" parent="6" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;" value="Git operations" vertex="1">
+          <mxGeometry height="50" width="130" x="580" y="430" as="geometry" />
+        </mxCell>
+        <mxCell id="33" edge="1" parent="6" source="10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#666666;fontSize=11;" target="11" value="">
+          <mxGeometry relative="1" x="-0.1429" y="-20" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="34" edge="1" parent="6" source="11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#666666;fontSize=11;" target="12" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="36" edge="1" parent="6" source="13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#666666;fontSize=11;" target="11" value="eligible work">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="290" y="230" />
+              <mxPoint x="290" y="130" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="37" edge="1" parent="6" source="11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#666666;fontSize=11;" target="14" value="start run">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="38" edge="1" parent="6" source="11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#666666;fontSize=11;" target="15" value="launch / stop workers">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="500" y="180" />
+              <mxPoint x="640" y="180" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="39" edge="1" parent="6" source="14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#666666;fontSize=11;" target="16" value="prepare path + hooks">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="440" y="340" />
+              <mxPoint x="440" y="340" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="40" edge="1" parent="6" source="15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#666666;fontSize=11;entryX=0.976;entryY=0.02;entryDx=0;entryDy=0;entryPerimeter=0;curved=0;" target="16" value="run Codex session">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="41" edge="1" parent="6" source="16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#999999;" target="17" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="42" edge="1" parent="6" source="16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#999999;" target="18" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="43" edge="1" parent="6" source="16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#999999;" target="19" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="51" edge="1" parent="6" source="12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#666666;fontSize=11;dashed=1;" target="15" value="status, retries, live sessions">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="7" parent="5" style="swimlane;whiteSpace=wrap;html=1;rounded=1;horizontal=1;startSize=32;fillColor=#ffffff;strokeColor=#666666;fontSize=18;fontStyle=1;" value="Review command (cf review)" vertex="1">
+          <mxGeometry height="150" width="880" x="20" y="630" as="geometry" />
+        </mxCell>
+        <mxCell id="20" parent="7" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;" value="Resolve target&#xa;(main or one issue)" vertex="1">
+          <mxGeometry height="70" width="180" x="20" y="45" as="geometry" />
+        </mxCell>
+        <mxCell id="21" parent="7" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;" value="Create detached&#xa;review worktree" vertex="1">
+          <mxGeometry height="70" width="180" x="230" y="45" as="geometry" />
+        </mxCell>
+        <mxCell id="22" parent="7" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;" value="Run prepare + dev servers" vertex="1">
+          <mxGeometry height="70" width="180" x="440" y="45" as="geometry" />
+        </mxCell>
+        <mxCell id="23" parent="7" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;" value="Textual review UI&#xa;Open browser per server" vertex="1">
+          <mxGeometry height="70" width="180" x="650" y="45" as="geometry" />
+        </mxCell>
+        <mxCell id="47" edge="1" parent="7" source="20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#d79b00;" target="21" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="48" edge="1" parent="7" source="21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#d79b00;" target="22" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="49" edge="1" parent="7" source="22" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#d79b00;" target="23" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="30" edge="1" parent="1" source="2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#666666;fontSize=11;" target="3" value="create &amp;amp; move issues">
+          <mxGeometry relative="1" x="-0.7418" y="-5" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="115" y="165" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="31" edge="1" parent="1" source="2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#666666;fontSize=11;" target="4" value="review &amp;amp; comment PRs">
+          <mxGeometry relative="1" x="-0.1998" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="290" y="405" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="32" edge="1" parent="1" source="2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#666666;fontSize=11;" target="7" value="run cf review">
+          <mxGeometry relative="1" x="-0.8658" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="115" y="790" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="35" edge="1" parent="1" source="3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#6c8ebf;fontSize=11;" target="13" value="poll &amp;amp; refresh issues">
+          <mxGeometry relative="1" x="0.2632" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="440" y="320" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="44" edge="1" parent="1" source="16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#82b366;fontSize=11;" target="4" value="branch, push, open PR">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="500" y="550" />
+              <mxPoint x="500" y="550" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="45" edge="1" parent="1" source="16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#6c8ebf;fontSize=11;" target="3" value="comments, workpad, PR link">
+          <mxGeometry relative="1" x="-0.5652" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="380" y="490" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="50" edge="1" parent="1" source="20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#82b366;fontSize=11;" target="4" value="checkout main or PR ref">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

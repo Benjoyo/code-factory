@@ -1,0 +1,95 @@
+<mxGraphModel dx="1700" dy="950" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="900" math="0" shadow="0" adaptiveColors="auto">
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+    <mxCell id="100" value="Human / tracker-owned decisions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=20;fontStyle=1;align=left;spacingLeft=20;" vertex="1" parent="1">
+      <mxGeometry x="40" y="40" width="1460" height="190" as="geometry"/>
+    </mxCell>
+    <mxCell id="101" value="Harness-run automation" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=20;fontStyle=1;align=left;spacingLeft=20;" vertex="1" parent="1">
+      <mxGeometry x="40" y="270" width="1460" height="140" as="geometry"/>
+    </mxCell>
+    <mxCell id="102" value="Agent-run states" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=20;fontStyle=1;align=left;spacingLeft=20;" vertex="1" parent="1">
+      <mxGeometry x="40" y="450" width="1460" height="300" as="geometry"/>
+    </mxCell>
+    <mxCell id="103" value="Typical default workflow from the shipped WORKFLOW template" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=24;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="40" y="5" width="820" height="30" as="geometry"/>
+    </mxCell>
+    <mxCell id="110" value="Backlog&#xa;Out of scope until&#xa;a human prioritizes it" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="90" y="110" width="180" height="80" as="geometry"/>
+    </mxCell>
+    <mxCell id="111" value="Todo&#xa;Bootstrap state" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="300" y="300" width="180" height="80" as="geometry"/>
+    </mxCell>
+    <mxCell id="112" value="Auto-transition&#xa;Prepare issue branch +&#xa;hydrate workpad.md" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="540" y="300" width="240" height="80" as="geometry"/>
+    </mxCell>
+    <mxCell id="113" value="In Progress&#xa;Plan, implement, validate,&#xa;push, attach PR" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="280" y="560" width="220" height="100" as="geometry"/>
+    </mxCell>
+    <mxCell id="114" value="Potential internal loop&#xa;- native readiness checks&#xa;- before_complete hooks&#xa;- optional AI review&#xa;- PR feedback sweep&#xa;- fix findings and rerun validation" style="shape=note;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=13;" vertex="1" parent="1">
+      <mxGeometry x="560" y="500" width="260" height="170" as="geometry"/>
+    </mxCell>
+    <mxCell id="115" value="Human Review&#xa;No agent runs here&#xa;Human reviews via cf review,&#xa;GitHub, and Linear" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="830" y="100" width="250" height="100" as="geometry"/>
+    </mxCell>
+    <mxCell id="116" value="Merging&#xa;Run land skill conservatively&#xa;until the PR is merged" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="830" y="560" width="220" height="100" as="geometry"/>
+    </mxCell>
+    <mxCell id="117" value="Rework&#xa;Reset approach, replan,&#xa;re-implement, revalidate" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="1120" y="560" width="220" height="100" as="geometry"/>
+    </mxCell>
+    <mxCell id="118" value="Done&#xa;Terminal state" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="1320" y="110" width="160" height="80" as="geometry"/>
+    </mxCell>
+    <mxCell id="119" value="Rare escape hatch&#xa;Missing required non-GitHub tool/auth&#xa;also lands in Human Review" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="1090" y="300" width="330" height="70" as="geometry"/>
+    </mxCell>
+    <mxCell id="130" value="human prioritizes work" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="110" target="111">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="131" value="auto_next_state" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#d6b656;fontSize=11;" edge="1" parent="1" source="111" target="112">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="132" value="start agent session" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#9673a6;fontSize=11;" edge="1" parent="1" source="112" target="113">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="133" value="candidate handoff" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#9673a6;fontSize=11;" edge="1" parent="1" source="113" target="114">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="134" value="not ready: repair + revalidate" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#9673a6;fontSize=11;" edge="1" parent="1" source="114" target="113">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="135" value="ready: structured result transitions to review" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#6c8ebf;fontSize=11;" edge="1" parent="1" source="114" target="115">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="136" value="human approves" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="115" target="116">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="137" value="human requests changes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#666666;fontSize=11;" edge="1" parent="1" source="115" target="117">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="138" value="same completion bar as In Progress" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#9673a6;fontSize=11;" edge="1" parent="1" source="117" target="114">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="139" value="merged + head branch deleted" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#82b366;fontSize=11;" edge="1" parent="1" source="116" target="118">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="140" value="merge loop until PR lands" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#9673a6;fontSize=11;" edge="1" parent="1" source="116" target="116">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="1010" y="700"/>
+          <mxPoint x="870" y="700"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="141" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#b85450;fontSize=11;dashed=1;" edge="1" parent="1" source="113" target="119">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="142" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#b85450;fontSize=11;dashed=1;" edge="1" parent="1" source="117" target="119">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="143" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#b85450;fontSize=11;dashed=1;" edge="1" parent="1" source="119" target="115">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+  </root>
+</mxGraphModel>
