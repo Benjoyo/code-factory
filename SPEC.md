@@ -597,8 +597,10 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `terminal_states`: list of strings, default `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]`
 - `states`: object mapping tracker state names to state profiles, required
 - `states.<state>.prompt`: string or non-empty list of strings referencing prompt section ids
-- `states.<state>.ai_review`: string or non-empty list of strings referencing reusable AI review
-  type ids, optional for agent-run states only
+- `states.<state>.ai_review`: optional for agent-run states only; either a string/non-empty
+  list of strings referencing reusable AI review type ids, or an object with:
+  - `types`: string or non-empty list of strings referencing reusable AI review type ids
+  - `scope`: string, optional, one of `auto`, `worktree`, `branch`, default `auto`
 - `states.<state>.codex.model`: string or null, optional
 - `states.<state>.codex.reasoning_effort`: string or null, optional
 - `states.<state>.codex.skills`: list of strings or null, optional, repo-local allowlist of
@@ -608,7 +610,7 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `states.<state>.completion.require_pr`: boolean, default `false`, optional for agent-run
   states and implies `require_pushed_head`
 - `states.<state>.hooks.before_complete`: shell script or null, optional for agent-run states
-- `states.<state>.hooks.before_complete_max_feedback_loops`: integer, default `3`, optional for
+- `states.<state>.hooks.before_complete_max_feedback_loops`: integer, default `10`, optional for
   agent-run states
 - `ai_review.types`: object mapping reusable AI review type names to definitions, optional
 - `ai_review.types.<name>.prompt`: string referencing a `# review:` section id
@@ -2042,6 +2044,15 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - `states.<state>.completion.require_pr` implies `require_pushed_head` and additionally blocks
   completion until exactly one open PR exists for the current branch at local `HEAD`
 - Native completion readiness checks run before any configured `before_complete` hook
+- `states.<state>.ai_review.scope=auto` resolves to `branch` when native completion readiness
+  is enabled for that state and `worktree` otherwise
+- `states.<state>.ai_review.scope=worktree` evaluates triggers and review execution against the
+  current workspace diff, including uncommitted tracked changes and untracked text files
+- `states.<state>.ai_review.scope=branch` evaluates triggers and review execution against the
+  committed branch diff from the merge-base with the repo default base ref to local `HEAD`
+- `states.<state>.ai_review.scope=branch` requires a committed `HEAD`, a clean worktree, and a
+  resolvable default base ref; failures feed back through the existing completion loop rather
+  than silently skipping review
 - `states.<state>.hooks.before_complete` runs after a transition result and before state
   persistence/tracker transition
 - `states.<state>.hooks.before_complete` exit status `0` accepts completion, status `2` feeds

@@ -48,6 +48,7 @@ async def test_integration_worker_errors_retry_with_capped_backoff_and_recover(
                 ),
                 None,
             ),
+            timeout=5.0,
         )
         assert retry_entry["error"].startswith("agent exited:")
         assert 0 < retry_entry["due_in_ms"] <= 70

@@ -48,6 +48,7 @@ from code_factory.runtime.orchestration.tokens import (
 )
 from code_factory.runtime.subprocess.process_tree import ProcessTree
 from code_factory.runtime.worker.actor import IssueWorker
+from code_factory.runtime.worker.ai_review import run_ai_review_gate
 from code_factory.runtime.worker.completion import (
     before_complete_feedback_prompt,
     before_complete_update,
@@ -851,7 +852,7 @@ async def test_issue_worker_before_complete_hook_paths(
                     "allowed_next_states": ["Done"],
                     "hooks": {
                         "before_complete": "uv run pytest -q",
-                        "before_complete_max_feedback_loops": 1,
+                        "before_complete_max_feedback_loops": 2,
                     },
                 },
             },
@@ -891,10 +892,11 @@ async def test_issue_worker_before_complete_hook_paths(
         *,
         tracker: MemoryTracker,
         runtime: FakeRuntime,
+        workflow_snapshot: Any | None = None,
     ) -> IssueWorker:
         worker = IssueWorker(
             issue=make_issue(id="issue-1", identifier="ENG-1"),
-            workflow_snapshot=snapshot,
+            workflow_snapshot=workflow_snapshot or snapshot,
             orchestrator_queue=asyncio.Queue(),
             tracker=tracker,
         )
@@ -1027,6 +1029,22 @@ async def test_issue_worker_before_complete_hook_paths(
         "code_factory.runtime.worker.completion.run_hook_command",
         fake_exhausted_hook,
     )
+    exhausted_snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW_exhausted.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "allowed_next_states": ["Done"],
+                    "hooks": {
+                        "before_complete": "uv run pytest -q",
+                        "before_complete_max_feedback_loops": 1,
+                    },
+                },
+            },
+        )
+    )
     exhausted_tracker = MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")])
     exhausted_runtime = FakeRuntime(
         [
@@ -1043,11 +1061,13 @@ async def test_issue_worker_before_complete_hook_paths(
         ]
     )
     exhausted_worker = await run_worker(
-        tracker=exhausted_tracker, runtime=exhausted_runtime
+        tracker=exhausted_tracker,
+        runtime=exhausted_runtime,
+        workflow_snapshot=exhausted_snapshot,
     )
     await exhausted_worker._run_state(Session())
     exhausted_issue = await exhausted_tracker.fetch_issue_states_by_ids(["issue-1"])
-    assert exhausted_issue[0].state == snapshot.settings.failure_state
+    assert exhausted_issue[0].state == exhausted_snapshot.settings.failure_state
 
     missing_workspace_worker = await run_worker(
         tracker=MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")]),
@@ -1424,6 +1444,7 @@ async def test_issue_worker_ai_review_feedback_loop(
         for update in updates
         if update.update["event"] == "ai_review_completed"
     )
+    assert completed["review_scope"] == "worktree"
     assert completed["accepted_finding_count"] == 1
     assert completed["reviews"][0]["findings"][0]["title"] == "Missing branch guard"
 
@@ -1641,12 +1662,207 @@ async def test_issue_worker_ai_review_merges_multiple_review_types(
         for update in updates
         if update.update["event"] == "ai_review_completed"
     ]
+    assert completed[0]["review_scope"] == "worktree"
     assert completed[0]["matched_review_types"] == ["Security", "Frontend"]
     assert completed[0]["accepted_finding_count"] == 1
     assert [review["review_name"] for review in completed[0]["reviews"]] == [
         "Security",
         "Frontend",
     ]
+
+
+@pytest.mark.asyncio
+async def test_run_ai_review_gate_resolves_auto_scope_to_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "completion": {"require_pushed_head": True},
+                    "ai_review": "Security",
+                },
+            },
+            ai_review={"types": {"Security": {"prompt": "security"}}},
+            prompt=(
+                "# prompt: default\nImplement.\n\n"
+                "# review: security\nCheck the branch patch.\n"
+            ),
+        )
+    )
+    profile = snapshot.state_profile("In Progress")
+    assert profile is not None
+
+    captured_scope: list[str] = []
+
+    async def fake_select(*_args: Any, **kwargs: Any) -> WorktreeReviewSelection:
+        captured_scope.append(kwargs["review_scope"])
+        return WorktreeReviewSelection(
+            surface=WorktreeReviewSurface(
+                changed_paths=("src/app.py",),
+                lines_changed=3,
+                review_scope="branch",
+                base_ref="origin/main",
+            ),
+            matched_types=snapshot.ai_review_types_for_state("In Progress"),
+        )
+
+    class FakeRuntime:
+        async def run_review(self, *_args: Any, **_kwargs: Any) -> Any:
+            from code_factory.coding_agents.review_models import ReviewOutput
+
+            return ReviewOutput(
+                findings=(),
+                overall_correctness="correct",
+                overall_explanation="No blocking findings remain.",
+                overall_confidence_score=0.82,
+            )
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.ai_review.select_worktree_review_types",
+        fake_select,
+    )
+
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+    result = await run_ai_review_gate(
+        runtime=cast(Any, FakeRuntime()),
+        workflow_snapshot=snapshot,
+        workspace_path=str(tmp_path / "workspace"),
+        issue=make_issue(state="In Progress"),
+        profile=profile,
+        queue=queue,
+        issue_id="issue-1",
+        feedback_attempts=0,
+        failure_state="Human Review",
+        on_message=None,
+    )
+
+    assert result is None
+    assert captured_scope == ["branch"]
+    update = await queue.get()
+    assert isinstance(update, AgentWorkerUpdate)
+    assert update.update["event"] == "ai_review_completed"
+    assert update.update["review_scope"] == "branch"
+
+
+@pytest.mark.asyncio
+async def test_run_ai_review_gate_turns_branch_scope_failures_into_feedback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "ai_review": {"types": "Security", "scope": "branch"},
+                },
+            },
+            ai_review={"types": {"Security": {"prompt": "security"}}},
+            prompt=(
+                "# prompt: default\nImplement.\n\n"
+                "# review: security\nCheck the branch patch.\n"
+            ),
+        )
+    )
+    profile = snapshot.state_profile("In Progress")
+    assert profile is not None
+
+    async def fake_select(*_args: Any, **_kwargs: Any) -> WorktreeReviewSelection:
+        raise ReviewError(
+            "AI review with branch scope requires a clean worktree.\n\n"
+            "Current git status --short:\n```text\n M src/app.py\n?? coverage.json\n```"
+        )
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.ai_review.select_worktree_review_types",
+        fake_select,
+    )
+
+    result = await run_ai_review_gate(
+        runtime=cast(Any, object()),
+        workflow_snapshot=snapshot,
+        workspace_path=str(tmp_path / "workspace"),
+        issue=make_issue(state="In Progress"),
+        profile=profile,
+        queue=asyncio.Queue(),
+        issue_id="issue-1",
+        feedback_attempts=0,
+        failure_state="Human Review",
+        on_message=None,
+    )
+
+    assert result is not None
+    feedback_attempts, prompt, blocked = result
+    assert feedback_attempts == 1
+    assert blocked is None
+    assert "Resolved review scope: branch." in prompt
+    assert "requires a clean worktree" in prompt
+    assert " M src/app.py" in prompt
+    assert "?? coverage.json" in prompt
+
+
+@pytest.mark.asyncio
+async def test_run_ai_review_gate_blocks_after_exhausted_branch_scope_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "ai_review": {"types": "Security", "scope": "branch"},
+                },
+            },
+            ai_review={"types": {"Security": {"prompt": "security"}}},
+            prompt=(
+                "# prompt: default\nImplement.\n\n"
+                "# review: security\nCheck the branch patch.\n"
+            ),
+        )
+    )
+    profile = snapshot.state_profile("In Progress")
+    assert profile is not None
+
+    async def fake_select(*_args: Any, **_kwargs: Any) -> WorktreeReviewSelection:
+        raise ReviewError(
+            "AI review with branch scope requires a clean worktree.\n\n"
+            "Current git status --short:\n```text\n M src/app.py\n```"
+        )
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.ai_review.select_worktree_review_types",
+        fake_select,
+    )
+
+    result = await run_ai_review_gate(
+        runtime=cast(Any, object()),
+        workflow_snapshot=snapshot,
+        workspace_path=str(tmp_path / "workspace"),
+        issue=make_issue(state="In Progress"),
+        profile=profile,
+        queue=asyncio.Queue(),
+        issue_id="issue-1",
+        feedback_attempts=profile.hooks.before_complete_max_feedback_loops,
+        failure_state="Human Review",
+        on_message=None,
+    )
+
+    assert result is not None
+    feedback_attempts, prompt, blocked = result
+    assert feedback_attempts == profile.hooks.before_complete_max_feedback_loops + 1
+    assert prompt == ""
+    assert blocked is not None
+    assert blocked.summary.startswith(
+        "Code Factory exhausted AI review repair loops after"
+    )
+    assert "requires a clean worktree" in blocked.summary
 
 
 @pytest.mark.asyncio

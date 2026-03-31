@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from ..coding_agents.review_models import ReviewFinding, ReviewOutput
-from ..workflow.review_profiles import WorkflowReviewType
+from ..workflow.review_profiles import ResolvedAiReviewScope, WorkflowReviewType
 
 AI_REVIEW_CONFIDENCE_THRESHOLD = 0.90
 AI_REVIEW_PRIORITY_THRESHOLD = 1  # P1 is the highest priority
@@ -58,15 +58,37 @@ def ai_review_exhausted_summary(
     )
 
 
+def ai_review_scope_failure_prompt(
+    *,
+    reason: str,
+    review_scope: ResolvedAiReviewScope,
+    attempt: int,
+    max_attempts: int,
+) -> str:
+    return (
+        "An AI review could not run for this workflow state.\n"
+        f"Resolved review scope: {review_scope}.\n"
+        f"Feedback attempt {attempt} of {max_attempts}.\n"
+        "Fix the workspace or branch state described below, re-run the necessary validation, and then emit the required structured result again.\n\n"
+        "AI review setup failure:\n"
+        f"{reason}"
+    )
+
+
+def ai_review_scope_failure_summary(
+    reason: str,
+    max_feedback_loops: int,
+) -> str:
+    return (
+        "Code Factory exhausted AI review repair loops after "
+        f"{max_feedback_loops} attempt(s). Last setup failure: {reason}"
+    )
+
+
 def _render_finding(finding: ReviewFinding) -> str:
     line_range = finding.code_location.line_range
     location = (
         f"{finding.code_location.absolute_file_path}:"
         f"{line_range.start}-{line_range.end}"
     )
-    priority = f"P{finding.priority}" if finding.priority is not None else "P?"
-    return (
-        f"- [{priority}] {finding.title}\n"
-        f"  Location: {location}\n"
-        f"  Details: {finding.body}"
-    )
+    return f"- {finding.title}\n  Location: {location}\n  Details: {finding.body}"

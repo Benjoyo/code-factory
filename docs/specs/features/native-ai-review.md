@@ -60,7 +60,7 @@ The review request sent to Codex will be composed by Code Factory. It will prepe
 
 - Add a workflow-level review configuration namespace for reusable AI review types. This is separate from the existing operator review workspace configuration.
 - Add review prompt sections to the workflow body using the same named-section pattern already used for agent prompts, with state definitions referencing review prompt identifiers rather than embedding prompt text inline.
-- Extend state configuration so agent-run states can declare one or more review type references. Auto states will not support AI review.
+- Extend state configuration so agent-run states can declare one or more review type references and a state-level review scope. Auto states will not support AI review.
 - Keep the reviewer isolated from the implementing agent by running a fresh review turn rather than on the implementing session's thread history.
 - Compose the review request text inside Code Factory. The rendered request will include:
   - instructions describing the review scope to inspect
@@ -69,14 +69,18 @@ The review request sent to Codex will be composed by Code Factory. It will prepe
   - changed paths plus changed-line totals for the exact candidate patch
 - Vendor the Codex review base prompt and JSON schema into this repo and treat them as package-owned assets.
 - Drop native review mode for this feature because the app-server path around `uncommittedChanges` does not provide a clean first-class way to layer issue/workflow instructions onto the review target while keeping prompt and schema ownership explicit in-repo.
-- Use the current worktree as the default review surface for v1. Review triggers and review execution will both evaluate the exact worktree diff present at the end of the implementing turn.
+- Use a state-level review surface with two supported scopes in v1:
+  - `worktree`: the live workspace diff present at the end of the implementing turn
+  - `branch`: the cumulative committed branch diff from the merge-base with the repo default base ref to local `HEAD`
+- Keep `auto` as the state-level default for shorthand state review references. `auto` resolves to `branch` when native completion readiness is enabled for the state and `worktree` otherwise.
 - Model trigger rules as a small validated contract rather than a general rules engine. The path trigger interface will use:
   - `only`: every changed file must match one of these globs
   - `include`: at least one changed file must match one of these globs
   - `exclude`: no changed file may match any of these globs
-- Keep line-based triggers as scalar thresholds alongside path rules. `lines_changed` will mean added lines plus deleted lines from the selected worktree diff.
+- Keep line-based triggers as scalar thresholds alongside path rules. `lines_changed` will mean added lines plus deleted lines from the selected review surface diff.
 - When multiple review types trigger for one state transition, run all of them and merge their filtered findings into one repair prompt.
 - Run AI review only after deterministic readiness and `before_complete` hooks pass, so review sees a cleaner candidate patch and token spend is reduced on obviously invalid work.
+- For `branch` scope, require the worktree to be clean and the default base ref to resolve cleanly. If that surface cannot be represented, feed the failure back through the existing completion loop rather than silently falling back to `worktree`.
 - Treat AI review as another completion gate inside the existing repair loop rather than introducing a separate orchestration phase.
 - Reuse the current completion feedback-loop budget for AI review retries instead of adding a separate review retry budget in v1.
 - Consume Codex's structured review output format and apply an internal confidence threshold to findings before surfacing them to the implementing agent.

@@ -33,6 +33,8 @@ def test_ai_review_prompt_starts_with_vendored_base_prompt() -> None:
         ),
         WorkflowReviewType(review_name="Security", prompt_ref="security"),
         "Look for security regressions first.",
+        review_scope="worktree",
+        base_ref=None,
         changed_paths=("src/app.py", "tests/test_app.py"),
         lines_changed=17,
     )
@@ -53,16 +55,38 @@ def test_ai_review_prompt_starts_with_vendored_base_prompt() -> None:
     assert prompt.index(anchor) > prompt.index("### Workflow-specific review focus")
     assert suffix in prompt
     assert "- Review type: Security" in prompt
+    assert "- Review scope: worktree" in prompt
     assert "- Identifier: BEN-28" in prompt
-    assert "- Branch: codex/ben-28" in prompt
-    assert "- Labels: manual-review, codex" in prompt
+    assert "- Title: Run manual Codex review turns" in prompt
+    assert "- Branch: codex/ben-28" not in prompt
+    assert "- Labels: manual-review, codex" not in prompt
     assert "Implement the detached review path." in prompt
     assert "Look for security regressions first." in prompt
     assert "- Lines changed: 17" in prompt
+    assert "- Review only the current workspace diff." in prompt
     assert "Changed paths:\n- src/app.py\n- tests/test_app.py" in prompt
     assert prompt.rstrip().endswith(
         "Return only schema-valid JSON that matches the configured output schema."
     )
+
+
+def test_ai_review_prompt_renders_branch_scope_context() -> None:
+    prompt = render_ai_review_prompt(
+        Issue(identifier="BEN-28", title="Branch review"),
+        WorkflowReviewType(review_name="Security", prompt_ref="security"),
+        "Focus on the committed branch patch.",
+        review_scope="branch",
+        base_ref="origin/main",
+        changed_paths=("src/app.py",),
+        lines_changed=12,
+    )
+
+    assert "- Review scope: branch" in prompt
+    assert (
+        "- Review the committed branch diff from the merge-base with `origin/main` to `HEAD`."
+        in prompt
+    )
+    assert "Focus on the committed branch patch." in prompt
 
 
 def test_review_model_accepts_vendored_correctness_and_nullable_priority() -> None:
@@ -114,7 +138,7 @@ def test_ai_review_feedback_filters_low_confidence_findings() -> None:
         max_attempts=3,
     )
     assert "Triggered review types: Security." in feedback
-    assert "[P1] Keep" in feedback
+    assert "- Keep" in feedback
     assert "/tmp/a.py:10-12" in feedback
     assert "Drop" not in feedback
 
@@ -161,7 +185,7 @@ def test_ai_review_feedback_handles_missing_priority() -> None:
         max_attempts=3,
     )
 
-    assert "[P?] Untitled" in feedback
+    assert "- Untitled" in feedback
 
 
 def test_ai_review_prompt_rejects_unexpected_vendored_prompt_shape(
@@ -177,6 +201,8 @@ def test_ai_review_prompt_rejects_unexpected_vendored_prompt_shape(
             Issue(identifier="BEN-28"),
             WorkflowReviewType(review_name="Security", prompt_ref="security"),
             "Look for security regressions first.",
+            review_scope="worktree",
+            base_ref=None,
             changed_paths=(),
             lines_changed=0,
         )

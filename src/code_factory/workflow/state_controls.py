@@ -19,7 +19,7 @@ class StateHooksOverride:
     """Optional shell hooks enforced for one agent-run state."""
 
     before_complete: str | None = None
-    before_complete_max_feedback_loops: int = 3
+    before_complete_max_feedback_loops: int = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +62,7 @@ def parse_state_hooks(
         before_complete_max_feedback_loops=non_negative_int(
             hooks.get("before_complete_max_feedback_loops"),
             f"{hooks_field}.before_complete_max_feedback_loops",
-            3,
+            10,
         ),
     )
 

@@ -835,3 +835,246 @@ async def test_run_pre_complete_turns_runs_deterministic_gates_before_ai_review(
 
     assert result.next_state == "Done"
     assert call_order == ["turn", "native", "hook", "ai_review"]
+
+
+@pytest.mark.asyncio
+async def test_run_pre_complete_turns_runs_gates_on_final_allowed_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "allowed_next_states": ["Done"],
+                    "ai_review": "Security",
+                    "completion": {"require_pushed_head": True},
+                    "hooks": {
+                        "before_complete": "check",
+                        "before_complete_max_feedback_loops": 1,
+                    },
+                },
+            },
+            ai_review={"types": {"Security": {"prompt": "security"}}},
+            prompt="# prompt: default\nImplement.\n\n# review: security\nReview.\n",
+        )
+    )
+    profile = snapshot.state_profile("In Progress")
+    assert profile is not None
+    prompts: list[str] = []
+    call_order: list[str] = []
+    native_statuses = iter(
+        (
+            SimpleNamespace(status=2, stdout="", stderr="still not pushed"),
+            None,
+        )
+    )
+
+    async def fake_run_turn(prompt: str) -> StructuredTurnResult:
+        prompts.append(prompt)
+        return StructuredTurnResult(
+            decision="transition",
+            summary="done",
+            next_state="Done",
+        )
+
+    async def fake_native(*_args: Any, **_kwargs: Any) -> Any:
+        call_order.append("native")
+        return next(native_statuses)
+
+    async def fake_hook(*_args: Any, **_kwargs: Any) -> Any:
+        call_order.append("hook")
+        return SimpleNamespace(status=0, stdout="ok", stderr="")
+
+    async def fake_ai_review_gate(**_kwargs: Any) -> None:
+        call_order.append("ai_review")
+        return None
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.completion.native_readiness_result",
+        fake_native,
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.completion.run_before_complete_hook",
+        fake_hook,
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.completion.run_ai_review_gate",
+        fake_ai_review_gate,
+    )
+
+    result = await run_pre_complete_turns(
+        run_turn=fake_run_turn,
+        settings=snapshot.settings,
+        workspace_path="/tmp/workspace",
+        issue=make_issue(identifier="ENG-1", branch_name="codex/eng-1"),
+        profile=profile,
+        queue=asyncio.Queue(),
+        issue_id="issue-1",
+        failure_state="Failed",
+        initial_prompt="prompt",
+        should_stop=lambda: False,
+        workflow_snapshot=snapshot,
+        runtime=cast(Any, object()),
+    )
+
+    assert result.decision == "transition"
+    assert result.next_state == "Done"
+    assert len(prompts) == 2
+    assert prompts[0] == "prompt"
+    assert "Feedback attempt 1 of 1." in prompts[1]
+    assert call_order == ["native", "native", "hook", "ai_review"]
+
+
+@pytest.mark.asyncio
+async def test_run_pre_complete_turns_blocks_on_native_gate_without_feedback_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "allowed_next_states": ["Done"],
+                    "completion": {"require_pushed_head": True},
+                    "hooks": {"before_complete_max_feedback_loops": 0},
+                },
+            },
+        )
+    )
+    profile = snapshot.state_profile("In Progress")
+    assert profile is not None
+    call_order: list[str] = []
+
+    async def fake_run_turn(_prompt: str) -> StructuredTurnResult:
+        return StructuredTurnResult(
+            decision="transition",
+            summary="done",
+            next_state="Done",
+        )
+
+    async def fake_native(*_args: Any, **_kwargs: Any) -> Any:
+        call_order.append("native")
+        return SimpleNamespace(status=2, stdout="", stderr="")
+
+    async def fake_ai_review_gate(**_kwargs: Any) -> None:
+        call_order.append("ai_review")
+        return None
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.completion.native_readiness_result",
+        fake_native,
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.completion.run_ai_review_gate",
+        fake_ai_review_gate,
+    )
+
+    result = await run_pre_complete_turns(
+        run_turn=fake_run_turn,
+        settings=snapshot.settings,
+        workspace_path="/tmp/workspace",
+        issue=make_issue(identifier="ENG-1", branch_name="codex/eng-1"),
+        profile=profile,
+        queue=asyncio.Queue(),
+        issue_id="issue-1",
+        failure_state="Failed",
+        initial_prompt="prompt",
+        should_stop=lambda: False,
+        workflow_snapshot=snapshot,
+        runtime=cast(Any, object()),
+    )
+
+    assert result.decision == "blocked"
+    assert result.next_state == "Failed"
+    assert (
+        result.summary
+        == "Code Factory exhausted before_complete repair loops after 0 attempt(s). "
+        "Last error: unknown failure"
+    )
+    assert call_order == ["native"]
+
+
+@pytest.mark.asyncio
+async def test_run_pre_complete_turns_blocks_on_hook_without_feedback_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "allowed_next_states": ["Done"],
+                    "hooks": {
+                        "before_complete": "check",
+                        "before_complete_max_feedback_loops": 0,
+                    },
+                },
+            },
+        )
+    )
+    profile = snapshot.state_profile("In Progress")
+    assert profile is not None
+    call_order: list[str] = []
+
+    async def fake_run_turn(_prompt: str) -> StructuredTurnResult:
+        return StructuredTurnResult(
+            decision="transition",
+            summary="done",
+            next_state="Done",
+        )
+
+    async def fake_native(*_args: Any, **_kwargs: Any) -> None:
+        call_order.append("native")
+        return None
+
+    async def fake_hook(*_args: Any, **_kwargs: Any) -> Any:
+        call_order.append("hook")
+        return SimpleNamespace(status=2, stdout="", stderr="fix lint")
+
+    async def fake_ai_review_gate(**_kwargs: Any) -> None:
+        call_order.append("ai_review")
+        return None
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.completion.native_readiness_result",
+        fake_native,
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.completion.run_before_complete_hook",
+        fake_hook,
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.completion.run_ai_review_gate",
+        fake_ai_review_gate,
+    )
+
+    result = await run_pre_complete_turns(
+        run_turn=fake_run_turn,
+        settings=snapshot.settings,
+        workspace_path="/tmp/workspace",
+        issue=make_issue(identifier="ENG-1"),
+        profile=profile,
+        queue=asyncio.Queue(),
+        issue_id="issue-1",
+        failure_state="Failed",
+        initial_prompt="prompt",
+        should_stop=lambda: False,
+        workflow_snapshot=snapshot,
+        runtime=cast(Any, object()),
+    )
+
+    assert result.decision == "blocked"
+    assert result.next_state == "Failed"
+    assert (
+        result.summary
+        == "Code Factory exhausted before_complete repair loops after 0 attempt(s). "
+        "Last error: fix lint"
+    )
+    assert call_order == ["native", "hook"]

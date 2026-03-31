@@ -9,14 +9,17 @@ from typing import Any
 
 from ...coding_agents.base import AgentMessageHandler, CodingAgentRuntime
 from ...coding_agents.review_models import ReviewFinding, ReviewOutput
+from ...errors import ReviewError
 from ...issues import Issue
 from ...structured_results import StructuredTurnResult
 from ...workflow.models import WorkflowSnapshot, WorkflowStateProfile
-from ...workflow.review_profiles import WorkflowReviewType
+from ...workflow.review_profiles import ResolvedAiReviewScope, WorkflowReviewType
 from ...workspace.ai_review_feedback import (
     accepted_review_findings,
     ai_review_exhausted_summary,
     ai_review_feedback_prompt,
+    ai_review_scope_failure_prompt,
+    ai_review_scope_failure_summary,
 )
 from ...workspace.ai_review_prompt import render_ai_review_prompt
 from ...workspace.review_surface import (
@@ -61,9 +64,12 @@ async def run_ai_review_pass(
 ) -> AiReviewPassResult:
     """Execute all currently triggered workflow review types in fresh review runs."""
 
+    review_scope = workflow_snapshot.state_profile(issue.state)
+    assert review_scope is not None
     selection = await select_worktree_review_types(
         workspace_path,
         workflow_snapshot.ai_review_types_for_state(issue.state),
+        review_scope=review_scope.resolved_ai_review_scope(),
     )
     executed: list[ExecutedAiReview] = []
     for review_type in selection.matched_types:
@@ -71,6 +77,8 @@ async def run_ai_review_pass(
             issue,
             review_type,
             workflow_snapshot.definition.review_sections[review_type.prompt_ref],
+            review_scope=selection.surface.review_scope,
+            base_ref=selection.surface.base_ref,
             changed_paths=selection.surface.changed_paths,
             lines_changed=selection.surface.lines_changed,
         )
@@ -110,19 +118,29 @@ async def run_ai_review_gate(
 ) -> tuple[int, str, StructuredTurnResult | None] | None:
     if not profile.ai_review_refs:
         return None
-    ai_review = await run_ai_review_pass(
-        runtime=runtime,
-        workflow_snapshot=workflow_snapshot,
-        workspace_path=workspace_path,
-        issue=issue,
-        on_message=on_message,
-    )
+    try:
+        ai_review = await run_ai_review_pass(
+            runtime=runtime,
+            workflow_snapshot=workflow_snapshot,
+            workspace_path=workspace_path,
+            issue=issue,
+            on_message=on_message,
+        )
+    except ReviewError as exc:
+        return _ai_review_scope_failure_result(
+            reason=str(exc),
+            review_scope=profile.resolved_ai_review_scope(),
+            feedback_attempts=feedback_attempts,
+            max_feedback_loops=profile.hooks.before_complete_max_feedback_loops,
+            failure_state=failure_state,
+        )
     if not ai_review.matched_review_types:
         await _emit_ai_review_update(
             queue,
             issue_id,
             "ai_review_skipped",
             payload={
+                "review_scope": ai_review.selection.surface.review_scope,
                 "matched_review_types": [],
                 "changed_paths": list(ai_review.selection.surface.changed_paths),
                 "lines_changed": ai_review.selection.surface.lines_changed,
@@ -185,6 +203,7 @@ async def _emit_ai_review_update(
 
 def _ai_review_update_payload(ai_review: AiReviewPassResult) -> dict[str, Any]:
     return {
+        "review_scope": ai_review.selection.surface.review_scope,
         "matched_review_types": [
             review_type.review_name for review_type in ai_review.matched_review_types
         ],
@@ -214,3 +233,34 @@ def _ai_review_update_payload(ai_review: AiReviewPassResult) -> dict[str, Any]:
             for review in ai_review.executed_reviews
         ],
     }
+
+
+def _ai_review_scope_failure_result(
+    *,
+    reason: str,
+    review_scope: ResolvedAiReviewScope,
+    feedback_attempts: int,
+    max_feedback_loops: int,
+    failure_state: str,
+) -> tuple[int, str, StructuredTurnResult | None]:
+    next_attempt = feedback_attempts + 1
+    if next_attempt > max_feedback_loops:
+        return (
+            next_attempt,
+            "",
+            StructuredTurnResult(
+                decision="blocked",
+                summary=ai_review_scope_failure_summary(reason, max_feedback_loops),
+                next_state=failure_state,
+            ),
+        )
+    return (
+        next_attempt,
+        ai_review_scope_failure_prompt(
+            reason=reason,
+            review_scope=review_scope,
+            attempt=next_attempt,
+            max_attempts=max_feedback_loops,
+        ),
+        None,
+    )

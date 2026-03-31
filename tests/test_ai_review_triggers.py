@@ -5,14 +5,17 @@ from pathlib import Path
 
 import pytest
 
+from code_factory.errors import ReviewError
 from code_factory.workflow.review_profiles import ReviewPathTriggers, WorkflowReviewType
 from code_factory.workspace.review_surface import (
     WorktreeReviewSelection,
     WorktreeReviewSurface,
+    _branch_scope_dirty_message,
     _count_untracked_lines,
     _parse_shortstat_lines,
     _path_matches_pattern,
     collect_worktree_review_surface,
+    collect_worktree_review_surface_for_scope,
     match_worktree_review_types,
     review_type_matches_surface,
     select_worktree_review_types,
@@ -34,6 +37,13 @@ def init_repo(path: Path) -> None:
     run_git(path, "init")
     run_git(path, "config", "user.name", "Test User")
     run_git(path, "config", "user.email", "test@example.com")
+
+
+def configure_origin_main(path: Path, ref: str) -> None:
+    run_git(path, "update-ref", "refs/remotes/origin/main", ref)
+    run_git(
+        path, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"
+    )
 
 
 def review_type(
@@ -131,6 +141,11 @@ def test_review_surface_helpers_cover_edge_cases(tmp_path: Path) -> None:
     assert _path_matches_pattern("src/nested/app.py", "src/**/*.py") is True
     assert _path_matches_pattern("tests/app.py", "src/**") is False
 
+    oversized_status = "M " + ("a" * 2_100)
+    assert "[truncated: git status output exceeded 2000 characters]" in (
+        _branch_scope_dirty_message(oversized_status)
+    )
+
 
 @pytest.mark.asyncio
 async def test_collect_worktree_review_surface_from_git_diff(tmp_path: Path) -> None:
@@ -174,13 +189,145 @@ async def test_select_worktree_review_types_handles_repo_without_head(
         ),
     )
 
-    assert selection == WorktreeReviewSelection(
-        surface=WorktreeReviewSurface(
-            changed_paths=("web/index.tsx",),
-            lines_changed=2,
-        ),
-        matched_types=(
+
+@pytest.mark.asyncio
+async def test_collect_branch_review_surface_uses_merge_base_to_head(
+    tmp_path: Path,
+) -> None:
+    init_repo(tmp_path)
+    run_git(tmp_path, "branch", "-m", "main")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("one\n", encoding="utf-8")
+    run_git(tmp_path, "add", ".")
+    run_git(tmp_path, "commit", "-m", "initial")
+    configure_origin_main(tmp_path, run_git(tmp_path, "rev-parse", "HEAD"))
+
+    run_git(tmp_path, "checkout", "-b", "codex/eng-1")
+    (tmp_path / "src" / "app.py").write_text("one\ntwo\n", encoding="utf-8")
+    run_git(tmp_path, "add", ".")
+    run_git(tmp_path, "commit", "-m", "second")
+    (tmp_path / "ui").mkdir()
+    (tmp_path / "ui" / "app.tsx").write_text("a\nb\nc\n", encoding="utf-8")
+    run_git(tmp_path, "add", ".")
+    run_git(tmp_path, "commit", "-m", "third")
+
+    surface = await collect_worktree_review_surface_for_scope(
+        str(tmp_path), review_scope="branch"
+    )
+
+    assert surface == WorktreeReviewSurface(
+        changed_paths=("src/app.py", "ui/app.tsx"),
+        lines_changed=4,
+        review_scope="branch",
+        base_ref="origin/main",
+    )
+
+
+@pytest.mark.asyncio
+async def test_collect_branch_review_surface_blocks_dirty_worktree(
+    tmp_path: Path,
+) -> None:
+    init_repo(tmp_path)
+    run_git(tmp_path, "branch", "-m", "main")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("one\n", encoding="utf-8")
+    run_git(tmp_path, "add", ".")
+    run_git(tmp_path, "commit", "-m", "initial")
+    configure_origin_main(tmp_path, run_git(tmp_path, "rev-parse", "HEAD"))
+
+    run_git(tmp_path, "checkout", "-b", "codex/eng-1")
+    (tmp_path / "src" / "app.py").write_text("one\ntwo\n", encoding="utf-8")
+
+    with pytest.raises(ReviewError, match="requires a clean worktree") as exc_info:
+        await collect_worktree_review_surface_for_scope(
+            str(tmp_path), review_scope="branch"
+        )
+    assert "Current git status --short:" in str(exc_info.value)
+    assert " M src/app.py" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_collect_branch_review_surface_blocks_repo_without_head(
+    tmp_path: Path,
+) -> None:
+    init_repo(tmp_path)
+
+    with pytest.raises(ReviewError, match="requires a committed HEAD"):
+        await collect_worktree_review_surface_for_scope(
+            str(tmp_path), review_scope="branch"
+        )
+
+
+@pytest.mark.asyncio
+async def test_collect_branch_review_surface_blocks_unresolved_default_base(
+    tmp_path: Path,
+) -> None:
+    init_repo(tmp_path)
+    run_git(tmp_path, "branch", "-m", "main")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("one\n", encoding="utf-8")
+    run_git(tmp_path, "add", ".")
+    run_git(tmp_path, "commit", "-m", "initial")
+    run_git(tmp_path, "checkout", "-b", "codex/eng-1")
+
+    with pytest.raises(ReviewError, match="could not resolve the default base ref"):
+        await collect_worktree_review_surface_for_scope(
+            str(tmp_path), review_scope="branch"
+        )
+
+
+@pytest.mark.asyncio
+async def test_collect_branch_review_surface_blocks_missing_merge_base(
+    tmp_path: Path,
+) -> None:
+    init_repo(tmp_path)
+    run_git(tmp_path, "branch", "-m", "main")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("one\n", encoding="utf-8")
+    run_git(tmp_path, "add", ".")
+    run_git(tmp_path, "commit", "-m", "initial")
+
+    run_git(tmp_path, "checkout", "--orphan", "unrelated")
+    run_git(tmp_path, "commit", "--allow-empty", "-m", "unrelated")
+    unrelated_sha = run_git(tmp_path, "rev-parse", "HEAD")
+    run_git(tmp_path, "checkout", "main")
+    configure_origin_main(tmp_path, unrelated_sha)
+
+    with pytest.raises(ReviewError, match="could not determine a merge-base"):
+        await collect_worktree_review_surface_for_scope(
+            str(tmp_path), review_scope="branch"
+        )
+
+
+@pytest.mark.asyncio
+async def test_select_branch_review_types_handles_no_committed_delta(
+    tmp_path: Path,
+) -> None:
+    init_repo(tmp_path)
+    run_git(tmp_path, "branch", "-m", "main")
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web" / "index.tsx").write_text("one\ntwo\n", encoding="utf-8")
+    run_git(tmp_path, "add", ".")
+    run_git(tmp_path, "commit", "-m", "initial")
+    configure_origin_main(tmp_path, run_git(tmp_path, "rev-parse", "HEAD"))
+
+    run_git(tmp_path, "checkout", "-b", "codex/eng-1")
+
+    selection = await select_worktree_review_types(
+        str(tmp_path),
+        (
             review_type("General"),
             review_type("Frontend", only=("web/**",), lines_changed=2),
         ),
+        review_scope="branch",
+    )
+
+    assert selection == WorktreeReviewSelection(
+        surface=WorktreeReviewSurface(
+            changed_paths=(),
+            lines_changed=0,
+            review_scope="branch",
+            base_ref="origin/main",
+        ),
+        matched_types=(),
     )

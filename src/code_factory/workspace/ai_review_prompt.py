@@ -6,7 +6,12 @@ from collections.abc import Sequence
 
 from ..issues import Issue
 from ..prompts.review_assets import base_review_prompt
-from ..workflow.review_profiles import WorkflowReviewType
+from ..workflow.review_profiles import (
+    AI_REVIEW_SCOPE_BRANCH,
+    AI_REVIEW_SCOPE_WORKTREE,
+    ResolvedAiReviewScope,
+    WorkflowReviewType,
+)
 
 DETAIL_GUIDELINES_ANCHOR = "Below are some more detailed guidelines that you should apply to this specific review."
 
@@ -16,6 +21,8 @@ def render_ai_review_prompt(
     review_type: WorkflowReviewType,
     overlay_prompt: str,
     *,
+    review_scope: ResolvedAiReviewScope,
+    base_ref: str | None,
     changed_paths: Sequence[str],
     lines_changed: int,
 ) -> str:
@@ -32,6 +39,8 @@ def render_ai_review_prompt(
             issue=issue,
             review_type=review_type,
             overlay_prompt=overlay_prompt,
+            review_scope=review_scope,
+            base_ref=base_ref,
             changed_paths=changed_paths,
             lines_changed=lines_changed,
         )
@@ -47,6 +56,8 @@ def _render_code_factory_review_section(
     issue: Issue,
     review_type: WorkflowReviewType,
     overlay_prompt: str,
+    review_scope: ResolvedAiReviewScope,
+    base_ref: str | None,
     changed_paths: Sequence[str],
     lines_changed: int,
 ) -> str:
@@ -62,8 +73,9 @@ def _render_code_factory_review_section(
         "",
         "### Review scope",
         f"- Review type: {review_type.review_name}",
+        f"- Review scope: {review_scope}",
         f"- Lines changed: {lines_changed}",
-        "- Review only the current uncommitted diff in the workspace.",
+        _review_scope_instruction(review_scope, base_ref),
         "",
         "Changed paths:",
         changed_paths_text,
@@ -71,9 +83,6 @@ def _render_code_factory_review_section(
         "### Ticket metadata",
         f"- Identifier: {issue.identifier or '<unknown>'}",
         f"- Title: {issue.title or '<untitled>'}",
-        f"- State: {issue.state or '<unknown>'}",
-        f"- Branch: {branch_name}",
-        f"- Labels: {labels}",
         "",
         "### Ticket description",
         description,
@@ -82,3 +91,16 @@ def _render_code_factory_review_section(
         review_focus,
     ]
     return "\n".join(lines)
+
+
+def _review_scope_instruction(
+    review_scope: ResolvedAiReviewScope, base_ref: str | None
+) -> str:
+    if review_scope == AI_REVIEW_SCOPE_WORKTREE:
+        return "- Review only the current workspace diff."
+    assert review_scope == AI_REVIEW_SCOPE_BRANCH
+    resolved_base_ref = base_ref or "<unknown>"
+    return (
+        "- Review the committed branch diff from the merge-base with "
+        f"`{resolved_base_ref}` to `HEAD`."
+    )

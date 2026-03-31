@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, cast
 
 from ..config.utils import (
     non_negative_int,
@@ -12,6 +12,17 @@ from ..config.utils import (
     require_mapping,
 )
 from ..errors import ConfigValidationError
+
+AI_REVIEW_SCOPE_AUTO = "auto"
+AI_REVIEW_SCOPE_WORKTREE = "worktree"
+AI_REVIEW_SCOPE_BRANCH = "branch"
+_CONFIGURED_AI_REVIEW_SCOPES = {
+    AI_REVIEW_SCOPE_AUTO,
+    AI_REVIEW_SCOPE_WORKTREE,
+    AI_REVIEW_SCOPE_BRANCH,
+}
+ConfiguredAiReviewScope = Literal["auto", "worktree", "branch"]
+ResolvedAiReviewScope = Literal["worktree", "branch"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +44,14 @@ class WorkflowReviewType:
     reasoning_effort: str | None = None
     lines_changed: int | None = None
     paths: ReviewPathTriggers = ReviewPathTriggers()
+
+
+@dataclass(frozen=True, slots=True)
+class StateAiReviewConfig:
+    """Resolved state-level AI review attachment plus the configured surface scope."""
+
+    refs: tuple[str, ...] = ()
+    scope: ConfiguredAiReviewScope = AI_REVIEW_SCOPE_AUTO
 
 
 def parse_review_types(
@@ -100,6 +119,40 @@ def parse_review_types(
     return review_types
 
 
+def parse_state_ai_review(
+    raw_ai_review: Any,
+    field_name: str,
+    review_types: Mapping[str, WorkflowReviewType],
+) -> StateAiReviewConfig:
+    """Validate one state's AI review attachments and optional state scope."""
+
+    review_field = f"{field_name}.ai_review"
+    if raw_ai_review is None:
+        return StateAiReviewConfig()
+    if isinstance(raw_ai_review, Mapping):
+        ai_review = require_mapping(raw_ai_review, review_field)
+        unexpected_keys = set(ai_review.keys()) - {"types", "scope"}
+        if unexpected_keys:
+            names = ", ".join(sorted(map(str, unexpected_keys)))
+            raise ConfigValidationError(f"{review_field} has unsupported keys: {names}")
+        if "types" not in ai_review:
+            raise ConfigValidationError(f"{review_field}.types is required")
+        return StateAiReviewConfig(
+            refs=_normalized_state_review_refs(
+                ai_review.get("types"),
+                f"{review_field}.types",
+                review_types,
+            ),
+            scope=_configured_review_scope(
+                ai_review.get("scope"), f"{review_field}.scope"
+            ),
+        )
+    return StateAiReviewConfig(
+        refs=_normalized_state_review_refs(raw_ai_review, review_field, review_types),
+        scope=AI_REVIEW_SCOPE_AUTO,
+    )
+
+
 def parse_state_review_refs(
     raw_ai_review: Any,
     field_name: str,
@@ -107,20 +160,35 @@ def parse_state_review_refs(
 ) -> tuple[str, ...]:
     """Validate one state's references to reusable AI review definitions."""
 
-    review_field = f"{field_name}.ai_review"
-    refs: list[str] = []
-    if raw_ai_review is None:
-        return ()
-    if isinstance(raw_ai_review, str):
-        refs = [_review_ref(raw_ai_review, review_field)]
-    elif isinstance(raw_ai_review, list):
-        refs = [_review_ref(value, review_field) for value in raw_ai_review]
-        if not refs:
-            raise ConfigValidationError(f"{review_field} must not be empty")
-    else:
-        raise ConfigValidationError(
-            f"{review_field} must be a string or list of strings"
+    return parse_state_ai_review(raw_ai_review, field_name, review_types).refs
+
+
+def resolve_ai_review_scope(
+    configured_scope: ConfiguredAiReviewScope,
+    *,
+    completion_enabled: bool,
+) -> ResolvedAiReviewScope:
+    if configured_scope == AI_REVIEW_SCOPE_AUTO:
+        return (
+            AI_REVIEW_SCOPE_BRANCH if completion_enabled else AI_REVIEW_SCOPE_WORKTREE
         )
+    return configured_scope
+
+
+def _normalized_state_review_refs(
+    raw_refs: Any,
+    field_name: str,
+    review_types: Mapping[str, WorkflowReviewType],
+) -> tuple[str, ...]:
+    refs: list[str] = []
+    if isinstance(raw_refs, str):
+        refs = [_review_ref(raw_refs, field_name)]
+    elif isinstance(raw_refs, list):
+        refs = [_review_ref(value, field_name) for value in raw_refs]
+        if not refs:
+            raise ConfigValidationError(f"{field_name} must not be empty")
+    else:
+        raise ConfigValidationError(f"{field_name} must be a string or list of strings")
 
     seen: set[str] = set()
     normalized_refs: list[str] = []
@@ -128,15 +196,27 @@ def parse_state_review_refs(
         normalized_ref = normalize_review_name(review_ref)
         if normalized_ref in seen:
             raise ConfigValidationError(
-                f"{review_field} must not contain duplicate normalized reviews"
+                f"{field_name} must not contain duplicate normalized reviews"
             )
         if normalized_ref not in review_types:
             raise ConfigValidationError(
-                f"{review_field} references missing review type {review_ref!r}"
+                f"{field_name} references missing review type {review_ref!r}"
             )
         seen.add(normalized_ref)
         normalized_refs.append(normalized_ref)
     return tuple(normalized_refs)
+
+
+def _configured_review_scope(value: Any, field_name: str) -> ConfiguredAiReviewScope:
+    if value is None:
+        return AI_REVIEW_SCOPE_AUTO
+    if not isinstance(value, str):
+        raise ConfigValidationError(f"{field_name} must be a string")
+    scope = value.strip().lower()
+    if scope not in _CONFIGURED_AI_REVIEW_SCOPES:
+        names = ", ".join(sorted(_CONFIGURED_AI_REVIEW_SCOPES))
+        raise ConfigValidationError(f"{field_name} must be one of: {names}")
+    return cast(ConfiguredAiReviewScope, scope)
 
 
 def normalize_review_name(review_name: str) -> str:

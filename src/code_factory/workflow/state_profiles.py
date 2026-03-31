@@ -9,12 +9,23 @@ from typing import Any
 from ..config.utils import optional_non_blank_string, require_mapping
 from ..errors import ConfigValidationError
 from ..issues import normalize_issue_state
-from .review_profiles import WorkflowReviewType, parse_state_review_refs
+from .review_profiles import (
+    ConfiguredAiReviewScope,
+    ResolvedAiReviewScope,
+    WorkflowReviewType,
+    parse_state_ai_review,
+    resolve_ai_review_scope,
+)
 from .state_controls import (
     StateCompletionOverride,
     StateHooksOverride,
     parse_state_completion,
     parse_state_hooks,
+)
+from .state_values import (
+    optional_state_name,
+    skill_name_list,
+    state_name_list,
 )
 
 
@@ -34,6 +45,7 @@ class WorkflowStateProfile:
     state_name: str
     prompt_refs: tuple[str, ...] = ()
     ai_review_refs: tuple[str, ...] = ()
+    ai_review_scope: ConfiguredAiReviewScope = "auto"
     codex: StateCodexOverride = StateCodexOverride()
     completion: StateCompletionOverride = StateCompletionOverride()
     hooks: StateHooksOverride = StateHooksOverride()
@@ -48,6 +60,11 @@ class WorkflowStateProfile:
     @property
     def is_agent_run(self) -> bool:
         return not self.is_auto
+
+    def resolved_ai_review_scope(self) -> ResolvedAiReviewScope:
+        return resolve_ai_review_scope(
+            self.ai_review_scope, completion_enabled=self.completion.enabled
+        )
 
     def codex_model(self, default: str | None) -> str | None:
         return self.codex.model if self.codex.model is not None else default
@@ -117,19 +134,18 @@ def parse_state_profiles(
             field_name,
             prompt_sections,
         )
-        ai_review_refs = parse_state_review_refs(
+        ai_review = parse_state_ai_review(
             profile.get("ai_review"),
             field_name,
             resolved_review_types,
         )
-        allowed_next_states = _state_name_list(
-            profile.get("allowed_next_states"),
-            f"{field_name}.allowed_next_states",
+        allowed_next_states = state_name_list(
+            profile.get("allowed_next_states"), f"{field_name}.allowed_next_states"
         )
-        failure_state = _optional_state_name(
+        failure_state = optional_state_name(
             profile.get("failure_state"), f"{field_name}.failure_state"
         )
-        auto_next_state = _optional_state_name(
+        auto_next_state = optional_state_name(
             profile.get("auto_next_state"), f"{field_name}.auto_next_state"
         )
         codex = _codex_override(profile.get("codex"), field_name)
@@ -159,7 +175,7 @@ def parse_state_profiles(
             raise ConfigValidationError(
                 f"{field_name}.hooks is not supported for auto states"
             )
-        if auto_next_state is not None and ai_review_refs:
+        if auto_next_state is not None and ai_review.refs:
             raise ConfigValidationError(
                 f"{field_name}.ai_review is not supported for auto states"
             )
@@ -177,7 +193,8 @@ def parse_state_profiles(
         profiles[normalized_state] = WorkflowStateProfile(
             state_name=state_name,
             prompt_refs=prompt_refs,
-            ai_review_refs=ai_review_refs,
+            ai_review_refs=ai_review.refs,
+            ai_review_scope=ai_review.scope,
             codex=codex,
             completion=completion,
             hooks=hooks,
@@ -240,59 +257,5 @@ def _codex_override(raw_codex: Any, field_name: str) -> StateCodexOverride:
         reasoning_effort=optional_non_blank_string(
             codex.get("reasoning_effort"), f"{codex_field}.reasoning_effort"
         ),
-        skills=_skill_name_list(codex.get("skills"), f"{codex_field}.skills"),
+        skills=skill_name_list(codex.get("skills"), f"{codex_field}.skills"),
     )
-
-
-def _state_name_list(value: Any, field_name: str) -> tuple[str, ...]:
-    if value is None:
-        return ()
-    if not isinstance(value, list):
-        raise ConfigValidationError(f"{field_name} must be a list of strings")
-    states: list[str] = []
-    seen: set[str] = set()
-    for raw_state in value:
-        state_name = _required_state_name(raw_state, field_name)
-        normalized = normalize_issue_state(state_name)
-        if normalized in seen:
-            raise ConfigValidationError(
-                f"{field_name} must not contain duplicate normalized states"
-            )
-        seen.add(normalized)
-        states.append(state_name)
-    return tuple(states)
-
-
-def _optional_state_name(value: Any, field_name: str) -> str | None:
-    if value is None:
-        return None
-    return _required_state_name(value, field_name)
-
-
-def _required_state_name(value: Any, field_name: str) -> str:
-    if not isinstance(value, str):
-        raise ConfigValidationError(f"{field_name} must be a string")
-    state_name = value.strip()
-    if not state_name:
-        raise ConfigValidationError(f"{field_name} must not be blank")
-    return state_name
-
-
-def _skill_name_list(value: Any, field_name: str) -> tuple[str, ...] | None:
-    if value is None:
-        return None
-    if not isinstance(value, list):
-        raise ConfigValidationError(f"{field_name} must be a list of strings")
-    skills: list[str] = []
-    seen: set[str] = set()
-    for raw_skill in value:
-        if not isinstance(raw_skill, str):
-            raise ConfigValidationError(f"{field_name} must be a list of strings")
-        skill_name = raw_skill.strip()
-        if not skill_name:
-            raise ConfigValidationError(f"{field_name} entries must not be blank")
-        if skill_name in seen:
-            raise ConfigValidationError(f"{field_name} must not contain duplicates")
-        seen.add(skill_name)
-        skills.append(skill_name)
-    return tuple(skills)

@@ -1274,7 +1274,7 @@ def test_state_profiles_and_result_helpers_cover_edge_paths(tmp_path: Path) -> N
     assert profiles["merging"].completion.require_pushed_head is False
     assert profiles["merging"].completion.require_pr is False
     assert profiles["merging"].hooks.before_complete is None
-    assert profiles["merging"].hooks.before_complete_max_feedback_loops == 3
+    assert profiles["merging"].hooks.before_complete_max_feedback_loops == 10
     assert structured_turn_output_schema(("Done", "Review"))["required"] == [
         "decision",
         "summary",
