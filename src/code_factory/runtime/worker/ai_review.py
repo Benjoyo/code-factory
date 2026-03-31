@@ -87,8 +87,9 @@ async def run_ai_review_pass(
             prompt,
             issue,
             on_message=on_message,
-            model=review_type.model,
-            reasoning_effort=review_type.reasoning_effort,
+            model=review_type.codex.model,
+            reasoning_effort=review_type.codex.reasoning_effort,
+            fast_mode=review_type.codex.fast_mode,
         )
         executed.append(
             ExecutedAiReview(

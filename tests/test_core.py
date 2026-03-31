@@ -93,7 +93,7 @@ def test_multi_state_workflow_parses_sections_and_derives_active_states(
             "# prompt: merge\n"
             "Merge-only instructions.\n"
         ),
-        codex={"model": "gpt-5.4", "reasoning_effort": "high"},
+        codex={"model": "gpt-5.4", "reasoning_effort": "high", "fast_mode": True},
         states={
             "Todo": {"prompt": "default"},
             "In Progress": {"prompt": "default"},
@@ -102,6 +102,7 @@ def test_multi_state_workflow_parses_sections_and_derives_active_states(
                 "codex": {
                     "model": "gpt-5.4-mini",
                     "reasoning_effort": "low",
+                    "fast_mode": False,
                     "skills": ["land"],
                 },
             },
@@ -123,9 +124,11 @@ def test_multi_state_workflow_parses_sections_and_derives_active_states(
         snapshot.settings_for_state("Todo").coding_agent.model
         == snapshot.settings.coding_agent.model
     )
+    assert snapshot.settings_for_state("Todo").coding_agent.fast_mode is True
     assert snapshot.settings_for_state("Todo").coding_agent.repo_skill_allowlist is None
     assert snapshot.settings_for_state("Merging").coding_agent.model == "gpt-5.4-mini"
     assert snapshot.settings_for_state("Merging").coding_agent.reasoning_effort == "low"
+    assert snapshot.settings_for_state("Merging").coding_agent.fast_mode is False
     assert snapshot.settings_for_state("Merging").coding_agent.repo_skill_allowlist == (
         "land",
     )

@@ -13,6 +13,7 @@ from ...config.models import CodingAgentSettings, Settings
 from ...config.utils import (
     non_negative_int,
     normalize_keys,
+    optional_boolean,
     optional_non_blank_string,
     positive_int,
     require_mapping,
@@ -43,6 +44,7 @@ def parse_coding_agent_settings(config: Mapping[str, Any]) -> CodingAgentSetting
         reasoning_effort=optional_non_blank_string(
             runtime_raw.get("reasoning_effort"), "codex.reasoning_effort"
         ),
+        fast_mode=optional_boolean(runtime_raw.get("fast_mode"), "codex.fast_mode"),
         approval_policy=approval_policy,
         thread_sandbox=string_with_default(
             runtime_raw.get("thread_sandbox"),

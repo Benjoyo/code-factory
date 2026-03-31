@@ -458,6 +458,10 @@ fields locally if they want stricter startup checks.
   - Default: `null`
   - When present, the runtime inserts `--config model_reasoning_effort=<value>` immediately
     before the `app-server` argument in `codex.command`.
+- `fast_mode` (boolean or null)
+  - Default: `null`
+  - When `true`, the runtime sends `serviceTier: "fast"` on Codex thread start.
+  - When `false` or `null`, the runtime omits `serviceTier` rather than forcing `flex`.
 - `skills` (list of strings or null)
   - Default: `null`
   - Repo-local allowlist of direct child skill directories under `<workspace>/.agents/skills`.
@@ -603,6 +607,7 @@ This section is intentionally redundant so a coding agent can implement the conf
   - `scope`: string, optional, one of `auto`, `worktree`, `branch`, default `auto`
 - `states.<state>.codex.model`: string or null, optional
 - `states.<state>.codex.reasoning_effort`: string or null, optional
+- `states.<state>.codex.fast_mode`: boolean or null, optional
 - `states.<state>.codex.skills`: list of strings or null, optional, repo-local allowlist of
   direct child directories under `.agents/skills`
 - `states.<state>.completion.require_pushed_head`: boolean, default `false`, optional for
@@ -614,8 +619,9 @@ This section is intentionally redundant so a coding agent can implement the conf
   agent-run states
 - `ai_review.types`: object mapping reusable AI review type names to definitions, optional
 - `ai_review.types.<name>.prompt`: string referencing a `# review:` section id
-- `ai_review.types.<name>.model`: string or null, optional
-- `ai_review.types.<name>.reasoning_effort`: string or null, optional
+- `ai_review.types.<name>.codex.model`: string or null, optional
+- `ai_review.types.<name>.codex.reasoning_effort`: string or null, optional
+- `ai_review.types.<name>.codex.fast_mode`: boolean or null, optional
 - `ai_review.types.<name>.lines_changed`: non-negative integer or null, optional
 - `ai_review.types.<name>.paths.only`: non-empty list of strings, optional
 - `ai_review.types.<name>.paths.include`: non-empty list of strings, optional
@@ -633,6 +639,7 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `codex.command`: shell command string, default `codex app-server`
 - `codex.model`: string or null, default `null`
 - `codex.reasoning_effort`: string or null, default `null`
+- `codex.fast_mode`: boolean or null, default `null`
 - `codex.approval_policy`: Codex `AskForApproval` value, default implementation-defined
 - `codex.thread_sandbox`: Codex `SandboxMode` value, default implementation-defined
 - `codex.turn_sandbox_policy`: Codex `SandboxPolicy` value, default implementation-defined
@@ -963,7 +970,7 @@ Compatibility profile:
 Subprocess launch parameters:
 
 - Command: `codex.command` with optional `codex.model`, `codex.reasoning_effort`, and
-  repo-local `codex.skills` CLI overrides
+  repo-local `codex.skills` CLI overrides, plus optional thread-start `codex.fast_mode`
 - Invocation: `bash -lc <effective codex command>`
 - Working directory: workspace path
 - Stdout/stderr: separate streams
@@ -974,6 +981,7 @@ Notes:
 - The default command is `codex app-server`.
 - If configured, `codex.model`, `codex.reasoning_effort`, and repo-local `codex.skills`
   overrides are injected immediately before `app-server`.
+- If `codex.fast_mode=true`, the runtime sends `serviceTier: "fast"` on thread start.
 - `codex.skills` only affects repo-local skills under `<workspace>/.agents/skills`; when an
   allowlist references a missing repo skill directory, launch fails before the subprocess starts.
 - Approval policy, cwd, and prompt are expressed in the protocol messages in Section 10.2.
@@ -2017,6 +2025,7 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - `~` path expansion works
 - `codex.command` is preserved as a shell command string
 - `codex.model` and `codex.reasoning_effort` inject CLI overrides ahead of `app-server`
+- `codex.fast_mode=true` sends `serviceTier: "fast"` and `false`/`null` omit `serviceTier`
 - `codex.skills` disables only repo-local skills ahead of launch and errors on missing
   allowlisted repo skill directories
 - Per-state concurrency override map normalizes state names and ignores invalid values
@@ -2174,7 +2183,7 @@ Use the same validation profiles as Section 17:
 - Workspace lifecycle hooks (`after_create`, `before_run`, `after_run`, `before_remove`)
 - Hook timeout config (`hooks.timeout_ms`, default `60000`)
 - Coding-agent app-server subprocess client with JSON line protocol
-- Codex launch command config (`codex.command`, `codex.model`, `codex.reasoning_effort`)
+- Codex launch command config (`codex.command`, `codex.model`, `codex.reasoning_effort`, `codex.fast_mode`)
 - Strict prompt rendering with `issue` and `attempt` variables
 - Harness-owned structured turn results and state transitions
 - Exponential retry queue for failed runs

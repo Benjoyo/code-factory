@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from ..config.utils import optional_non_blank_string, require_mapping
+from ..config.utils import optional_boolean, optional_non_blank_string, require_mapping
 from ..errors import ConfigValidationError
 from ..issues import normalize_issue_state
 from .review_profiles import (
@@ -35,6 +35,7 @@ class StateCodexOverride:
 
     model: str | None = None
     reasoning_effort: str | None = None
+    fast_mode: bool | None = None
     skills: tuple[str, ...] | None = None
 
 
@@ -75,6 +76,9 @@ class WorkflowStateProfile:
             if self.codex.reasoning_effort is not None
             else default
         )
+
+    def codex_fast_mode(self, default: bool | None) -> bool | None:
+        return self.codex.fast_mode if self.codex.fast_mode is not None else default
 
     def codex_repo_skill_allowlist(
         self, default: tuple[str, ...] | None
@@ -166,6 +170,7 @@ def parse_state_profiles(
         if auto_next_state is not None and (
             codex.model is not None
             or codex.reasoning_effort is not None
+            or codex.fast_mode is not None
             or codex.skills is not None
         ):
             raise ConfigValidationError(
@@ -248,7 +253,12 @@ def _prompt_ref(raw_prompt_ref: Any, field_name: str) -> str:
 def _codex_override(raw_codex: Any, field_name: str) -> StateCodexOverride:
     codex_field = f"{field_name}.codex"
     codex = require_mapping(raw_codex, codex_field)
-    unexpected_keys = set(codex.keys()) - {"model", "reasoning_effort", "skills"}
+    unexpected_keys = set(codex.keys()) - {
+        "model",
+        "reasoning_effort",
+        "fast_mode",
+        "skills",
+    }
     if unexpected_keys:
         names = ", ".join(sorted(map(str, unexpected_keys)))
         raise ConfigValidationError(f"{codex_field} has unsupported keys: {names}")
@@ -257,5 +267,6 @@ def _codex_override(raw_codex: Any, field_name: str) -> StateCodexOverride:
         reasoning_effort=optional_non_blank_string(
             codex.get("reasoning_effort"), f"{codex_field}.reasoning_effort"
         ),
+        fast_mode=optional_boolean(codex.get("fast_mode"), f"{codex_field}.fast_mode"),
         skills=skill_name_list(codex.get("skills"), f"{codex_field}.skills"),
     )

@@ -153,6 +153,14 @@ def boolean(value: Any, field_name: str, default: bool) -> bool:
     raise ConfigValidationError(f"{field_name} must be a boolean")
 
 
+def optional_boolean(value: Any, field_name: str) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    raise ConfigValidationError(f"{field_name} must be a boolean")
+
+
 def normalize_path_token(value: str) -> str | None:
     env_name = env_reference_name(value)
     if env_name is None:

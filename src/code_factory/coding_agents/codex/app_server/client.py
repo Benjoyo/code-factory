@@ -237,6 +237,7 @@ class AppServerClient:
             workspace,
         )
         thread_sandbox = self._coding_agent.thread_sandbox
+        service_tier = "fast" if self._coding_agent.fast_mode else None
         try:
             await send_initialize(
                 stdout_queue,
@@ -249,6 +250,7 @@ class AppServerClient:
                 workspace,
                 approval_policy,
                 thread_sandbox,
+                service_tier=service_tier,
                 dynamic_tools=dynamic_tools,
                 default_timeout_ms=self._coding_agent.read_timeout_ms,
             )
@@ -281,7 +283,6 @@ class AppServerClient:
         )
 
     def _build_tool_executor(self, workspace: str, issue: Issue) -> DynamicToolExecutor:
-        """Provide a DynamicToolExecutor bound to the workspace and tracker tools."""
         if self._dynamic_tool_factory is None:
 
             class MissingToolBackend:

@@ -13,7 +13,7 @@ Code Factory will add workflow-configurable AI review types that run as a separa
 Each review type will define:
 
 - A referenced review prompt section from the workflow body
-- The review model and reasoning effort
+- A Codex-specific execution profile (`codex.model`, `codex.reasoning_effort`, optional `codex.fast_mode`)
 - Trigger rules based on current worktree diff statistics and changed paths
 
 Each state may request zero, one, or multiple review types. When the implementing agent returns a transition result, Code Factory will:
@@ -34,7 +34,7 @@ The review request sent to Codex will be composed by Code Factory. It will prepe
 1. As a workflow author, I want to define reusable review prompt sections, so that multiple states can share the same review policy without duplicating text.
 2. As a workflow author, I want to define review types separately from states, so that review behavior is configured once and referenced declaratively.
 3. As a workflow author, I want a state to request multiple review types, so that a change can be checked from more than one perspective when needed.
-4. As a workflow author, I want to choose a model and reasoning effort per review type, so that expensive reviews can be reserved for higher-value checks.
+4. As a workflow author, I want to choose Codex model, reasoning effort, and optional fast mode per review type, so that expensive reviews can be reserved for higher-value checks.
 5. As a workflow author, I want to trigger review only for meaningful changes, so that tiny changes do not waste time and tokens.
 6. As a workflow author, I want path triggers that express frontend-only, backend-only, and mixed-change review policies, so that reviews stay relevant to the patch.
 7. As a workflow author, I want path trigger names that are easy to understand, so that workflow configuration is readable without memorizing set-theory semantics.

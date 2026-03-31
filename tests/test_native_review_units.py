@@ -200,7 +200,7 @@ def test_review_models_and_feedback_edge_cases() -> None:
 async def test_app_server_client_review_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    settings = make_settings(tmp_path)
+    settings = make_settings(tmp_path, overrides={"codex": {"fast_mode": True}})
     client = AppServerClient(settings.coding_agent, settings.workspace)
     stops: list[str] = []
     started_dynamic_tools: list[list[dict[str, Any]] | None] = []
@@ -337,7 +337,7 @@ async def test_codex_runtime_run_review_uses_override_client(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     settings = make_settings(tmp_path)
-    calls: list[tuple[str | None, str | None]] = []
+    calls: list[tuple[str | None, str | None, bool | None]] = []
 
     async def fake_run_review(
         self,
@@ -348,7 +348,13 @@ async def test_codex_runtime_run_review_uses_override_client(
         on_message=None,
         tool_executor=None,
     ):  # type: ignore[no-untyped-def]
-        calls.append((self._coding_agent.model, self._coding_agent.reasoning_effort))
+        calls.append(
+            (
+                self._coding_agent.model,
+                self._coding_agent.reasoning_effort,
+                self._coding_agent.fast_mode,
+            )
+        )
         return _review_output(title=prompt)
 
     monkeypatch.setattr(
@@ -369,14 +375,16 @@ async def test_codex_runtime_run_review_uses_override_client(
         make_issue(identifier="ENG-1"),
         model="gpt-5.4-mini",
         reasoning_effort="high",
+        fast_mode=False,
     )
     assert default_output.findings[0].title == "default"
     assert override_output.findings[0].title == "override"
     assert calls[0] == (
         settings.coding_agent.model,
         settings.coding_agent.reasoning_effort,
+        settings.coding_agent.fast_mode,
     )
-    assert calls[1] == ("gpt-5.4-mini", "high")
+    assert calls[1] == ("gpt-5.4-mini", "high", False)
 
 
 @pytest.mark.asyncio

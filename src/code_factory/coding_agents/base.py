@@ -42,6 +42,7 @@ class CodingAgentRuntime(Protocol):
         on_message: AgentMessageHandler | None = None,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        fast_mode: bool | None = None,
     ) -> ReviewOutput: ...
 
 

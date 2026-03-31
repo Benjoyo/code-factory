@@ -50,6 +50,7 @@ def default_workflow_config() -> dict[str, Any]:
             "command": "codex app-server",
             "model": None,
             "reasoning_effort": None,
+            "fast_mode": None,
             "approval_policy": {
                 "reject": {
                     "sandbox_approval": True,

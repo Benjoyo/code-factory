@@ -51,6 +51,7 @@ class CodingAgentSettings:
     command: str = ""
     model: str | None = None
     reasoning_effort: str | None = None
+    fast_mode: bool | None = None
     repo_skill_allowlist: tuple[str, ...] | None = None
     approval_policy: str | dict[str, Any] = field(
         default_factory=lambda: {

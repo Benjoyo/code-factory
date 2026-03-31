@@ -102,6 +102,7 @@ reusable AI review types to agent-run states.
 | `states.<state>.ai_review` | string or non-empty list of strings | none | Optional for agent-run states. References reusable `ai_review.types` definitions by name. |
 | `states.<state>.codex.model` | string or `null` | inherit global `codex.model` | Optional per-state Codex model override for agent-run states only. |
 | `states.<state>.codex.reasoning_effort` | string or `null` | inherit global `codex.reasoning_effort` | Optional per-state reasoning override for agent-run states only. |
+| `states.<state>.codex.fast_mode` | boolean or `null` | inherit global `codex.fast_mode` | Optional per-state fast-mode override for agent-run states only. |
 | `states.<state>.allowed_next_states` | list of strings | unrestricted | Optional allowlist for harness-applied transitions. Also constrains the turn schema `next_state` enum when present. |
 | `states.<state>.failure_state` | string or `null` | `null` | Optional deterministic blocked-state target. When set, it overrides any agent-supplied `next_state` for `blocked` results. |
 | `states.<state>.auto_next_state` | string or `null` | `null` | Makes the state harness-run instead of agent-run. |
@@ -120,7 +121,7 @@ Rules:
 - Referencing a missing prompt section is invalid.
 - Review references are matched case-insensitively after trimming.
 - Referencing a missing review type is invalid.
-- Only `codex.model` and `codex.reasoning_effort` may be overridden per state.
+- Only `codex.model`, `codex.reasoning_effort`, `codex.fast_mode`, and `codex.skills` may be overridden per state.
 - `prompt` and `auto_next_state` are mutually exclusive.
 - `codex` overrides are rejected for auto states.
 - `ai_review` is rejected for auto states.
@@ -160,6 +161,7 @@ states:
     codex:
       model: gpt-5.4-mini
       reasoning_effort: low
+      fast_mode: true
 ```
 
 ## `ai_review`
@@ -174,8 +176,9 @@ human review worktrees.
 | --- | --- | --- | --- |
 | `ai_review.types` | object | `{}` | Optional mapping of reusable review type definitions. |
 | `ai_review.types.<name>.prompt` | string | none | Required. References a named `# review: <id>` section from the Markdown body. |
-| `ai_review.types.<name>.model` | string or `null` | `null` | Optional review-model override. |
-| `ai_review.types.<name>.reasoning_effort` | string or `null` | `null` | Optional review reasoning override. |
+| `ai_review.types.<name>.codex.model` | string or `null` | inherit effective session `codex.model` | Optional review-model override. |
+| `ai_review.types.<name>.codex.reasoning_effort` | string or `null` | inherit effective session `codex.reasoning_effort` | Optional review reasoning override. |
+| `ai_review.types.<name>.codex.fast_mode` | boolean or `null` | inherit effective session `codex.fast_mode` | Optional review fast-mode override. |
 | `ai_review.types.<name>.lines_changed` | non-negative integer or `null` | `null` | Optional changed-line threshold for triggering runtime AI review. |
 | `ai_review.types.<name>.paths.only` | non-empty list of strings | `[]` | Optional path trigger requiring every changed path to match at least one glob. |
 | `ai_review.types.<name>.paths.include` | non-empty list of strings | `[]` | Optional path trigger requiring at least one changed path to match. |
@@ -187,6 +190,7 @@ Rules:
 - Review type names are matched case-insensitively after trimming.
 - Duplicate normalized review type names are invalid.
 - `prompt` must reference an existing `# review: <id>` section.
+- `codex`, when present, only supports `model`, `reasoning_effort`, and `fast_mode`.
 - `paths` only supports `only`, `include`, and `exclude`.
 - Path-glob lists must contain non-blank strings and may not be empty when present.
 
@@ -197,8 +201,10 @@ ai_review:
   types:
     security:
       prompt: security
-      model: gpt-5.4-mini
-      reasoning_effort: high
+      codex:
+        model: gpt-5.4-mini
+        reasoning_effort: high
+        fast_mode: true
       lines_changed: 25
       paths:
         include:
@@ -255,6 +261,7 @@ Code Factory validates only a subset of these fields itself:
 
 - `codex.command` must be a non-empty string
 - `codex.model` and `codex.reasoning_effort` must be non-blank strings if present
+- `codex.fast_mode` must be a boolean if present
 - `codex.approval_policy` must be a string or object
 - `codex.turn_sandbox_policy` must be an object if present
 
@@ -267,6 +274,7 @@ For the enum-like Codex values below, the concrete accepted values were verified
 | `codex.command` | non-empty string | `codex app-server` | Base app-server command launched in the workspace with a shell. |
 | `codex.model` | non-blank string or `null` | `null` | Injected as `--model <value>` immediately before `app-server`. |
 | `codex.reasoning_effort` | non-blank string or `null` | `null` | Injected as `--config model_reasoning_effort=<value>` immediately before `app-server`. |
+| `codex.fast_mode` | boolean or `null` | `null` | When `true`, Code Factory sends `serviceTier: "fast"` on Codex thread start. `false` and `null` omit `serviceTier`. |
 | `codex.approval_policy` | string or object | `{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}` | Passed through to Codex thread start. |
 | `codex.thread_sandbox` | string | `workspace-write` | Passed through to Codex thread start. |
 | `codex.turn_sandbox_policy` | object or `null` | `null` | Passed through to Codex turn start. If omitted, Code Factory builds a workspace-scoped default policy. |
@@ -280,6 +288,9 @@ argv, inserts those flags immediately before the `app-server` argument, and
 launches the resulting command. This means the base command should keep
 `app-server` as an explicit argument when you use these workflow-managed
 overrides.
+
+`codex.fast_mode` is protocol-level only. It does not inject CLI flags into
+`codex.command`.
 
 ### `codex.approval_policy` string values
 
@@ -468,6 +479,7 @@ states:
     codex:
       model: gpt-5.4-mini
       reasoning_effort: low
+      fast_mode: true
 
 polling:
   interval_ms: 30000

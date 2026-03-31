@@ -1281,8 +1281,10 @@ async def test_issue_worker_ai_review_feedback_loop(
                 "types": {
                     "Security": {
                         "prompt": "security",
-                        "model": "gpt-5.4-mini",
-                        "reasoning_effort": "high",
+                        "codex": {
+                            "model": "gpt-5.4-mini",
+                            "reasoning_effort": "high",
+                        },
                         "lines_changed": 1,
                     }
                 }
@@ -1302,7 +1304,7 @@ async def test_issue_worker_ai_review_feedback_loop(
         def __init__(self) -> None:
             self.prompts: list[str] = []
             self.review_prompts: list[str] = []
-            self.review_models: list[tuple[str | None, str | None]] = []
+            self.review_models: list[tuple[str | None, str | None, bool | None]] = []
             self._review_calls = 0
 
         async def start_session(self, workspace: str) -> Session:
@@ -1336,6 +1338,7 @@ async def test_issue_worker_ai_review_feedback_loop(
             on_message=None,
             model: str | None = None,
             reasoning_effort: str | None = None,
+            fast_mode: bool | None = None,
         ) -> Any:
             from code_factory.coding_agents.review_models import (
                 ReviewCodeLocation,
@@ -1345,7 +1348,7 @@ async def test_issue_worker_ai_review_feedback_loop(
             )
 
             self.review_prompts.append(prompt)
-            self.review_models.append((model, reasoning_effort))
+            self.review_models.append((model, reasoning_effort, fast_mode))
             self._review_calls += 1
             if self._review_calls == 1:
                 return ReviewOutput(
@@ -1429,8 +1432,8 @@ async def test_issue_worker_ai_review_feedback_loop(
         in worker._agent_runtime.review_prompts[0]
     )  # type: ignore[union-attr]
     assert worker._agent_runtime.review_models == [
-        ("gpt-5.4-mini", "high"),
-        ("gpt-5.4-mini", "high"),
+        ("gpt-5.4-mini", "high", None),
+        ("gpt-5.4-mini", "high", None),
     ]  # type: ignore[union-attr]
 
     updates: list[AgentWorkerUpdate] = []
@@ -1468,13 +1471,17 @@ async def test_issue_worker_ai_review_merges_multiple_review_types(
                 "types": {
                     "Security": {
                         "prompt": "security",
-                        "model": "gpt-5.4-mini",
-                        "reasoning_effort": "high",
+                        "codex": {
+                            "model": "gpt-5.4-mini",
+                            "reasoning_effort": "high",
+                        },
                     },
                     "Frontend": {
                         "prompt": "frontend",
-                        "model": "gpt-5.4",
-                        "reasoning_effort": "medium",
+                        "codex": {
+                            "model": "gpt-5.4",
+                            "reasoning_effort": "medium",
+                        },
                     },
                 }
             },
@@ -1494,7 +1501,7 @@ async def test_issue_worker_ai_review_merges_multiple_review_types(
         def __init__(self) -> None:
             self.prompts: list[str] = []
             self.review_prompts: list[str] = []
-            self.review_models: list[tuple[str | None, str | None]] = []
+            self.review_models: list[tuple[str | None, str | None, bool | None]] = []
             self._review_calls = 0
 
         async def start_session(self, workspace: str) -> Session:
@@ -1528,6 +1535,7 @@ async def test_issue_worker_ai_review_merges_multiple_review_types(
             on_message=None,
             model: str | None = None,
             reasoning_effort: str | None = None,
+            fast_mode: bool | None = None,
         ) -> Any:
             from code_factory.coding_agents.review_models import (
                 ReviewCodeLocation,
@@ -1537,7 +1545,7 @@ async def test_issue_worker_ai_review_merges_multiple_review_types(
             )
 
             self.review_prompts.append(prompt)
-            self.review_models.append((model, reasoning_effort))
+            self.review_models.append((model, reasoning_effort, fast_mode))
             self._review_calls += 1
             if self._review_calls == 1:
                 return ReviewOutput(
@@ -1648,8 +1656,8 @@ async def test_issue_worker_ai_review_merges_multiple_review_types(
     assert "Missing loading fallback" not in repair_prompt
     assert "Noisy guess" not in repair_prompt
     assert worker._agent_runtime.review_models[:2] == [  # type: ignore[union-attr]
-        ("gpt-5.4-mini", "high"),
-        ("gpt-5.4", "medium"),
+        ("gpt-5.4-mini", "high", None),
+        ("gpt-5.4", "medium", None),
     ]
 
     updates: list[AgentWorkerUpdate] = []

@@ -92,6 +92,7 @@ class WorkflowSnapshot:
                 reasoning_effort=profile.codex_reasoning_effort(
                     self.settings.coding_agent.reasoning_effort
                 ),
+                fast_mode=profile.codex_fast_mode(self.settings.coding_agent.fast_mode),
                 repo_skill_allowlist=profile.codex_repo_skill_allowlist(
                     self.settings.coding_agent.repo_skill_allowlist
                 ),

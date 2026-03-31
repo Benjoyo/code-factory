@@ -64,15 +64,21 @@ class CodexRuntime:
         on_message: AgentMessageHandler | None = None,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        fast_mode: bool | None = None,
     ) -> ReviewOutput:
         client = self._client
-        if model is not None or reasoning_effort is not None:
+        if model is not None or reasoning_effort is not None or fast_mode is not None:
             client = AppServerClient(
                 replace(
                     self._settings.coding_agent,
                     model=model or self._settings.coding_agent.model,
                     reasoning_effort=reasoning_effort
                     or self._settings.coding_agent.reasoning_effort,
+                    fast_mode=(
+                        fast_mode
+                        if fast_mode is not None
+                        else self._settings.coding_agent.fast_mode
+                    ),
                 ),
                 self._settings.workspace,
                 dynamic_tool_factory=self._build_dynamic_tool_executor,

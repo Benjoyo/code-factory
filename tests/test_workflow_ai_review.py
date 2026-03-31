@@ -22,8 +22,10 @@ def test_workflow_snapshot_loads_ai_review_types_and_sections(tmp_path: Path) ->
             "types": {
                 "Security": {
                     "prompt": "security",
-                    "model": "gpt-5.4-mini",
-                    "reasoning_effort": "high",
+                    "codex": {
+                        "model": "gpt-5.4-mini",
+                        "reasoning_effort": "high",
+                    },
                     "lines_changed": 25,
                     "paths": {
                         "include": ["src/**"],
@@ -74,8 +76,8 @@ def test_workflow_snapshot_loads_ai_review_types_and_sections(tmp_path: Path) ->
     security_review, frontend_review = snapshot.ai_review_types_for_state("In Progress")
     assert security_review.review_name == "Security"
     assert security_review.prompt_ref == "security"
-    assert security_review.model == "gpt-5.4-mini"
-    assert security_review.reasoning_effort == "high"
+    assert security_review.codex.model == "gpt-5.4-mini"
+    assert security_review.codex.reasoning_effort == "high"
     assert security_review.lines_changed == 25
     assert security_review.paths.include == ("src/**",)
     assert security_review.paths.exclude == ("tests/**",)
@@ -146,6 +148,52 @@ def test_workflow_snapshot_auto_scope_resolves_to_branch_for_completion_states(
     assert profile.resolved_ai_review_scope() == "branch"
 
 
+def test_workflow_snapshot_ai_review_codex_fast_mode_inherits_and_overrides(
+    tmp_path: Path,
+) -> None:
+    workflow = write_workflow_file(
+        tmp_path / "WORKFLOW.md",
+        codex={"fast_mode": True},
+        states={
+            "Todo": {"auto_next_state": "In Progress"},
+            "In Progress": {
+                "prompt": "default",
+                "codex": {"fast_mode": False},
+                "ai_review": ["Inherited", "Forced Fast", "Disabled Fast"],
+            },
+        },
+        ai_review={
+            "types": {
+                "Inherited": {"prompt": "security"},
+                "Forced Fast": {
+                    "prompt": "security",
+                    "codex": {"fast_mode": True},
+                },
+                "Disabled Fast": {
+                    "prompt": "security",
+                    "codex": {"fast_mode": False},
+                },
+            }
+        },
+        prompt=(
+            "# prompt: default\nImplement.\n\n# review: security\nCheck security.\n"
+        ),
+    )
+
+    snapshot = make_snapshot(workflow)
+    profile = snapshot.state_profile("In Progress")
+
+    assert profile is not None
+    assert snapshot.settings.coding_agent.fast_mode is True
+    assert snapshot.settings_for_state("In Progress").coding_agent.fast_mode is False
+    inherited, forced_fast, disabled_fast = snapshot.ai_review_types_for_state(
+        "In Progress"
+    )
+    assert inherited.codex.fast_mode is None
+    assert forced_fast.codex.fast_mode is True
+    assert disabled_fast.codex.fast_mode is False
+
+
 @pytest.mark.parametrize(
     ("overrides", "prompt", "message"),
     [
@@ -199,6 +247,42 @@ def test_workflow_snapshot_auto_scope_resolves_to_branch_for_completion_states(
             },
             "# prompt: default\nImplement.\n\n# review: security\nCheck security.\n",
             "ai_review.types.Security.paths.include must not be empty",
+        ),
+        (
+            {
+                "ai_review": {
+                    "types": {
+                        "Security": {
+                            "prompt": "security",
+                            "model": "gpt-5.4-mini",
+                        }
+                    }
+                },
+                "states": {
+                    "Todo": {"auto_next_state": "In Progress"},
+                    "In Progress": {"prompt": "default"},
+                },
+            },
+            "# prompt: default\nImplement.\n\n# review: security\nCheck security.\n",
+            "ai_review.types.Security has unsupported keys: model",
+        ),
+        (
+            {
+                "ai_review": {
+                    "types": {
+                        "Security": {
+                            "prompt": "security",
+                            "codex": {"unknown": True},
+                        }
+                    }
+                },
+                "states": {
+                    "Todo": {"auto_next_state": "In Progress"},
+                    "In Progress": {"prompt": "default"},
+                },
+            },
+            "# prompt: default\nImplement.\n\n# review: security\nCheck security.\n",
+            "ai_review.types.Security.codex has unsupported keys: unknown",
         ),
         (
             {

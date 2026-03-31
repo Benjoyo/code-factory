@@ -44,6 +44,7 @@ from code_factory.config.utils import (
     normalize_path_token,
     normalize_secret_value,
     normalize_state_limits,
+    optional_boolean,
     optional_non_negative_int,
     optional_string,
     positive_int,
@@ -825,6 +826,7 @@ def test_service_build_http_server_reraises_unexpected_constructor_typeerror(
         (positive_int, None, "field", 9),
         (non_negative_int, None, "field", 3),
         (optional_non_negative_int, None, "field", None),
+        (optional_boolean, None, "field", None),
         (optional_string, "value", "field", "value"),
         (string_with_default, None, "field", "fallback"),
         (required_command, "cmd", "field", "cmd"),
@@ -878,6 +880,7 @@ def test_config_utils_success_cases(
             "field limits must be positive integers",
         ),
         (lambda: boolean("yes", "field", False), "field must be a boolean"),
+        (lambda: optional_boolean("yes", "field"), "field must be a boolean"),
         (
             lambda: resolve_path_value(7, "/tmp/default", "field"),
             "field must be a string",
@@ -901,6 +904,7 @@ def test_config_utils_environment_and_normalization(
 
     assert normalize_state_limits({"To Do": "2"}, "field") == {"to do": 2}
     assert boolean(False, "field", True) is False
+    assert optional_boolean(False, "field") is False
     assert env_reference_name("$WORKSPACE_ROOT") == "WORKSPACE_ROOT"
     assert env_reference_name("$9bad") is None
     assert normalize_path_token("$WORKSPACE_ROOT") == "/tmp/root"
@@ -1245,6 +1249,7 @@ def test_state_profiles_and_result_helpers_cover_edge_paths(tmp_path: Path) -> N
                     },
                     "codex": {
                         "reasoning_effort": "high",
+                        "fast_mode": True,
                         "skills": ["commit"],
                     },
                     "hooks": {
@@ -1264,6 +1269,7 @@ def test_state_profiles_and_result_helpers_cover_edge_paths(tmp_path: Path) -> N
     assert progress_profile.is_agent_run is True
     assert progress_profile.codex_model("gpt-5.4") == "gpt-5.4"
     assert progress_profile.codex_reasoning_effort("low") == "high"
+    assert progress_profile.codex_fast_mode(False) is True
     assert progress_profile.codex_repo_skill_allowlist(None) == ("commit",)
     assert progress_profile.completion.require_pushed_head is True
     assert progress_profile.completion.require_pr is True

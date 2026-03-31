@@ -251,11 +251,14 @@ active workflow states:
   types against the candidate patch, filters low-confidence findings, and feeds
   one combined repair prompt back through the same completion-loop budget until
   review passes or the failure path is exhausted.
+- AI review execution settings live under `ai_review.types.<name>.codex`, and
+  global or per-state Codex config may additionally set `codex.fast_mode: true`
+  to request Codex app-server `serviceTier: "fast"`.
 - The Markdown body must be split into named `# prompt: <id>` sections for any
   agent-run states and named `# review: <id>` sections for reusable AI review
   overlays.
-- Only `codex.model`, `codex.reasoning_effort`, and repo-local `codex.skills`
-  can be overridden per agent-run state.
+- Only `codex.model`, `codex.reasoning_effort`, `codex.fast_mode`, and
+  repo-local `codex.skills` can be overridden per agent-run state.
 - Agent-run states finish one workflow state per turn using structured output;
   the harness validates the result, persists a state-result comment, and applies
   the tracker transition.

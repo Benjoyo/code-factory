@@ -53,22 +53,24 @@ async def start_thread(
     approval_policy: str | dict[str, Any],
     thread_sandbox: str,
     *,
+    service_tier: str | None = None,
     dynamic_tools: list[dict[str, Any]] | None = None,
     default_timeout_ms: int,
 ) -> str:
+    params = {
+        "approvalPolicy": approval_policy,
+        "sandbox": thread_sandbox,
+        "cwd": workspace,
+        "dynamicTools": tool_specs() if dynamic_tools is None else dynamic_tools,
+    }
+    if service_tier is not None:
+        params["serviceTier"] = service_tier
     await send_message(
         process_tree,
         {
             "method": "thread/start",
             "id": THREAD_START_ID,
-            "params": {
-                "approvalPolicy": approval_policy,
-                "sandbox": thread_sandbox,
-                "cwd": workspace,
-                "dynamicTools": tool_specs()
-                if dynamic_tools is None
-                else dynamic_tools,
-            },
+            "params": params,
         },
     )
     result = await await_response(

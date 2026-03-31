@@ -297,6 +297,20 @@ def test_build_launch_command_supports_reasoning_only_override(
     assert launch_command == "codex --config model_reasoning_effort=high app-server"
 
 
+def test_build_launch_command_ignores_fast_mode_for_cli_injection(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+    launch_command = build_launch_command(
+        replace(
+            settings.coding_agent,
+            command="codex app-server",
+            fast_mode=True,
+        )
+    )
+    assert launch_command == "codex app-server"
+
+
 def test_build_launch_command_disables_repo_skills_not_in_allowlist(
     tmp_path: Path,
 ) -> None:
@@ -602,6 +616,23 @@ async def test_protocol_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
         )
         == "thread-1"
     )
+    assert (
+        await start_thread(
+            queue,
+            process_tree,
+            "/tmp",
+            "never",
+            "workspace-write",
+            service_tier="fast",
+            default_timeout_ms=100,
+        )
+        == "thread-1"
+    )
+    thread_start_calls = [
+        payload for payload in sent if payload["method"] == "thread/start"
+    ]
+    assert "serviceTier" not in thread_start_calls[0]["params"]
+    assert thread_start_calls[1]["params"]["serviceTier"] == "fast"
     session = make_session()
     assert (
         await start_turn(

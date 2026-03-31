@@ -921,12 +921,21 @@ async def test_messages_runtime_and_loader_edge_paths(tmp_path: Path) -> None:
     with pytest.raises(Exception, match="codex.turn_sandbox_policy must be an object"):
         parse_coding_agent_settings({"codex": {"turn_sandbox_policy": 7}})
     parsed = parse_coding_agent_settings(
-        {"codex": {"model": "gpt-5.3-codex", "reasoning_effort": "high"}}
+        {
+            "codex": {
+                "model": "gpt-5.3-codex",
+                "reasoning_effort": "high",
+                "fast_mode": True,
+            }
+        }
     )
     assert parsed.model == "gpt-5.3-codex"
     assert parsed.reasoning_effort == "high"
+    assert parsed.fast_mode is True
     with pytest.raises(Exception, match="codex.model can't be blank"):
         parse_coding_agent_settings({"codex": {"model": "  "}})
+    with pytest.raises(Exception, match="codex.fast_mode must be a boolean"):
+        parse_coding_agent_settings({"codex": {"fast_mode": "yes"}})
     invalid_shell_command = replace(
         settings,
         coding_agent=replace(

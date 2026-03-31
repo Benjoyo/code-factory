@@ -8,6 +8,7 @@ from typing import Any, Literal, cast
 
 from ..config.utils import (
     non_negative_int,
+    optional_boolean,
     optional_non_blank_string,
     require_mapping,
 )
@@ -27,29 +28,29 @@ ResolvedAiReviewScope = Literal["worktree", "branch"]
 
 @dataclass(frozen=True, slots=True)
 class ReviewPathTriggers:
-    """Path-based filters used to decide whether one review type should run."""
-
     only: tuple[str, ...] = ()
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
-class WorkflowReviewType:
-    """Reusable AI review definition loaded from workflow front matter."""
-
-    review_name: str
-    prompt_ref: str
+class ReviewCodexConfig:
     model: str | None = None
     reasoning_effort: str | None = None
+    fast_mode: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowReviewType:
+    review_name: str
+    prompt_ref: str
+    codex: ReviewCodexConfig = ReviewCodexConfig()
     lines_changed: int | None = None
     paths: ReviewPathTriggers = ReviewPathTriggers()
 
 
 @dataclass(frozen=True, slots=True)
 class StateAiReviewConfig:
-    """Resolved state-level AI review attachment plus the configured surface scope."""
-
     refs: tuple[str, ...] = ()
     scope: ConfiguredAiReviewScope = AI_REVIEW_SCOPE_AUTO
 
@@ -57,8 +58,6 @@ class StateAiReviewConfig:
 def parse_review_types(
     config: Mapping[str, Any], review_sections: Mapping[str, str]
 ) -> dict[str, WorkflowReviewType]:
-    """Validate and normalize reusable workflow AI review definitions."""
-
     raw_ai_review = config.get("ai_review")
     if raw_ai_review is None:
         return {}
@@ -87,8 +86,7 @@ def parse_review_types(
         definition = require_mapping(raw_definition, field_name)
         unexpected_keys = set(definition.keys()) - {
             "prompt",
-            "model",
-            "reasoning_effort",
+            "codex",
             "lines_changed",
             "paths",
         }
@@ -103,13 +101,7 @@ def parse_review_types(
         review_types[normalized_name] = WorkflowReviewType(
             review_name=review_name,
             prompt_ref=prompt_ref,
-            model=optional_non_blank_string(
-                definition.get("model"), f"{field_name}.model"
-            ),
-            reasoning_effort=optional_non_blank_string(
-                definition.get("reasoning_effort"),
-                f"{field_name}.reasoning_effort",
-            ),
+            codex=_review_codex_config(definition.get("codex"), field_name),
             lines_changed=_optional_non_negative_int(
                 definition.get("lines_changed"),
                 f"{field_name}.lines_changed",
@@ -124,8 +116,6 @@ def parse_state_ai_review(
     field_name: str,
     review_types: Mapping[str, WorkflowReviewType],
 ) -> StateAiReviewConfig:
-    """Validate one state's AI review attachments and optional state scope."""
-
     review_field = f"{field_name}.ai_review"
     if raw_ai_review is None:
         return StateAiReviewConfig()
@@ -158,8 +148,6 @@ def parse_state_review_refs(
     field_name: str,
     review_types: Mapping[str, WorkflowReviewType],
 ) -> tuple[str, ...]:
-    """Validate one state's references to reusable AI review definitions."""
-
     return parse_state_ai_review(raw_ai_review, field_name, review_types).refs
 
 
@@ -249,6 +237,22 @@ def _review_paths(raw_paths: Any, field_name: str) -> ReviewPathTriggers:
         only=_glob_list(paths.get("only"), f"{paths_field}.only"),
         include=_glob_list(paths.get("include"), f"{paths_field}.include"),
         exclude=_glob_list(paths.get("exclude"), f"{paths_field}.exclude"),
+    )
+
+
+def _review_codex_config(raw_codex: Any, field_name: str) -> ReviewCodexConfig:
+    codex_field = f"{field_name}.codex"
+    codex = require_mapping(raw_codex, codex_field)
+    unexpected_keys = set(codex.keys()) - {"model", "reasoning_effort", "fast_mode"}
+    if unexpected_keys:
+        names = ", ".join(sorted(map(str, unexpected_keys)))
+        raise ConfigValidationError(f"{codex_field} has unsupported keys: {names}")
+    return ReviewCodexConfig(
+        model=optional_non_blank_string(codex.get("model"), f"{codex_field}.model"),
+        reasoning_effort=optional_non_blank_string(
+            codex.get("reasoning_effort"), f"{codex_field}.reasoning_effort"
+        ),
+        fast_mode=optional_boolean(codex.get("fast_mode"), f"{codex_field}.fast_mode"),
     )
 
 
