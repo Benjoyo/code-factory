@@ -3,19 +3,30 @@ from __future__ import annotations
 """Manages App Server processes and shields the rest of the codebase from IPC details."""
 
 import asyncio
-import os
 from typing import Any
 
 from ....config.models import CodingAgentSettings, WorkspaceSettings
-from ....errors import AppServerError, ConfigValidationError, WorkspaceError
+from ....errors import AppServerError, ConfigValidationError
 from ....issues import Issue
+from ....prompts.review_assets import review_output_schema
 from ....runtime.subprocess import ProcessTree
 from ....structured_results import StructuredTurnResult
-from ....workspace.paths import canonicalize, validate_workspace_path
+from ...review_models import ReviewOutput
 from ..config import build_launch_command
 from ..tools import DynamicToolExecutor
 from .messages import default_on_message, emit_message
-from .protocol import send_initialize, start_thread, start_turn, steer_turn
+from .policies import (
+    resolve_turn_sandbox_policy,
+    review_turn_sandbox_policy,
+    validate_workspace_cwd,
+)
+from .protocol import (
+    send_initialize,
+    start_thread,
+    start_turn,
+    steer_turn,
+)
+from .reviews import DisabledDynamicToolExecutor, await_review_completion
 from .routing import route_stdout
 from .session import AppServerSession
 from .streams import stderr_reader, stdout_reader, wait_for_exit
@@ -57,9 +68,35 @@ class AppServerClient:
         finally:
             await session.stop()
 
-    async def start_session(self, workspace: str) -> AppServerSession:
+    async def run_review(
+        self,
+        workspace: str,
+        prompt: str,
+        issue: Issue,
+        *,
+        on_message=None,
+        tool_executor: DynamicToolExecutor | None = None,
+    ) -> ReviewOutput:
+        session = await self.start_session(workspace, dynamic_tools=[])
+        try:
+            return await self.run_session_review(
+                session,
+                prompt,
+                issue,
+                on_message=on_message,
+                tool_executor=tool_executor,
+            )
+        finally:
+            await session.stop()
+
+    async def start_session(
+        self,
+        workspace: str,
+        *,
+        dynamic_tools: list[dict[str, Any]] | None = None,
+    ) -> AppServerSession:
         """Spin up the Codex runtime and bootstrap a messaging thread before use."""
-        validated_workspace = self._validate_workspace_cwd(workspace)
+        validated_workspace = validate_workspace_cwd(self._workspace.root, workspace)
         try:
             launch_command = build_launch_command(
                 self._coding_agent, validated_workspace
@@ -73,7 +110,14 @@ class AppServerClient:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        session = await self._bootstrap_session(process_tree, validated_workspace)
+        if dynamic_tools is None:
+            session = await self._bootstrap_session(process_tree, validated_workspace)
+        else:
+            session = await self._bootstrap_session(
+                process_tree,
+                validated_workspace,
+                dynamic_tools=dynamic_tools,
+            )
         return session
 
     async def run_turn(
@@ -116,13 +160,64 @@ class AppServerClient:
             )
             raise
 
+    async def run_session_review(
+        self,
+        session: AppServerSession,
+        prompt: str,
+        issue: Issue,
+        *,
+        on_message=None,
+        tool_executor: DynamicToolExecutor | None = None,
+    ) -> ReviewOutput:
+        handler = on_message or default_on_message
+        _ = tool_executor
+        turn_id = await start_turn(
+            session,
+            prompt,
+            issue,
+            output_schema=review_output_schema(),
+            sandbox_policy=review_turn_sandbox_policy(
+                self._workspace.root,
+                session.workspace,
+            ),
+        )
+        review_thread_id = session.thread_id
+        await emit_message(
+            handler,
+            "review_started",
+            {
+                "thread_id": session.thread_id,
+                "review_thread_id": review_thread_id,
+                "turn_id": turn_id,
+            },
+            {"runtime_pid": session.runtime_pid},
+        )
+        try:
+            return await await_review_completion(
+                session,
+                handler,
+                DisabledDynamicToolExecutor(),
+            )
+        except Exception as exc:
+            await emit_message(
+                handler,
+                "review_ended_with_error",
+                {"review_thread_id": review_thread_id, "reason": repr(exc)},
+                {"runtime_pid": session.runtime_pid},
+            )
+            raise
+
     async def steer(self, session: AppServerSession, message: str) -> str:
         """Forward a steering message to the active in-flight turn."""
 
         return await steer_turn(session, message)
 
     async def _bootstrap_session(
-        self, process_tree: ProcessTree, workspace: str
+        self,
+        process_tree: ProcessTree,
+        workspace: str,
+        *,
+        dynamic_tools: list[dict[str, Any]] | None = None,
     ) -> AppServerSession:
         """Wire stdout/stderr readers and register the new thread with Codex."""
         stdout_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
@@ -136,7 +231,11 @@ class AppServerClient:
         stderr_task = asyncio.create_task(stderr_reader(process_tree.process.stderr))
         wait_task = asyncio.create_task(wait_for_exit(process_tree, stdout_queue))
         approval_policy = self._coding_agent.approval_policy
-        turn_sandbox_policy = self._resolve_turn_sandbox_policy(workspace)
+        turn_sandbox_policy = resolve_turn_sandbox_policy(
+            self._coding_agent,
+            self._workspace.root,
+            workspace,
+        )
         thread_sandbox = self._coding_agent.thread_sandbox
         try:
             await send_initialize(
@@ -150,6 +249,7 @@ class AppServerClient:
                 workspace,
                 approval_policy,
                 thread_sandbox,
+                dynamic_tools=dynamic_tools,
                 default_timeout_ms=self._coding_agent.read_timeout_ms,
             )
         except Exception:
@@ -197,29 +297,3 @@ class AppServerClient:
                 current_issue=issue.identifier,
             )
         return self._dynamic_tool_factory(workspace, issue)
-
-    def _validate_workspace_cwd(self, workspace: str) -> str:
-        """Check the workspace path is inside the configured workspace root."""
-        expanded_workspace = os.path.abspath(os.path.expanduser(workspace))
-        expanded_root = os.path.abspath(os.path.expanduser(self._workspace.root))
-        canonical_workspace = canonicalize(expanded_workspace)
-        canonical_root = canonicalize(expanded_root)
-        try:
-            return validate_workspace_path(canonical_root, canonical_workspace)
-        except WorkspaceError as exc:
-            reason = exc.reason if isinstance(exc.reason, tuple) else (exc.reason,)
-            raise AppServerError(("invalid_workspace_cwd", *reason)) from exc
-
-    def _resolve_turn_sandbox_policy(self, workspace: str) -> dict[str, Any]:
-        # Default sandbox gives the agent write access only to the running workspace.
-        if self._coding_agent.turn_sandbox_policy is not None:
-            return self._coding_agent.turn_sandbox_policy
-        writable_root = canonicalize(workspace or self._workspace.root)
-        return {
-            "type": "workspaceWrite",
-            "writableRoots": [writable_root],
-            "readOnlyAccess": {"type": "fullAccess"},
-            "networkAccess": False,
-            "excludeTmpdirEnvVar": False,
-            "excludeSlashTmp": False,
-        }

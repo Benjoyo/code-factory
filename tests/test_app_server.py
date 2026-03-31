@@ -212,3 +212,21 @@ async def test_app_server_allows_empty_repo_skill_allowlist_without_repo_skills(
 
     assert launched == ["codex app-server"]
     assert session == ("session", tree, str(workspace.resolve()))
+
+    bootstrapped_dynamic_tools: list[list[dict[str, object]] | None] = []
+
+    async def fake_bootstrap_with_tools(
+        process_tree,
+        workspace_path: str,
+        *,
+        dynamic_tools=None,
+    ):  # type: ignore[no-untyped-def]
+        bootstrapped_dynamic_tools.append(dynamic_tools)
+        return ("session-with-tools", process_tree, workspace_path, dynamic_tools)
+
+    monkeypatch.setattr(client, "_bootstrap_session", fake_bootstrap_with_tools)
+
+    session = await client.start_session(str(workspace), dynamic_tools=[])
+
+    assert session == ("session-with-tools", tree, str(workspace.resolve()), [])
+    assert bootstrapped_dynamic_tools == [[]]

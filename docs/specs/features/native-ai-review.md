@@ -1,14 +1,14 @@
-# Native AI Review
+# AI Review Turn
 
 ## Problem Statement
 
-Code Factory currently relies on the implementing agent's own judgment plus deterministic completion gates before a state transition is accepted. That leaves a gap for review-oriented feedback that is independent from the implementing agent's thread context, shaped for bug-finding rather than implementation, and targeted to the exact patch about to transition. Users need a native AI review feature that can be configured in workflow state definitions, triggered only when practical review conditions are met, and fed back into the implementing agent as repair guidance before the tracker transition is applied.
+Code Factory currently relies on the implementing agent's own judgment plus deterministic completion gates before a state transition is accepted. That leaves a gap for review-oriented feedback that is independent from the implementing agent's thread context, shaped for bug-finding rather than implementation, and targeted to the exact patch about to transition. Users need an AI review feature that can be configured in workflow state definitions, triggered only when practical review conditions are met, and fed back into the implementing agent as repair guidance before the tracker transition is applied.
 
-The review feature must remain operationally simple. Users should be able to define a small number of reusable review types in the workflow, attach those review types to one or more states, and let Code Factory decide whether each review should run based on changed paths and changed lines. The feature should use Codex's native review capability and structured review output, but Code Factory must control review request composition so ticket metadata and workflow-defined review instructions are always present.
+The review feature must remain operationally simple. Users should be able to define a small number of reusable review types in the workflow, attach those review types to one or more states, and let Code Factory decide whether each review should run based on changed paths and changed lines. The feature should use a pinned Codex review prompt plus a pinned JSON schema, executed through a normal app-server turn, while Code Factory controls review request composition so ticket metadata, workflow-defined review instructions, and current diff context are always present.
 
 ## Solution
 
-Code Factory will add workflow-configurable AI review types that run as a separate native Codex review step after deterministic completion gates pass and before the issue transition is committed. Each review runs in a fresh review context rather than the implementing agent's thread, so the reviewer evaluates the candidate patch without inheriting the implementation conversation.
+Code Factory will add workflow-configurable AI review types that run as a separate Codex review turn after deterministic completion gates pass and before the issue transition is committed. Each review runs in a fresh session rather than the implementing agent's thread, so the reviewer evaluates the candidate patch without inheriting the implementation conversation.
 
 Each review type will define:
 
@@ -21,13 +21,13 @@ Each state may request zero, one, or multiple review types. When the implementin
 1. Run existing deterministic readiness and `before_complete` gates
 2. Compute the current worktree diff for the candidate patch
 3. Evaluate configured review triggers for the current state
-4. Run all triggered review types through native Codex review in fresh review sessions
+4. Run all triggered review types through read-only Codex review turns in fresh sessions
 5. Filter low-confidence findings using an internal threshold
 6. Merge the remaining findings into one repair prompt
 7. Feed that combined prompt back to the implementing agent in the existing completion loop
 8. Re-run until either the patch passes review or the shared repair-loop budget is exhausted
 
-The review request sent to Codex will be composed by Code Factory. It will include the review scope instructions, the ticket description and relevant metadata, and the user-defined review overlay prompt. Native Codex review remains responsible for the reviewer rubric and structured JSON output format.
+The review request sent to Codex will be composed by Code Factory. It will prepend the vendored Codex review base prompt, then append the ticket description, relevant metadata, workflow review overlay, and the current worktree review surface. Codex will return structured JSON constrained by the vendored review-output schema.
 
 ## User Stories
 
@@ -61,11 +61,14 @@ The review request sent to Codex will be composed by Code Factory. It will inclu
 - Add a workflow-level review configuration namespace for reusable AI review types. This is separate from the existing operator review workspace configuration.
 - Add review prompt sections to the workflow body using the same named-section pattern already used for agent prompts, with state definitions referencing review prompt identifiers rather than embedding prompt text inline.
 - Extend state configuration so agent-run states can declare one or more review type references. Auto states will not support AI review.
-- Keep the reviewer isolated from the implementing agent by running native Codex review in a fresh review context rather than on the implementing session's thread history.
-- Compose the native review request text inside Code Factory. The rendered request will include:
+- Keep the reviewer isolated from the implementing agent by running a fresh review turn rather than on the implementing session's thread history.
+- Compose the review request text inside Code Factory. The rendered request will include:
   - instructions describing the review scope to inspect
   - ticket description and relevant ticket metadata
   - the user-defined review overlay prompt
+  - changed paths plus changed-line totals for the exact candidate patch
+- Vendor the Codex review base prompt and JSON schema into this repo and treat them as package-owned assets.
+- Drop native review mode for this feature because the app-server path around `uncommittedChanges` does not provide a clean first-class way to layer issue/workflow instructions onto the review target while keeping prompt and schema ownership explicit in-repo.
 - Use the current worktree as the default review surface for v1. Review triggers and review execution will both evaluate the exact worktree diff present at the end of the implementing turn.
 - Model trigger rules as a small validated contract rather than a general rules engine. The path trigger interface will use:
   - `only`: every changed file must match one of these globs
@@ -84,7 +87,7 @@ The review request sent to Codex will be composed by Code Factory. It will inclu
   - a review workflow/config model and validator
   - a diff-trigger evaluator
   - a review prompt and ticket-context renderer
-  - a native review runner that wraps Codex review execution and result parsing
+  - a review-turn runner that wraps normal app-server turn execution and result parsing
   - a review feedback synthesizer for completion-loop reuse
 - Preserve the existing transition result contract. The implementing agent continues to emit the same structured state result; AI review only determines whether the worker accepts that result immediately or sends repair feedback first.
 - Implementation of this feature changes workflow/runtime policy and will require a careful `SPEC.md` update before or alongside behavior changes.
@@ -98,7 +101,7 @@ The review request sent to Codex will be composed by Code Factory. It will inclu
   - mixed frontend and backend changes
   - tiny changes filtered out by line thresholds
   - multiple review types triggering on the same worktree
-- Add isolated prompt-rendering tests that verify ticket metadata and review overlay prompts are included in the rendered native review request.
+- Add isolated prompt-rendering tests that verify the vendored base prompt is preserved verbatim and the ticket metadata, review overlay, and worktree review surface are appended after it.
 - Add isolated review-result tests for:
   - structured output parsing
   - low-confidence finding filtering
@@ -108,7 +111,7 @@ The review request sent to Codex will be composed by Code Factory. It will inclu
   - filtered review findings send the implementing agent back for repair
   - clean review results allow the transition to proceed
   - exhausted shared repair-loop budget returns the failure path cleanly
-- Add app-server protocol tests for native review invocation only to the extent needed to verify Code Factory's wrapper behavior, not Codex internals already covered upstream.
+- Add app-server protocol tests for review-turn invocation only to the extent needed to verify Code Factory's wrapper behavior, not Codex internals already covered upstream.
 - Follow the existing repo style of tight unit tests around parsing and orchestration helpers, plus integration tests around workflow lifecycle and worker behavior.
 - Maintain full line and branch coverage for any new branches introduced by review triggering, filtering, and repair-loop integration.
 
@@ -121,12 +124,12 @@ The review request sent to Codex will be composed by Code Factory. It will inclu
 - Alternative review surfaces such as latest commit or merge-base diff in v1
 - Review-specific retry budgets separate from the existing completion feedback-loop budget
 - Cross-review deduplication heuristics beyond straightforward merged feedback formatting
-- Exposing native review lifecycle details directly to workflow authors beyond the configured review types and triggers
+- Exposing low-level review-turn lifecycle details directly to workflow authors beyond the configured review types and triggers
 - Replacing or removing existing deterministic completion gates
 
 ## Further Notes
 
 - The existing top-level `review` settings are already used for operator-side human review worktrees. AI review should use a distinct workflow configuration surface to avoid overloading that contract.
-- Because native Codex review is being used with Code Factory-rendered request text, the implementation should be explicit that this feature uses native review execution and output while Code Factory owns request composition and trigger policy.
+- Because Code Factory now drives review through a normal read-only Codex turn, the implementation should be explicit that Code Factory owns the prompt, schema, and trigger policy while Codex owns the model execution.
 - The first version should optimize for understandable workflow authoring and a small runtime surface area, even if later versions add more review targets or persistence options.
 - Documentation updates will need to cover workflow front matter, prompt-section conventions for review prompts, and the new completion-loop behavior when review findings are returned to the implementing agent.

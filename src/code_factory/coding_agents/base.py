@@ -9,6 +9,7 @@ from ..config.models import CodingAgentSettings, Settings
 from ..issues import Issue
 from ..structured_results import StructuredTurnResult
 from ..trackers.base import Tracker
+from .review_models import ReviewOutput
 
 AgentMessageHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -31,6 +32,17 @@ class CodingAgentRuntime(Protocol):
         on_message: AgentMessageHandler | None = None,
         output_schema: dict[str, Any] | None = None,
     ) -> StructuredTurnResult: ...
+
+    async def run_review(
+        self,
+        workspace: str,
+        prompt: str,
+        issue: Issue,
+        *,
+        on_message: AgentMessageHandler | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> ReviewOutput: ...
 
 
 def build_coding_agent_runtime(

@@ -71,6 +71,10 @@ from code_factory.trackers.memory import MemoryTracker
 from code_factory.workspace.hooks import HookCommandResult
 from code_factory.workspace.manager import WorkspaceManager
 from code_factory.workspace.review_resolution import ReviewError
+from code_factory.workspace.review_surface import (
+    WorktreeReviewSelection,
+    WorktreeReviewSurface,
+)
 from code_factory.workspace.workpad import WORKPAD_FILENAME, workspace_workpad_path
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
@@ -1236,6 +1240,413 @@ async def test_issue_worker_native_readiness_exhaustion(
     await worker._run_state(Session())
     updated_issue = await tracker.fetch_issue_states_by_ids(["issue-1"])
     assert updated_issue[0].state == snapshot.settings.failure_state
+
+
+@pytest.mark.asyncio
+async def test_issue_worker_ai_review_feedback_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "allowed_next_states": ["Done"],
+                    "ai_review": "Security",
+                },
+            },
+            ai_review={
+                "types": {
+                    "Security": {
+                        "prompt": "security",
+                        "model": "gpt-5.4-mini",
+                        "reasoning_effort": "high",
+                        "lines_changed": 1,
+                    }
+                }
+            },
+            prompt=(
+                "# prompt: default\nImplement.\n\n"
+                "# review: security\nLook for correctness regressions tied to the ticket.\n"
+            ),
+        )
+    )
+
+    class Session:
+        async def stop(self) -> None:
+            return None
+
+    class FakeRuntime:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+            self.review_prompts: list[str] = []
+            self.review_models: list[tuple[str | None, str | None]] = []
+            self._review_calls = 0
+
+        async def start_session(self, workspace: str) -> Session:
+            return Session()
+
+        async def steer(self, session: Any, message: str) -> str | None:
+            return None
+
+        async def run_turn(
+            self,
+            session: Any,
+            prompt: str,
+            issue: Any,
+            *,
+            on_message=None,
+            output_schema=None,
+        ) -> StructuredTurnResult:
+            self.prompts.append(prompt)
+            return StructuredTurnResult(
+                decision="transition",
+                summary="done",
+                next_state="Done",
+            )
+
+        async def run_review(
+            self,
+            workspace: str,
+            prompt: str,
+            issue: Any,
+            *,
+            on_message=None,
+            model: str | None = None,
+            reasoning_effort: str | None = None,
+        ) -> Any:
+            from code_factory.coding_agents.review_models import (
+                ReviewCodeLocation,
+                ReviewFinding,
+                ReviewLineRange,
+                ReviewOutput,
+            )
+
+            self.review_prompts.append(prompt)
+            self.review_models.append((model, reasoning_effort))
+            self._review_calls += 1
+            if self._review_calls == 1:
+                return ReviewOutput(
+                    findings=(
+                        ReviewFinding(
+                            title="Missing branch guard",
+                            body="The new code path can dereference a missing branch.",
+                            confidence_score=0.91,
+                            priority=1,
+                            code_location=ReviewCodeLocation(
+                                absolute_file_path="/tmp/workspace/src/app.py",
+                                line_range=ReviewLineRange(start=17, end=18),
+                            ),
+                        ),
+                    ),
+                    overall_correctness="incorrect",
+                    overall_explanation="One blocking issue remains.",
+                    overall_confidence_score=0.87,
+                )
+            return ReviewOutput(
+                findings=(),
+                overall_correctness="correct",
+                overall_explanation="No blocking findings remain.",
+                overall_confidence_score=0.82,
+            )
+
+    async def fake_native(*_args: Any, **_kwargs: Any) -> HookCommandResult | None:
+        return None
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.completion.native_readiness_result",
+        fake_native,
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.ai_review.select_worktree_review_types",
+        lambda *_args, **_kwargs: asyncio.sleep(
+            0,
+            result=WorktreeReviewSelection(
+                surface=WorktreeReviewSurface(
+                    changed_paths=("src/app.py",),
+                    lines_changed=12,
+                ),
+                matched_types=snapshot.ai_review_types_for_state("In Progress"),
+            ),
+        ),
+    )
+
+    tracker = MemoryTracker(
+        [
+            make_issue(
+                id="issue-1",
+                identifier="ENG-1",
+                title="Implement detached review",
+                description="Make review runs independent from the implementation thread.",
+            )
+        ]
+    )
+    worker = IssueWorker(
+        issue=make_issue(
+            id="issue-1",
+            identifier="ENG-1",
+            title="Implement detached review",
+            description="Make review runs independent from the implementation thread.",
+        ),
+        workflow_snapshot=snapshot,
+        orchestrator_queue=asyncio.Queue(),
+        tracker=tracker,
+    )
+    worker.workspace_path = str(tmp_path / "workspace")
+    worker._agent_runtime = FakeRuntime()  # type: ignore[assignment]
+
+    await worker._run_state(Session())
+    updated_issue = await tracker.fetch_issue_states_by_ids(["issue-1"])
+
+    assert updated_issue[0].state == "Done"
+    assert len(worker._agent_runtime.prompts) == 2  # type: ignore[union-attr]
+    assert "Missing branch guard" in worker._agent_runtime.prompts[1]  # type: ignore[union-attr]
+    assert "Identifier: ENG-1" in worker._agent_runtime.review_prompts[0]  # type: ignore[union-attr]
+    assert (
+        "Look for correctness regressions tied to the ticket."
+        in worker._agent_runtime.review_prompts[0]
+    )  # type: ignore[union-attr]
+    assert worker._agent_runtime.review_models == [
+        ("gpt-5.4-mini", "high"),
+        ("gpt-5.4-mini", "high"),
+    ]  # type: ignore[union-attr]
+
+    updates: list[AgentWorkerUpdate] = []
+    while not worker.queue.empty():
+        update = await worker.queue.get()
+        assert isinstance(update, AgentWorkerUpdate)
+        updates.append(update)
+    assert any(update.update["event"] == "ai_review_completed" for update in updates)
+    completed = next(
+        update.update
+        for update in updates
+        if update.update["event"] == "ai_review_completed"
+    )
+    assert completed["accepted_finding_count"] == 1
+    assert completed["reviews"][0]["findings"][0]["title"] == "Missing branch guard"
+
+
+@pytest.mark.asyncio
+async def test_issue_worker_ai_review_merges_multiple_review_types(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "allowed_next_states": ["Done"],
+                    "ai_review": ["Security", "Frontend"],
+                },
+            },
+            ai_review={
+                "types": {
+                    "Security": {
+                        "prompt": "security",
+                        "model": "gpt-5.4-mini",
+                        "reasoning_effort": "high",
+                    },
+                    "Frontend": {
+                        "prompt": "frontend",
+                        "model": "gpt-5.4",
+                        "reasoning_effort": "medium",
+                    },
+                }
+            },
+            prompt=(
+                "# prompt: default\nImplement.\n\n"
+                "# review: security\nFocus on auth and permission regressions.\n\n"
+                "# review: frontend\nFocus on user-visible breakage in changed UI flows.\n"
+            ),
+        )
+    )
+
+    class Session:
+        async def stop(self) -> None:
+            return None
+
+    class FakeRuntime:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+            self.review_prompts: list[str] = []
+            self.review_models: list[tuple[str | None, str | None]] = []
+            self._review_calls = 0
+
+        async def start_session(self, workspace: str) -> Session:
+            return Session()
+
+        async def steer(self, session: Any, message: str) -> str | None:
+            return None
+
+        async def run_turn(
+            self,
+            session: Any,
+            prompt: str,
+            issue: Any,
+            *,
+            on_message=None,
+            output_schema=None,
+        ) -> StructuredTurnResult:
+            self.prompts.append(prompt)
+            return StructuredTurnResult(
+                decision="transition",
+                summary="done",
+                next_state="Done",
+            )
+
+        async def run_review(
+            self,
+            workspace: str,
+            prompt: str,
+            issue: Any,
+            *,
+            on_message=None,
+            model: str | None = None,
+            reasoning_effort: str | None = None,
+        ) -> Any:
+            from code_factory.coding_agents.review_models import (
+                ReviewCodeLocation,
+                ReviewFinding,
+                ReviewLineRange,
+                ReviewOutput,
+            )
+
+            self.review_prompts.append(prompt)
+            self.review_models.append((model, reasoning_effort))
+            self._review_calls += 1
+            if self._review_calls == 1:
+                return ReviewOutput(
+                    findings=(
+                        ReviewFinding(
+                            title="Missing auth check",
+                            body="The new entrypoint skips the permission guard.",
+                            confidence_score=0.93,
+                            priority=1,
+                            code_location=ReviewCodeLocation(
+                                absolute_file_path="/tmp/workspace/src/auth.py",
+                                line_range=ReviewLineRange(start=12, end=15),
+                            ),
+                        ),
+                        ReviewFinding(
+                            title="Noisy guess",
+                            body="This is low confidence and should be filtered.",
+                            confidence_score=0.40,
+                            priority=2,
+                            code_location=ReviewCodeLocation(
+                                absolute_file_path="/tmp/workspace/src/auth.py",
+                                line_range=ReviewLineRange(start=30, end=31),
+                            ),
+                        ),
+                    ),
+                    overall_correctness="incorrect",
+                    overall_explanation="One likely security issue remains.",
+                    overall_confidence_score=0.84,
+                )
+            if self._review_calls == 2:
+                return ReviewOutput(
+                    findings=(
+                        ReviewFinding(
+                            title="Missing loading fallback",
+                            body="The changed component renders a blank region while data loads.",
+                            confidence_score=0.88,
+                            priority=2,
+                            code_location=ReviewCodeLocation(
+                                absolute_file_path="/tmp/workspace/ui/app.tsx",
+                                line_range=ReviewLineRange(start=22, end=24),
+                            ),
+                        ),
+                    ),
+                    overall_correctness="incorrect",
+                    overall_explanation="One UI issue remains.",
+                    overall_confidence_score=0.8,
+                )
+            return ReviewOutput(
+                findings=(),
+                overall_correctness="correct",
+                overall_explanation="No blocking findings remain.",
+                overall_confidence_score=0.82,
+            )
+
+    async def fake_native(*_args: Any, **_kwargs: Any) -> HookCommandResult | None:
+        return None
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.completion.native_readiness_result",
+        fake_native,
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.ai_review.select_worktree_review_types",
+        lambda *_args, **_kwargs: asyncio.sleep(
+            0,
+            result=WorktreeReviewSelection(
+                surface=WorktreeReviewSurface(
+                    changed_paths=("src/auth.py", "ui/app.tsx"),
+                    lines_changed=18,
+                ),
+                matched_types=snapshot.ai_review_types_for_state("In Progress"),
+            ),
+        ),
+    )
+
+    tracker = MemoryTracker(
+        [
+            make_issue(
+                id="issue-1",
+                identifier="ENG-1",
+                title="Implement review merge behavior",
+                description="Run both native review types and merge accepted findings.",
+            )
+        ]
+    )
+    worker = IssueWorker(
+        issue=make_issue(
+            id="issue-1",
+            identifier="ENG-1",
+            title="Implement review merge behavior",
+            description="Run both native review types and merge accepted findings.",
+        ),
+        workflow_snapshot=snapshot,
+        orchestrator_queue=asyncio.Queue(),
+        tracker=tracker,
+    )
+    worker.workspace_path = str(tmp_path / "workspace")
+    worker._agent_runtime = FakeRuntime()  # type: ignore[assignment]
+
+    await worker._run_state(Session())
+    updated_issue = await tracker.fetch_issue_states_by_ids(["issue-1"])
+
+    assert updated_issue[0].state == "Done"
+    assert len(worker._agent_runtime.prompts) == 2  # type: ignore[union-attr]
+    repair_prompt = worker._agent_runtime.prompts[1]  # type: ignore[union-attr]
+    assert "Triggered review types: Security, Frontend." in repair_prompt
+    assert "Missing auth check" in repair_prompt
+    assert "Missing loading fallback" not in repair_prompt
+    assert "Noisy guess" not in repair_prompt
+    assert worker._agent_runtime.review_models[:2] == [  # type: ignore[union-attr]
+        ("gpt-5.4-mini", "high"),
+        ("gpt-5.4", "medium"),
+    ]
+
+    updates: list[AgentWorkerUpdate] = []
+    while not worker.queue.empty():
+        update = await worker.queue.get()
+        assert isinstance(update, AgentWorkerUpdate)
+        updates.append(update)
+    completed = [
+        update.update
+        for update in updates
+        if update.update["event"] == "ai_review_completed"
+    ]
+    assert completed[0]["matched_review_types"] == ["Security", "Frontend"]
+    assert completed[0]["accepted_finding_count"] == 1
+    assert [review["review_name"] for review in completed[0]["reviews"]] == [
+        "Security",
+        "Frontend",
+    ]
 
 
 @pytest.mark.asyncio

@@ -170,6 +170,9 @@ class IssueWorker:
             ),
             initial_prompt=await self._state_prompt(current_issue),
             should_stop=self.stop_event.is_set,
+            workflow_snapshot=self.workflow_snapshot,
+            runtime=self._require_agent_runtime(),
+            on_message=self._on_agent_message,
         )
         if self.stop_event.is_set():
             return

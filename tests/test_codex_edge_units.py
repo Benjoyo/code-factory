@@ -19,10 +19,18 @@ from code_factory.coding_agents.codex.app_server.messages import (
     tool_request_user_input_approval_answers,
     tool_request_user_input_unavailable_answers,
 )
+from code_factory.coding_agents.codex.app_server.policies import (
+    resolve_turn_sandbox_policy,
+    review_turn_sandbox_policy,
+)
 from code_factory.coding_agents.codex.app_server.protocol import (
     await_response,
     start_thread,
     start_turn,
+)
+from code_factory.coding_agents.codex.app_server.reviews import (
+    await_review_completion,
+    extract_review_output,
 )
 from code_factory.coding_agents.codex.app_server.session import AppServerSession
 from code_factory.coding_agents.codex.app_server.tool_response import (
@@ -74,6 +82,7 @@ from code_factory.coding_agents.codex.tools.workpad_tools import (
 )
 from code_factory.errors import AppServerError, TrackerClientError, WorkflowLoadError
 from code_factory.prompts import build_prompt
+from code_factory.prompts.review_assets import review_output_schema
 from code_factory.trackers.memory import MemoryTracker
 from code_factory.workflow.loader import load_workflow
 
@@ -741,12 +750,122 @@ async def test_protocol_and_client_bootstrap_edge_paths(
         tmp_path / "explicit",
         overrides={"codex": {"turn_sandbox_policy": {"type": "dangerouslyBypass"}}},
     )
-    explicit_client = AppServerClient(
-        explicit_settings.coding_agent, explicit_settings.workspace
+    assert resolve_turn_sandbox_policy(
+        explicit_settings.coding_agent,
+        explicit_settings.workspace.root,
+        "/tmp/workspace",
+    ) == {"type": "dangerouslyBypass"}
+
+
+@pytest.mark.asyncio
+async def test_review_turn_protocol_helpers() -> None:
+    session = make_session()
+    calls: list[tuple[str, dict[str, Any], int | None]] = []
+
+    async def fake_session_request(
+        _session: Any,
+        method: str,
+        params: dict[str, Any],
+        *,
+        timeout_ms: int | None,
+    ) -> dict[str, Any]:
+        calls.append((method, params, timeout_ms))
+        return {"turn": {"id": "turn-review-1"}}
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        "code_factory.coding_agents.codex.app_server.protocol.session_request",
+        fake_session_request,
     )
-    assert explicit_client._resolve_turn_sandbox_policy("/tmp/workspace") == {
-        "type": "dangerouslyBypass"
+    try:
+        turn_id = await start_turn(
+            session,
+            "Review",
+            make_issue(identifier="ENG-1"),
+            output_schema=review_output_schema(),
+            sandbox_policy=review_turn_sandbox_policy(
+                "/tmp/workspace", "/tmp/workspace"
+            ),
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert turn_id == "turn-review-1"
+    assert calls == [
+        (
+            "turn/start",
+            {
+                "threadId": "thread-1",
+                "input": [{"type": "text", "text": "Review"}],
+                "cwd": "/tmp/workspace",
+                "title": "ENG-1: Test issue",
+                "approvalPolicy": "never",
+                "sandboxPolicy": review_turn_sandbox_policy(
+                    "/tmp/workspace", "/tmp/workspace"
+                ),
+                "outputSchema": review_output_schema(),
+            },
+            50,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_review_completion_extracts_structured_output() -> None:
+    session = make_session()
+    payload = {
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "turn-review-1",
+            "item": {
+                "id": "message-1",
+                "type": "agentMessage",
+                "text": json.dumps(
+                    {
+                        "findings": [
+                            {
+                                "title": "Broken guard",
+                                "body": "Null access can crash this path.",
+                                "confidence_score": 0.9,
+                                "priority": 1,
+                                "code_location": {
+                                    "absolute_file_path": "/tmp/workspace/app.py",
+                                    "line_range": {"start": 11, "end": 12},
+                                },
+                            }
+                        ],
+                        "overall_correctness": "patch is incorrect",
+                        "overall_explanation": "A correctness issue remains.",
+                        "overall_confidence_score": 0.88,
+                    }
+                ),
+            },
+        },
     }
+    await session.event_queue.put(("line", json.dumps(payload)))
+    await session.event_queue.put(
+        (
+            "line",
+            json.dumps(
+                {
+                    "method": "turn/completed",
+                    "params": {"turn": {"status": "completed"}},
+                }
+            ),
+        )
+    )
+
+    review_output = await await_review_completion(
+        session,
+        lambda _message: asyncio.sleep(0),
+        cast(Any, object()),
+    )
+
+    assert review_output.overall_correctness == "patch is incorrect"
+    assert review_output.findings[0].title == "Broken guard"
+    assert review_output.findings[0].code_location.absolute_file_path.endswith("app.py")
+    assert extract_review_output(payload) == review_output
 
 
 @pytest.mark.asyncio

@@ -221,6 +221,10 @@ active workflow states:
 - Agent-run states may optionally define `hooks.before_complete` and
   `hooks.before_complete_max_feedback_loops` to enforce per-state completion
   gates such as tests or lint checks.
+- Agent-run states may optionally define `ai_review` and reusable
+  top-level `ai_review.types` to run a read-only Codex review turn against the
+  current worktree diff after deterministic gates pass and before the tracker
+  transition is accepted.
 - Agent-run states may optionally define `codex.skills` as a repo-local
   allowlist of direct child directories under `.agents/skills`; omitted or
   `null` keeps all repo-local skills available, and `[]` disables all
@@ -243,8 +247,13 @@ active workflow states:
 - `before_complete` exit code `0` accepts completion, `2` feeds `stderr` back
   into the same session for another turn up to the configured loop cap, and any
   other non-zero status logs a warning but still allows completion.
+- When `ai_review` is configured, Code Factory evaluates all triggered review
+  types against the candidate patch, filters low-confidence findings, and feeds
+  one combined repair prompt back through the same completion-loop budget until
+  review passes or the failure path is exhausted.
 - The Markdown body must be split into named `# prompt: <id>` sections for any
-  agent-run states.
+  agent-run states and named `# review: <id>` sections for reusable AI review
+  overlays.
 - Only `codex.model`, `codex.reasoning_effort`, and repo-local `codex.skills`
   can be overridden per agent-run state.
 - Agent-run states finish one workflow state per turn using structured output;

@@ -36,6 +36,10 @@ from code_factory.coding_agents.codex.app_server.messages import (
     tool_request_user_input_approval_answers,
     tool_request_user_input_unavailable_answers,
 )
+from code_factory.coding_agents.codex.app_server.policies import (
+    resolve_turn_sandbox_policy,
+    validate_workspace_cwd,
+)
 from code_factory.coding_agents.codex.app_server.protocol import (
     INITIALIZE_ID,
     THREAD_START_ID,
@@ -826,12 +830,16 @@ async def test_client_runtime_and_observability_behaviors(
 
     workspace = tmp_path / "workspaces" / "ENG-1"
     workspace.mkdir(parents=True)
-    assert client._validate_workspace_cwd(str(workspace)) == str(workspace.resolve())
+    assert validate_workspace_cwd(settings.workspace.root, str(workspace)) == str(
+        workspace.resolve()
+    )
     with pytest.raises(AppServerError, match="invalid_workspace_cwd"):
-        client._validate_workspace_cwd(str(tmp_path))
-    assert client._resolve_turn_sandbox_policy(str(workspace))["writableRoots"] == [
-        str(workspace.resolve())
-    ]
+        validate_workspace_cwd(settings.workspace.root, str(tmp_path))
+    assert resolve_turn_sandbox_policy(
+        settings.coding_agent,
+        settings.workspace.root,
+        str(workspace),
+    )["writableRoots"] == [str(workspace.resolve())]
 
     settings_with_policy = make_settings(
         tmp_path,
@@ -840,9 +848,11 @@ async def test_client_runtime_and_observability_behaviors(
     custom_client = AppServerClient(
         settings_with_policy.coding_agent, settings_with_policy.workspace
     )
-    assert custom_client._resolve_turn_sandbox_policy(str(workspace)) == {
-        "type": "custom"
-    }
+    assert resolve_turn_sandbox_policy(
+        settings_with_policy.coding_agent,
+        settings_with_policy.workspace.root,
+        str(workspace),
+    ) == {"type": "custom"}
 
     executor = client._build_tool_executor(str(workspace), issue)
     outcome = await executor.execute("tracker_issue_get", {})

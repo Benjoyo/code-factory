@@ -133,11 +133,12 @@ Runtime behavior:
 
 - Active states are derived from `states` keys.
 - Agent-run states start a fresh coding-agent session and render the referenced prompt section bodies concatenated with a blank line between sections, in listed order.
-- Agent-run states may additionally request zero, one, or several reusable AI review types for later runtime review slices.
+- Agent-run states may additionally request zero, one, or several reusable AI review types as completion gates after deterministic readiness checks pass.
 - Auto states do not start an agent. The harness moves the issue directly to `auto_next_state`.
 - Successful agent turns return structured output with `decision`, `summary`, and optional `next_state`, and the harness performs the validated state transition.
 - `allowed_next_states` constrains agent-selected `next_state` values in the turn schema when it is configured.
 - `failure_state`, when configured, takes precedence over any agent-selected `next_state` for `blocked` results.
+- Triggered AI review types run against the current worktree diff in fresh read-only Codex review turns, filter low-confidence findings internally, and feed one combined repair prompt back through the existing completion loop budget before the transition is accepted.
 
 Minimal example:
 
@@ -175,7 +176,7 @@ human review worktrees.
 | `ai_review.types.<name>.prompt` | string | none | Required. References a named `# review: <id>` section from the Markdown body. |
 | `ai_review.types.<name>.model` | string or `null` | `null` | Optional review-model override. |
 | `ai_review.types.<name>.reasoning_effort` | string or `null` | `null` | Optional review reasoning override. |
-| `ai_review.types.<name>.lines_changed` | non-negative integer or `null` | `null` | Optional changed-line threshold for future runtime slices. |
+| `ai_review.types.<name>.lines_changed` | non-negative integer or `null` | `null` | Optional changed-line threshold for triggering runtime AI review. |
 | `ai_review.types.<name>.paths.only` | non-empty list of strings | `[]` | Optional path trigger requiring every changed path to match at least one glob. |
 | `ai_review.types.<name>.paths.include` | non-empty list of strings | `[]` | Optional path trigger requiring at least one changed path to match. |
 | `ai_review.types.<name>.paths.exclude` | non-empty list of strings | `[]` | Optional path trigger requiring no changed path to match. |

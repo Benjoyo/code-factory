@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Codex runtime wiring that keeps the orchestrator agnostic of the App Server protocol."""
 
+from dataclasses import replace
 from typing import Any
 
 from ...config.models import Settings
@@ -10,6 +11,7 @@ from ...structured_results import StructuredTurnResult
 from ...trackers import build_tracker_ops
 from ...trackers.base import Tracker
 from ..base import AgentMessageHandler, CodingAgentRuntime, CodingAgentSession
+from ..review_models import ReviewOutput
 from .app_server import AppServerClient, AppServerSession
 from .tools import DynamicToolExecutor
 
@@ -51,6 +53,35 @@ class CodexRuntime:
             issue,
             on_message=on_message,
             output_schema=output_schema,
+        )
+
+    async def run_review(
+        self,
+        workspace: str,
+        prompt: str,
+        issue: Issue,
+        *,
+        on_message: AgentMessageHandler | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> ReviewOutput:
+        client = self._client
+        if model is not None or reasoning_effort is not None:
+            client = AppServerClient(
+                replace(
+                    self._settings.coding_agent,
+                    model=model or self._settings.coding_agent.model,
+                    reasoning_effort=reasoning_effort
+                    or self._settings.coding_agent.reasoning_effort,
+                ),
+                self._settings.workspace,
+                dynamic_tool_factory=self._build_dynamic_tool_executor,
+            )
+        return await client.run_review(
+            workspace,
+            prompt,
+            issue,
+            on_message=on_message,
         )
 
     def _build_dynamic_tool_executor(

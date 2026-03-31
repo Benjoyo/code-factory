@@ -53,6 +53,7 @@ async def start_thread(
     approval_policy: str | dict[str, Any],
     thread_sandbox: str,
     *,
+    dynamic_tools: list[dict[str, Any]] | None = None,
     default_timeout_ms: int,
 ) -> str:
     await send_message(
@@ -64,7 +65,9 @@ async def start_thread(
                 "approvalPolicy": approval_policy,
                 "sandbox": thread_sandbox,
                 "cwd": workspace,
-                "dynamicTools": tool_specs(),
+                "dynamicTools": tool_specs()
+                if dynamic_tools is None
+                else dynamic_tools,
             },
         },
     )
@@ -86,6 +89,7 @@ async def start_turn(
     issue: Issue,
     *,
     output_schema: dict[str, Any] | None = None,
+    sandbox_policy: dict[str, Any] | None = None,
 ) -> str:
     params = {
         "threadId": session.thread_id,
@@ -93,7 +97,7 @@ async def start_turn(
         "cwd": session.workspace,
         "title": f"{issue.identifier}: {issue.title}",
         "approvalPolicy": session.approval_policy,
-        "sandboxPolicy": session.turn_sandbox_policy,
+        "sandboxPolicy": sandbox_policy or session.turn_sandbox_policy,
     }
     if output_schema is not None:
         params["outputSchema"] = output_schema
