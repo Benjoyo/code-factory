@@ -111,7 +111,7 @@ def test_render_status_dashboard_includes_summary_running_and_backoff_sections()
     )
     rendered = stream.getvalue()
 
-    assert "SYMPHONY STATUS" in rendered
+    assert "CODE FACTORY STATUS" in rendered
     assert "Agents:" in rendered and "1/2" in rendered
     assert "Throughput:" in rendered and "15 tps" in rendered
     assert "Runtime:" in rendered and "42m 6s" in rendered

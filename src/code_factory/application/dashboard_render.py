@@ -135,7 +135,7 @@ def render_status_dashboard(
             box=box.ROUNDED,
             border_style="white",
             padding=(0, 1),
-            title=Text("SYMPHONY STATUS", style="bold white"),
+            title=Text("CODE FACTORY STATUS", style="bold white"),
             title_align="left",
         )
     diagnostics_panel = render_diagnostics_panel(recent_logs)
@@ -157,7 +157,7 @@ def _unavailable_panel(detail: str | None) -> RenderableType:
         box=box.ROUNDED,
         border_style="bright_black",
         padding=(0, 1),
-        title=Text("SYMPHONY STATUS", style="bold white"),
+        title=Text("CODE FACTORY STATUS", style="bold white"),
         title_align="left",
     )
 
