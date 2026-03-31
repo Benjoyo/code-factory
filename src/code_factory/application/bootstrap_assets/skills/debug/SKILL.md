@@ -1,7 +1,7 @@
 ---
 name: debug
 description:
-  Investigate stuck runs and execution failures by tracing Symphony and Codex
+  Investigate stuck runs and execution failures by tracing CodeFactory and Codex
   logs with issue/session identifiers; use when runs stall, retry repeatedly, or
   fail unexpectedly.
 ---
@@ -16,10 +16,11 @@ description:
 
 ## Log Sources
 
-- Primary runtime log: `log/symphony.log`
-  - Default comes from `SymphonyElixir.LogFile` (`log/symphony.log`).
+- Primary runtime log: `log/code-factory.log`
+  - Default comes from `code_factory.application.logging.configure_logging()`
+    when `logs_root` is configured.
   - Includes orchestrator, agent runner, and Codex app-server lifecycle logs.
-- Rotated runtime logs: `log/symphony.log*`
+- Rotated runtime logs: `log/code-factory.log*`
   - Check these when the relevant run is older.
 
 ## Correlation Keys
@@ -28,7 +29,7 @@ description:
 - `issue_id`: Linear UUID (stable internal ID)
 - `session_id`: Codex thread-turn pair (`<thread_id>-<turn_id>`)
 
-`elixir/docs/logging.md` requires these fields for issue/session lifecycle logs. Use
+`SPEC.md` requires these fields for issue/session lifecycle logs. Use
 them as your join keys during debugging.
 
 ## Quick Triage (Stuck Run)
@@ -45,19 +46,19 @@ them as your join keys during debugging.
 
 ```bash
 # 1) Narrow by ticket key (fastest entry point)
-rg -n "issue_identifier=MT-625" log/symphony.log*
+rg -n "issue_identifier=MT-625" log/code-factory.log*
 
 # 2) If needed, narrow by Linear UUID
-rg -n "issue_id=<linear-uuid>" log/symphony.log*
+rg -n "issue_id=<linear-uuid>" log/code-factory.log*
 
 # 3) Pull session IDs seen for that ticket
-rg -o "session_id=[^ ;]+" log/symphony.log* | sort -u
+rg -o "session_id=[^ ;]+" log/code-factory.log* | sort -u
 
 # 4) Trace one session end-to-end
-rg -n "session_id=<thread>-<turn>" log/symphony.log*
+rg -n "session_id=<thread>-<turn>" log/code-factory.log*
 
 # 5) Focus on stuck/retry signals
-rg -n "Issue stalled|scheduling retry|turn_timeout|turn_failed|Codex session failed|Codex session ended with error" log/symphony.log*
+rg -n "Issue stalled|scheduling retry|turn_timeout|turn_failed|Codex session failed|Codex session ended with error" log/code-factory.log*
 ```
 
 ## Investigation Flow
@@ -85,7 +86,7 @@ rg -n "Issue stalled|scheduling retry|turn_timeout|turn_failed|Codex session fai
 
 ## Reading Codex Session Logs
 
-In Symphony, Codex session diagnostics are emitted into `log/symphony.log` and
+In CodeFactory, Codex session diagnostics are emitted into `log/code-factory.log` and
 keyed by `session_id`. Read them as a lifecycle:
 
 1. `Codex session started ... session_id=...`
@@ -99,7 +100,7 @@ For one specific session investigation, keep the trace narrow:
 
 1. Capture one `session_id` for the ticket.
 2. Build a timestamped slice for only that session:
-    - `rg -n "session_id=<thread>-<turn>" log/symphony.log*`
+    - `rg -n "session_id=<thread>-<turn>" log/code-factory.log*`
 3. Mark the exact failing stage:
     - Startup failure before stream events (`Codex session failed ...`).
     - Turn/runtime failure after stream events (`turn_*` / `ended with error`).
@@ -113,6 +114,6 @@ concurrent runs.
 ## Notes
 
 - Prefer `rg` over `grep` for speed on large logs.
-- Check rotated logs (`log/symphony.log*`) before concluding data is missing.
+- Check rotated logs (`log/code-factory.log*`) before concluding data is missing.
 - If required context fields are missing in new log statements, align with
-  `elixir/docs/logging.md` conventions.
+  `SPEC.md` conventions.

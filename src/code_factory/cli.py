@@ -20,7 +20,7 @@ from .observability.cli_support import (
 )
 from .trackers.cli import register_tracker_commands
 from .workflow.loader import DEFAULT_WORKFLOW_FILENAME
-from .workspace.review_runner import run_review_session
+from .workspace.review_session import run_review_session
 
 ACK_FLAG = "--no-guardrails"
 _HELP_FLAGS = frozenset({"-h", "--help"})
@@ -173,9 +173,9 @@ def init_command(
 
 @app.command("review")
 def review_command(
-    targets: Annotated[
-        list[str],
-        typer.Argument(help="Ticket identifiers and/or `main` to launch for review."),
+    target: Annotated[
+        str,
+        typer.Argument(help="Ticket identifier or `main` to launch for review."),
     ],
     workflow_path: Annotated[
         Path | None,
@@ -194,7 +194,7 @@ def review_command(
     resolved_workflow = build_cli_config(workflow_path, None, None).workflow_path
     try:
         asyncio.run(
-            run_review_session(resolved_workflow, targets, keep=keep, console=Console())
+            run_review_session(resolved_workflow, target, keep=keep, console=Console())
         )
     except ReviewError as exc:
         raise click.ClickException(str(exc)) from exc

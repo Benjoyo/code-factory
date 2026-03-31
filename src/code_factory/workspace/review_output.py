@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from rich.console import Console
 from rich.table import Table
 
 from .review_models import RunningReviewServer
+from .review_observer import NullReviewObserver
 
 
-def print_review_summary(console: Console, running: list[RunningReviewServer]) -> None:
+def print_review_summary(
+    console: Console, running: Sequence[RunningReviewServer]
+) -> None:
     table = Table(title="Code Factory Review")
     table.add_column("Target")
     table.add_column("Server")
@@ -32,13 +37,29 @@ def print_review_summary(console: Console, running: list[RunningReviewServer]) -
     console.print(table)
 
 
-def emit_prefixed_output(
-    console: Console, label: str, stdout: str, stderr: str
-) -> None:
-    for stream_name, text in (("stdout", stdout), ("stderr", stderr)):
-        for line in text.splitlines():
-            console.print(
-                f"[{label}:{stream_name}] {line}",
-                markup=False,
-                highlight=False,
-            )
+class ReviewConsoleObserver(NullReviewObserver):
+    """Write shared review events to a Rich console."""
+
+    def __init__(self, console: Console) -> None:
+        self._console = console
+
+    def on_prepare_line(self, label: str, stream_name: str, line: str) -> None:
+        self._print_prefixed(label, stream_name, line)
+
+    def on_servers_ready(self, running: Sequence[RunningReviewServer]) -> None:
+        print_review_summary(self._console, running)
+
+    def on_server_line(
+        self, entry: RunningReviewServer, stream_name: str, line: str
+    ) -> None:
+        self._print_prefixed(entry.launch.name, stream_name, line)
+
+    def on_warning(self, message: str) -> None:
+        self._console.print(f"[warn]{message}[/warn]")
+
+    def _print_prefixed(self, label: str, stream_name: str, line: str) -> None:
+        self._console.print(
+            f"[{label}:{stream_name}] {line}",
+            markup=False,
+            highlight=False,
+        )

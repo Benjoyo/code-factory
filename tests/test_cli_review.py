@@ -28,25 +28,25 @@ def test_cli_help_lists_review() -> None:
 def test_review_command_resolves_workflow_and_keep(tmp_path: Path, monkeypatch) -> None:
     workflow = tmp_path / "WORKFLOW.md"
     workflow.write_text("prompt\n", encoding="utf-8")
-    calls: list[tuple[str, list[str], bool]] = []
+    calls: list[tuple[str, str, bool]] = []
 
     async def fake_run_review_session(
         workflow_path: str,
-        targets: list[str],
+        target: str,
         *,
         keep: bool,
         console=None,
     ) -> None:
-        calls.append((workflow_path, targets, keep))
+        calls.append((workflow_path, target, keep))
 
     monkeypatch.setattr("code_factory.cli.run_review_session", fake_run_review_session)
     result = runner.invoke(
         typer.main.get_command(app),
-        ["review", "main", "ENG-1", "--workflow", str(workflow), "--keep"],
+        ["review", "main", "--workflow", str(workflow), "--keep"],
     )
     assert result.exit_code == 0
     assert calls == [
-        (build_cli_config(workflow, None, None).workflow_path, ["main", "ENG-1"], True)
+        (build_cli_config(workflow, None, None).workflow_path, "main", True)
     ]
 
 
@@ -56,7 +56,7 @@ def test_review_command_surfaces_review_errors(tmp_path: Path, monkeypatch) -> N
 
     async def fake_run_review_session(
         workflow_path: str,
-        targets: list[str],
+        target: str,
         *,
         keep: bool,
         console=None,

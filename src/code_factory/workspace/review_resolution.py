@@ -30,43 +30,34 @@ class ShellCapture(Protocol):
     ) -> Awaitable[ShellResult]: ...
 
 
-async def resolve_review_targets(
+async def resolve_review_target(
     repo_root: str,
     settings: Settings,
-    targets: list[str],
+    target: str,
     *,
     tracker_factory: Callable[..., Tracker] = build_tracker,
     shell_capture: ShellCapture = capture_shell,
-) -> list[ReviewTarget]:
-    normalized_targets = dedupe_review_targets(targets)
+) -> ReviewTarget:
+    identifier = target.strip()
+    if not identifier:
+        raise ReviewError("Review target can't be blank.")
     tracker = tracker_factory(settings)
     try:
-        if any(target.lower() != "main" for target in normalized_targets):
-            await ensure_github_ready(repo_root, shell_capture=shell_capture)
-        resolved: list[ReviewTarget] = []
-        for target in normalized_targets:
-            if target.lower() == "main":
-                resolved.append(
-                    ReviewTarget(
-                        target="main",
-                        kind="main",
-                        ticket_identifier=None,
-                        ticket_number=None,
-                        ref=await resolve_main_ref(
-                            repo_root, shell_capture=shell_capture
-                        ),
-                    )
-                )
-                continue
-            resolved.append(
-                await resolve_ticket_target(
-                    tracker,
-                    repo_root,
-                    target,
-                    shell_capture=shell_capture,
-                )
+        if identifier.lower() == "main":
+            return ReviewTarget(
+                target="main",
+                kind="main",
+                ticket_identifier=None,
+                ticket_number=None,
+                ref=await resolve_main_ref(repo_root, shell_capture=shell_capture),
             )
-        return resolved
+        await ensure_github_ready(repo_root, shell_capture=shell_capture)
+        return await resolve_ticket_target(
+            tracker,
+            repo_root,
+            identifier,
+            shell_capture=shell_capture,
+        )
     finally:
         close = cast(
             Callable[[], Awaitable[object]] | None, getattr(tracker, "close", None)
@@ -91,21 +82,6 @@ async def resolve_repo_root(
             f"Workflow root is not inside a git repository: {workflow_dir}"
         )
     return result.stdout.strip()
-
-
-def dedupe_review_targets(targets: list[str]) -> list[str]:
-    seen: set[str] = set()
-    deduped: list[str] = []
-    for raw_target in targets:
-        target = raw_target.strip()
-        if not target:
-            continue
-        key = "main" if target.lower() == "main" else target
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append("main" if target.lower() == "main" else target)
-    return deduped
 
 
 async def ensure_github_ready(

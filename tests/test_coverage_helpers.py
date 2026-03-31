@@ -53,7 +53,7 @@ from code_factory.workflow.loader import finalize_prompt_section
 from code_factory.workflow.models import WorkflowSnapshot
 from code_factory.workflow.review_profiles import parse_review_types
 from code_factory.workspace.review_models import ReviewTarget, RunningReviewServer
-from code_factory.workspace.review_output import emit_prefixed_output
+from code_factory.workspace.review_output import ReviewConsoleObserver
 from code_factory.workspace.review_resolution import (
     ensure_github_ready,
     fetch_pull_request,
@@ -250,7 +250,9 @@ def test_review_template_and_emit_output_edges(monkeypatch: pytest.MonkeyPatch) 
 
     console_io = io.StringIO()
     console = Console(file=console_io, force_terminal=False, color_system=None)
-    emit_prefixed_output(console, "label", "out\n", "err\n")
+    observer = ReviewConsoleObserver(console)
+    observer.on_prepare_line("label", "stdout", "out")
+    observer.on_prepare_line("label", "stderr", "err")
     rendered = console_io.getvalue()
     assert "[label:stdout] out" in rendered
     assert "[label:stderr] err" in rendered
@@ -357,9 +359,9 @@ async def test_review_runner_edge_paths(
 ) -> None:
     workflow = write_workflow_file(tmp_path / "WORKFLOW.md")
     with pytest.raises(ReviewError, match="review.servers"):
-        from code_factory.workspace.review_runner import run_review_session
+        from code_factory.workspace.review_session import run_review_session
 
-        await run_review_session(str(workflow), ["main"], keep=False)
+        await run_review_session(str(workflow), "main", keep=False)
 
     assert _review_temp_root(None, "/repo/project") == str(
         Path(cast(str, _review_temp_root(None, "/repo/project")))
@@ -417,7 +419,7 @@ async def test_review_runner_edge_paths(
         head_sha="sha",
     )
     with pytest.raises(ReviewError, match="exited with status 2"):
-        await _wait_for_exit([cast(Any, failing_entry)])
+        await _wait_for_exit([cast(Any, failing_entry)], stop_event=None)
 
     console_io = io.StringIO()
     console = Console(file=console_io, force_terminal=False, color_system=None)
@@ -434,7 +436,7 @@ async def test_review_runner_edge_paths(
         "code_factory.workspace.review_runner.wait_for_http_ready",
         lambda _url: asyncio.sleep(0, result=False),
     )
-    await _open_review_urls(console, [cast(Any, browser_entry)])
+    await _open_review_urls(ReviewConsoleObserver(console), [cast(Any, browser_entry)])
     assert "not opened automatically" in console_io.getvalue()
 
     console_io = io.StringIO()
@@ -444,9 +446,9 @@ async def test_review_runner_edge_paths(
         lambda _url: asyncio.sleep(0, result=True),
     )
     monkeypatch.setattr(
-        "code_factory.workspace.review_runner.webbrowser.open", lambda _url: False
+        "code_factory.workspace.review_runner._open_browser", lambda _url: False
     )
-    await _open_review_urls(console, [cast(Any, browser_entry)])
+    await _open_review_urls(ReviewConsoleObserver(console), [cast(Any, browser_entry)])
     assert "Failed to open browser" in console_io.getvalue()
 
     task = asyncio.create_task(asyncio.sleep(10))

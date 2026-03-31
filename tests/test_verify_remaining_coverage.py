@@ -36,11 +36,11 @@ from code_factory.workspace.repository import (
     upstream_name,
 )
 from code_factory.workspace.review_models import ReviewTarget
+from code_factory.workspace.review_output import ReviewConsoleObserver
 from code_factory.workspace.review_resolution import (
-    dedupe_review_targets,
     fetch_pull_request,
     resolve_repo_root,
-    resolve_review_targets,
+    resolve_review_target,
     trailing_ticket_number,
 )
 from code_factory.workspace.review_runner import (
@@ -51,8 +51,8 @@ from code_factory.workspace.review_runner import (
     _log_tasks,
     _stream_output,
     _wait_for_exit,
-    run_review_session,
 )
+from code_factory.workspace.review_session import run_review_session
 from code_factory.workspace.review_shell import ShellResult
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
@@ -233,19 +233,23 @@ async def test_remaining_repository_and_review_resolution_branches(
             return ShellResult(0, "origin/main\n", "")
         raise AssertionError(command)
 
-    targets = await resolve_review_targets(
+    target = await resolve_review_target(
         "/repo",
         workflow_settings,
-        [" ", "main", "MAIN"],
+        "main",
         tracker_factory=lambda _settings: cast(Any, FakeTracker()),
         shell_capture=review_shell,
     )
-    assert [target.target for target in targets] == ["main"]
+    assert target.target == "main"
     assert closed == ["closed"]
-    assert dedupe_review_targets([" ", "main", "MAIN", "ENG-1", "ENG-1"]) == [
-        "main",
-        "ENG-1",
-    ]
+    with pytest.raises(ReviewError, match="can't be blank"):
+        await resolve_review_target(
+            "/repo",
+            workflow_settings,
+            " ",
+            tracker_factory=lambda _settings: cast(Any, FakeTracker()),
+            shell_capture=review_shell,
+        )
 
     assert (
         await resolve_repo_root(
@@ -351,37 +355,41 @@ async def test_remaining_runtime_and_review_runner_branches(
         tmp_path / "REVIEW_RUN.md",
         review={"servers": [{"name": "web", "command": "run web"}]},
     )
-    runner_calls: list[tuple[list[ReviewTarget], tuple[Any, ...]]] = []
+    runner_calls: list[tuple[ReviewTarget, tuple[Any, ...]]] = []
 
     class FakeRunner:
         def __init__(self, **kwargs: Any) -> None:
             self.kwargs = kwargs
 
-        async def run(self, targets: list[ReviewTarget], servers) -> None:
-            runner_calls.append((targets, tuple(servers)))
+        async def run(self, target: ReviewTarget, servers, **_kwargs: Any) -> None:
+            runner_calls.append((target, tuple(servers)))
 
     monkeypatch.setattr(
-        "code_factory.workspace.review_runner.resolve_repo_root",
+        "code_factory.workspace.review_session.resolve_repo_root",
         lambda _workflow_path: asyncio.sleep(0, result="/repo"),
     )
     monkeypatch.setattr(
-        "code_factory.workspace.review_runner.resolve_review_targets",
-        lambda repo_root, settings, targets: asyncio.sleep(
+        "code_factory.workspace.review_session.resolve_review_target",
+        lambda repo_root, settings, target: asyncio.sleep(
             0,
-            result=[
-                ReviewTarget(
-                    target="main",
-                    kind="main",
-                    ticket_identifier=None,
-                    ticket_number=None,
-                    ref="origin/main",
-                )
-            ],
+            result=ReviewTarget(
+                target="main",
+                kind="main",
+                ticket_identifier=None,
+                ticket_number=None,
+                ref="origin/main",
+            ),
         ),
     )
-    monkeypatch.setattr("code_factory.workspace.review_runner.ReviewRunner", FakeRunner)
-    await run_review_session(str(workflow), ["main"], keep=True)
-    assert runner_calls and runner_calls[0][0][0].target == "main"
+    monkeypatch.setattr(
+        "code_factory.workspace.review_session.ReviewRunner", FakeRunner
+    )
+    monkeypatch.setattr(
+        "code_factory.workspace.review_session._interactive_review_supported",
+        lambda *_args, **_kwargs: False,
+    )
+    await run_review_session(str(workflow), "main", keep=True)
+    assert runner_calls and runner_calls[0][0].target == "main"
 
     console, output = _review_console()
     review_runner = ReviewRunner(
@@ -389,7 +397,6 @@ async def test_remaining_runtime_and_review_runner_branches(
         worktree_root="/tmp/review",
         keep=False,
         prepare_command="prepare",
-        console=console,
     )
     monkeypatch.setattr(
         "code_factory.workspace.review_runner.capture_shell",
@@ -399,10 +406,13 @@ async def test_remaining_runtime_and_review_runner_branches(
     )
     with pytest.raises(ReviewError, match="Prepare command failed"):
         await review_runner._run_prepare(
+            ReviewConsoleObserver(console),
             ReviewTarget("ENG-1", "ticket", "ENG-1", 1, "sha"),
             "/tmp/review/eng-1",
         )
-    await review_runner._cleanup_worktrees(["/tmp/review/eng-1"])
+    await review_runner._cleanup_worktree(
+        ReviewConsoleObserver(console), "/tmp/review/eng-1"
+    )
     assert "Failed to remove review worktree" in output.getvalue()
 
     async def invalid_reference_capture(
@@ -440,7 +450,7 @@ async def test_remaining_runtime_and_review_runner_branches(
             process=SimpleNamespace(process=SimpleNamespace(stdout=None, stderr=None)),
         ),
     )
-    assert _log_tasks(console, empty_entry) == []
+    assert _log_tasks(empty_entry, ReviewConsoleObserver(console)) == []
 
     class FakeStream:
         def __init__(self) -> None:
@@ -450,7 +460,15 @@ async def test_remaining_runtime_and_review_runner_branches(
             return self._lines.pop(0)
 
     stream_console, stream_output = _review_console()
-    await _stream_output(stream_console, "ENG-1:web", FakeStream(), "stdout")
+    entry = cast(
+        Any,
+        SimpleNamespace(
+            launch=SimpleNamespace(name="web"),
+        ),
+    )
+    await _stream_output(
+        ReviewConsoleObserver(stream_console), entry, FakeStream(), "stdout"
+    )
     assert "hello" in stream_output.getvalue()
 
     async def fast_wait() -> int:
@@ -479,7 +497,7 @@ async def test_remaining_runtime_and_review_runner_branches(
         ),
     ]
     with pytest.raises(ReviewError, match="ENG-1:web exited."):
-        await _wait_for_exit(running)
+        await _wait_for_exit(running, stop_event=None)
     await _cancel_log_tasks([])
 
 

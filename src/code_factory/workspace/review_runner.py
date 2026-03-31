@@ -1,4 +1,4 @@
-"""Foreground operator workflow for review worktrees and dev servers."""
+"""Shared backend orchestration for the operator review flow."""
 
 from __future__ import annotations
 
@@ -7,20 +7,15 @@ import contextlib
 import os
 import shlex
 import tempfile
-import webbrowser
 from pathlib import Path
 
-from rich.console import Console
-
-from ..config import parse_settings
 from ..errors import ReviewError
 from ..runtime.subprocess import ProcessTree
-from ..workflow.loader import load_workflow
 from .paths import canonicalize, safe_identifier
 from .review_browser import wait_for_http_ready
 from .review_models import ReviewTarget, RunningReviewServer
-from .review_output import emit_prefixed_output, print_review_summary
-from .review_resolution import resolve_repo_root, resolve_review_targets
+from .review_observer import NullReviewObserver, ReviewObserver
+from .review_ports import ensure_review_port_available
 from .review_shell import ShellResult, capture_shell
 from .review_templates import (
     build_review_environment,
@@ -28,30 +23,6 @@ from .review_templates import (
     render_review_template,
     review_context,
 )
-
-
-async def run_review_session(
-    workflow_path: str,
-    targets: list[str],
-    *,
-    keep: bool,
-    console: Console | None = None,
-) -> None:
-    active_console = console or Console()
-    settings = parse_settings(load_workflow(workflow_path).config)
-    if not settings.review.servers:
-        raise ReviewError("`review.servers` must be configured in WORKFLOW.md.")
-    repo_root = await resolve_repo_root(workflow_path)
-    resolved_targets = await resolve_review_targets(repo_root, settings, targets)
-    worktree_root = _review_temp_root(settings.review.temp_root, repo_root)
-    runner = ReviewRunner(
-        repo_root=repo_root,
-        worktree_root=worktree_root,
-        keep=keep,
-        prepare_command=settings.review.prepare,
-        console=active_console,
-    )
-    await runner.run(resolved_targets, settings.review.servers)
 
 
 class ReviewRunner:
@@ -62,53 +33,44 @@ class ReviewRunner:
         worktree_root: str,
         keep: bool,
         prepare_command: str | None,
-        console: Console,
     ) -> None:
         self._repo_root = repo_root
         self._worktree_root = worktree_root
         self._keep = keep
         self._prepare_command = prepare_command
-        self._console = console
 
-    async def run(self, targets: list[ReviewTarget], servers) -> None:
+    async def run(
+        self,
+        target: ReviewTarget,
+        servers,
+        *,
+        observer: ReviewObserver | None = None,
+        stop_event: asyncio.Event | None = None,
+    ) -> None:
+        active_observer = observer or NullReviewObserver()
         running: list[RunningReviewServer] = []
-        created_worktrees: list[str] = []
         log_tasks: list[asyncio.Task[None]] = []
+        worktree = _worktree_path(self._worktree_root, target.target)
         try:
-            for target in targets:
-                worktree = _worktree_path(self._worktree_root, target.target)
-                await _create_worktree(self._repo_root, worktree, target)
-                created_worktrees.append(worktree)
-                head_sha = await _head_sha(worktree)
-                await self._run_prepare(target, worktree)
-                for server in servers:
-                    launch = build_review_launch(target, worktree, server)
-                    environment = build_review_environment(
-                        target, worktree=worktree, port=launch.port
-                    )
-                    process = await ProcessTree.spawn_shell(
-                        launch.command,
-                        cwd=worktree,
-                        env=environment,
-                    )
-                    entry = RunningReviewServer(
-                        target=target,
-                        launch=launch,
-                        worktree=worktree,
-                        process=process,
-                        head_sha=head_sha,
-                    )
-                    running.append(entry)
-                    log_tasks.extend(_log_tasks(self._console, entry))
-            print_review_summary(self._console, running)
-            await _open_review_urls(self._console, running)
-            await _wait_for_exit(running)
+            await _create_worktree(self._repo_root, worktree, target)
+            head_sha = await _head_sha(worktree)
+            await self._run_prepare(active_observer, target, worktree)
+            for server in servers:
+                entry = await _start_server(target, worktree, head_sha, server)
+                running.append(entry)
+                active_observer.on_server_started(entry)
+                log_tasks.extend(_log_tasks(entry, active_observer))
+            active_observer.on_servers_ready(running)
+            await _open_review_urls(active_observer, running)
+            await _wait_for_exit(running, stop_event=stop_event)
         finally:
             await _stop_servers(running)
             await _cancel_log_tasks(log_tasks)
-            await self._cleanup_worktrees(created_worktrees)
+            await self._cleanup_worktree(active_observer, worktree)
 
-    async def _run_prepare(self, target: ReviewTarget, worktree: str) -> None:
+    async def _run_prepare(
+        self, observer: ReviewObserver, target: ReviewTarget, worktree: str
+    ) -> None:
         if self._prepare_command is None:
             return
         command = render_review_template(
@@ -120,27 +82,24 @@ class ReviewRunner:
             cwd=worktree,
             env=build_review_environment(target, worktree=worktree, port=None),
         )
-        emit_prefixed_output(
-            self._console, f"{target.target}:prepare", result.stdout, result.stderr
-        )
+        _emit_output(observer, "prepare", result)
         if result.status != 0:
             raise ReviewError(
                 f"Prepare command failed for {target.target}: {result.output or result.status}"
             )
 
-    async def _cleanup_worktrees(self, worktrees: list[str]) -> None:
+    async def _cleanup_worktree(self, observer: ReviewObserver, worktree: str) -> None:
         if self._keep:
             return
-        for worktree in reversed(worktrees):
-            result = await capture_shell(
-                f"git worktree remove --force {shlex.quote(worktree)}",
-                cwd=self._repo_root,
+        result = await capture_shell(
+            f"git worktree remove --force {shlex.quote(worktree)}",
+            cwd=self._repo_root,
+        )
+        if result.status != 0:
+            observer.on_warning(
+                f"Failed to remove review worktree {worktree}: "
+                f"{result.output or result.status}"
             )
-            if result.status != 0:
-                self._console.print(
-                    f"[warn]Failed to remove review worktree {worktree}: "
-                    f"{result.output or result.status}[/warn]"
-                )
 
 
 def _review_temp_root(configured_root: str | None, repo_root: str) -> str:
@@ -150,6 +109,22 @@ def _review_temp_root(configured_root: str | None, repo_root: str) -> str:
 
 def _worktree_path(root: str, target: str) -> str:
     return canonicalize(os.path.join(root, safe_identifier(target)))
+
+
+async def _start_server(target: ReviewTarget, worktree: str, head_sha: str, server):
+    launch = build_review_launch(target, worktree, server)
+    ensure_review_port_available(target, launch)
+    environment = build_review_environment(target, worktree=worktree, port=launch.port)
+    process = await ProcessTree.spawn_shell(
+        launch.command, cwd=worktree, env=environment
+    )
+    return RunningReviewServer(
+        target=target,
+        launch=launch,
+        worktree=worktree,
+        process=process,
+        head_sha=head_sha,
+    )
 
 
 async def _create_worktree(repo_root: str, worktree: str, target: ReviewTarget) -> None:
@@ -189,26 +164,33 @@ async def _head_sha(worktree: str) -> str:
     return result.stdout.strip()
 
 
+def _emit_output(observer: ReviewObserver, label: str, result: ShellResult) -> None:
+    for stream_name, text in (("stdout", result.stdout), ("stderr", result.stderr)):
+        for line in text.splitlines():
+            observer.on_prepare_line(label, stream_name, line)
+
+
 def _log_tasks(
-    console: Console, entry: RunningReviewServer
+    entry: RunningReviewServer, observer: ReviewObserver
 ) -> list[asyncio.Task[None]]:
-    label = f"{entry.target.target}:{entry.launch.name}"
-    stdout = entry.process.process.stdout
-    stderr = entry.process.process.stderr
     tasks: list[asyncio.Task[None]] = []
-    if stdout is not None:
+    if entry.process.process.stdout is not None:
         tasks.append(
-            asyncio.create_task(_stream_output(console, label, stdout, "stdout"))
+            asyncio.create_task(
+                _stream_output(observer, entry, entry.process.process.stdout, "stdout")
+            )
         )
-    if stderr is not None:
+    if entry.process.process.stderr is not None:
         tasks.append(
-            asyncio.create_task(_stream_output(console, label, stderr, "stderr"))
+            asyncio.create_task(
+                _stream_output(observer, entry, entry.process.process.stderr, "stderr")
+            )
         )
     return tasks
 
 
 async def _stream_output(
-    console: Console, label: str, stream, stream_name: str
+    observer: ReviewObserver, entry: RunningReviewServer, stream, stream_name: str
 ) -> None:
     while True:
         line = await stream.readline()
@@ -216,19 +198,29 @@ async def _stream_output(
             return
         text = line.decode("utf-8", errors="replace").rstrip()
         if text:
-            console.print(
-                f"[{label}:{stream_name}] {text}", markup=False, highlight=False
-            )
+            observer.on_server_line(entry, stream_name, text)
 
 
-async def _wait_for_exit(running: list[RunningReviewServer]) -> None:
-    tasks = {asyncio.create_task(entry.process.wait()): entry for entry in running}
-    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+async def _wait_for_exit(
+    running: list[RunningReviewServer], *, stop_event: asyncio.Event | None
+) -> None:
+    process_tasks = {
+        asyncio.create_task(entry.process.wait()): entry for entry in running
+    }
+    stop_task = (
+        asyncio.create_task(stop_event.wait()) if stop_event is not None else None
+    )
+    wait_on = set(process_tasks)
+    if stop_task is not None:
+        wait_on.add(stop_task)
+    done, pending = await asyncio.wait(wait_on, return_when=asyncio.FIRST_COMPLETED)
     for task in pending:
         task.cancel()
+    if stop_task is not None and stop_task in done and stop_event is not None:
+        return
     finished = next(iter(done))
     status = finished.result()
-    entry = tasks[finished]
+    entry = process_tasks[finished]
     if status != 0:
         raise ReviewError(
             f"{entry.target.target}:{entry.launch.name} exited with status {status}"
@@ -250,7 +242,7 @@ async def _cancel_log_tasks(tasks: list[asyncio.Task[None]]) -> None:
 
 
 async def _open_review_urls(
-    console: Console, running: list[RunningReviewServer]
+    observer: ReviewObserver, running: list[RunningReviewServer]
 ) -> None:
     for entry in running:
         url = entry.launch.url
@@ -258,14 +250,20 @@ async def _open_review_urls(
             continue
         ready = await wait_for_http_ready(url)
         if not ready:
-            console.print(
-                f"[warn]Timed out waiting for {entry.target.target}:{entry.launch.name} "
-                f"to respond at {url}; browser was not opened automatically.[/warn]"
+            observer.on_warning(
+                f"Timed out waiting for {entry.target.target}:{entry.launch.name} "
+                f"to respond at {url}; browser was not opened automatically."
             )
             continue
-        opened = await asyncio.to_thread(webbrowser.open, url)
+        opened = await asyncio.to_thread(_open_browser, url)
         if not opened:
-            console.print(
-                f"[warn]Failed to open browser for {entry.target.target}:{entry.launch.name} "
-                f"({url})[/warn]"
+            observer.on_warning(
+                f"Failed to open browser for {entry.target.target}:{entry.launch.name} "
+                f"({url})"
             )
+
+
+def _open_browser(url: str) -> bool:
+    import webbrowser
+
+    return webbrowser.open(url)

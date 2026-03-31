@@ -26,7 +26,7 @@ description:
 ## Steps
 
 1. Identify current branch and confirm remote state.
-2. Run local validation (`make -C elixir all`) before pushing.
+2. Run local validation (`make verify`) before pushing.
 3. Push branch to `origin` with upstream tracking if needed, using whatever
    remote URL is already configured.
 4. If push is not clean/rejected:
@@ -46,16 +46,14 @@ description:
    - Write a proper PR title that clearly describes the change outcome
    - For branch updates, explicitly reconsider whether current PR title still
      matches the latest scope; update it if it no longer does.
-6. Write/update PR body explicitly using `.github/pull_request_template.md`:
-   - Fill every section with concrete content for this change.
-   - Replace all placeholder comments (`<!-- ... -->`).
-   - Keep bullets/checkboxes where template expects them.
+6. Write/update PR body explicitly:
+   - Summarize the behavior change, not just the files touched.
+   - Include the validation you actually ran.
    - If PR already exists, refresh body content so it reflects the total PR
      scope (all intended work on the branch), not just the newest commits,
      including newly added work, removed work, or changed approach.
    - Do not reuse stale description text from earlier iterations.
-7. Validate PR body with `mix pr_body.check` and fix all reported issues.
-8. Reply with the PR URL from `gh pr view`.
+7. Reply with the PR URL from `gh pr view`.
 
 ## Commands
 
@@ -63,8 +61,8 @@ description:
 # Identify branch
 branch=$(git branch --show-current)
 
-# Minimal validation gate
-make -C elixir all
+# Local validation gate
+make verify
 
 # Initial push: respect the current origin remote.
 git push -u origin HEAD
@@ -88,22 +86,24 @@ fi
 
 # Write a clear, human-friendly title that summarizes the shipped change.
 pr_title="<clear PR title written for this change>"
+
+# Write/edit a fresh PR body that matches the full branch scope.
+tmp_pr_body=$(mktemp)
+cat > "$tmp_pr_body" <<'EOF'
+## Summary
+- <behavior change>
+
+## Validation
+- `make verify`
+EOF
+
 if [ -z "$pr_state" ]; then
-  gh pr create --title "$pr_title"
+  gh pr create --title "$pr_title" --body-file "$tmp_pr_body"
 else
-  # Reconsider title on every branch update; edit if scope shifted.
-  gh pr edit --title "$pr_title"
+  # Reconsider title/body on every branch update; edit if scope shifted.
+  gh pr edit --title "$pr_title" --body-file "$tmp_pr_body"
 fi
 
-# Write/edit PR body to match .github/pull_request_template.md before validation.
-# Example workflow:
-# 1) open the template and draft body content for this PR
-# 2) gh pr edit --body-file /tmp/pr_body.md
-# 3) for branch updates, re-check that title/body still match current diff
-
-tmp_pr_body=$(mktemp)
-gh pr view --json body -q .body > "$tmp_pr_body"
-(cd elixir && mix pr_body.check --file "$tmp_pr_body")
 rm -f "$tmp_pr_body"
 
 # Show PR URL for the reply
@@ -113,7 +113,7 @@ gh pr view --json url -q .url
 ## Notes
 
 - Do not use `--force`; only use `--force-with-lease` as the last resort.
-- The current branch is expected to be the orchestrator-prepared issue branch.
+- The current branch is expected to be the CodeFactory-prepared issue branch.
   Its name may come from tracker metadata or a harness-generated fallback.
 - Distinguish sync problems from remote auth/permission problems:
   - Use the `pull` skill for non-fast-forward or stale-branch issues.

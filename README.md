@@ -73,7 +73,7 @@ Top-level commands:
 
 ```bash
 cf init [--force]
-cf review TARGET... [--workflow WORKFLOW] [--keep]
+cf review TARGET [--workflow WORKFLOW] [--keep]
 cf serve [OPTIONS] [WORKFLOW]
 cf steer ISSUE MESSAGE [--workflow WORKFLOW] [--port PORT]
 ```
@@ -102,14 +102,24 @@ cf steer ISSUE MESSAGE [--workflow WORKFLOW] [--port PORT]
 
 `cf review`
 
-- `TARGET...`
-  One or more ticket identifiers and/or the reserved keyword `main`.
+- `TARGET`
+  One ticket identifier or the reserved keyword `main`.
 - `--workflow <path>`
   Workflow path used to load `review:` config and locate the repository root. Defaults to `./WORKFLOW.md`.
 - `--keep`
   Keep created review worktrees after the command exits instead of removing them automatically.
 
-`cf review` is an operator-side helper for `Human Review`: it resolves each ticket to the exact open GitHub PR head commit, creates a temporary detached worktree, optionally runs `review.prepare`, and launches the configured dev servers side by side. Server commands can derive stable per-ticket ports from `base_port + ticket_number`.
+`cf review` is an operator-side helper for `Human Review`: it resolves the single requested target to the exact review ref, creates a temporary detached worktree, optionally runs `review.prepare`, and launches the configured dev servers side by side inside a simple Textual TUI.
+
+The TUI has:
+
+- an overview tab with the current review table plus an `Open Browser` button for the selected server row
+- one log tab per configured review server
+- a final prepare tab that shows `review.prepare` output or an empty-state message when no prepare command is configured
+
+Outside an interactive terminal, `cf review` falls back to the existing plain console output.
+
+Server commands can derive stable per-ticket ports from `base_port + ticket_number`.
 
 If a server defines `url`, Code Factory prints it in the summary table. Browser
 launch defaults to enabled when `url` is present and can be disabled per server

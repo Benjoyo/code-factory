@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import httpx
@@ -17,12 +18,19 @@ from code_factory.workflow.loader import load_workflow
 from code_factory.workspace.paths import canonicalize
 from code_factory.workspace.review_browser import wait_for_http_ready
 from code_factory.workspace.review_models import ReviewTarget
+from code_factory.workspace.review_output import ReviewConsoleObserver
+from code_factory.workspace.review_ports import (
+    ensure_review_port_available,
+    review_host,
+)
 from code_factory.workspace.review_resolution import (
-    dedupe_review_targets,
-    resolve_review_targets,
+    resolve_review_target,
     trailing_ticket_number,
 )
-from code_factory.workspace.review_runner import ReviewRunner, _create_worktree
+from code_factory.workspace.review_runner import (
+    ReviewRunner,
+    _create_worktree,
+)
 from code_factory.workspace.review_shell import ShellResult
 from code_factory.workspace.review_templates import (
     build_review_environment,
@@ -63,7 +71,7 @@ def test_review_config_parses_and_validates(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_review_resolution_prefers_pr_head_and_dedupes_targets() -> None:
+async def test_review_resolution_prefers_pr_head() -> None:
     tracker = MemoryTracker(
         [make_issue(identifier="ENG-12", branch_name="codex/eng-12")]
     )
@@ -98,18 +106,16 @@ async def test_review_resolution_prefers_pr_head_and_dedupes_targets() -> None:
             },
         }
     )
-    resolved = await resolve_review_targets(
+    resolved = await resolve_review_target(
         "/repo",
         settings,
-        ["main", "ENG-12", "main", "ENG-12"],
+        "ENG-12",
         tracker_factory=lambda _settings: tracker,
         shell_capture=fake_capture,
     )
-    assert dedupe_review_targets(["main", "ENG-12", "main"]) == ["main", "ENG-12"]
     assert trailing_ticket_number("ENG-12") == 12
-    assert resolved[0].ref == "origin/main"
-    assert resolved[1].ref == "abc123"
-    assert resolved[1].pr_url == "https://example/pr/12"
+    assert resolved.ref == "abc123"
+    assert resolved.pr_url == "https://example/pr/12"
 
 
 @pytest.mark.asyncio
@@ -137,13 +143,50 @@ async def test_review_resolution_main_fetch_failure_is_fatal() -> None:
         }
     )
     with pytest.raises(ReviewError, match="Failed to fetch origin"):
-        await resolve_review_targets(
+        await resolve_review_target(
             "/repo",
             settings,
-            ["main"],
+            "main",
             tracker_factory=lambda _settings: tracker,
             shell_capture=fake_capture,
         )
+
+
+@pytest.mark.asyncio
+async def test_review_resolution_main_target_uses_origin_head() -> None:
+    tracker = MemoryTracker([])
+
+    async def fake_capture(
+        command: str,
+        *,
+        cwd: str,
+        env: dict[str, str] | None = None,
+    ) -> ShellResult:
+        if command == "git fetch origin":
+            return ShellResult(0, "", "")
+        if command.startswith("git symbolic-ref"):
+            return ShellResult(0, "origin/main\n", "")
+        raise AssertionError(command)
+
+    settings = parse_settings(
+        {
+            "failure_state": "Human Review",
+            "tracker": {"kind": "memory"},
+            "states": {"In Progress": {"prompt": "default"}},
+            "review": {
+                "servers": [{"name": "web", "command": "pnpm dev", "base_port": 3000}]
+            },
+        }
+    )
+    resolved = await resolve_review_target(
+        "/repo",
+        settings,
+        "main",
+        tracker_factory=lambda _settings: tracker,
+        shell_capture=fake_capture,
+    )
+    assert resolved.target == "main"
+    assert resolved.ref == "origin/main"
 
 
 def test_review_template_environment_and_ports() -> None:
@@ -278,7 +321,7 @@ async def test_review_runner_runs_prepare_and_cleans_up(monkeypatch) -> None:
         classmethod(fake_spawn_shell),
     )
     monkeypatch.setattr(
-        "code_factory.workspace.review_runner.webbrowser.open",
+        "code_factory.workspace.review_runner._open_browser",
         lambda url: opened_urls.append(url) or True,
     )
     monkeypatch.setattr(
@@ -290,20 +333,17 @@ async def test_review_runner_runs_prepare_and_cleans_up(monkeypatch) -> None:
         worktree_root="/tmp/review-root",
         keep=False,
         prepare_command="echo prep",
-        console=console,
     )
     with pytest.raises(ReviewError, match="exited"):
         await runner.run(
-            [
-                ReviewTarget(
-                    target="ENG-12",
-                    kind="ticket",
-                    ticket_identifier="ENG-12",
-                    ticket_number=12,
-                    ref="abc123",
-                    pr_url="https://example/pr/12",
-                )
-            ],
+            ReviewTarget(
+                target="ENG-12",
+                kind="ticket",
+                ticket_identifier="ENG-12",
+                ticket_number=12,
+                ref="abc123",
+                pr_url="https://example/pr/12",
+            ),
             (
                 ReviewServerSettings(
                     name="web",
@@ -312,6 +352,7 @@ async def test_review_runner_runs_prepare_and_cleans_up(monkeypatch) -> None:
                     url="http://127.0.0.1:{{ review.port }}",
                 ),
             ),
+            observer=ReviewConsoleObserver(console),
         )
     worktree = canonicalize("/tmp/review-root/ENG-12")
     assert ("create", worktree) in calls
@@ -377,7 +418,7 @@ async def test_review_runner_skips_browser_when_disabled(monkeypatch) -> None:
         classmethod(fake_spawn_shell),
     )
     monkeypatch.setattr(
-        "code_factory.workspace.review_runner.webbrowser.open",
+        "code_factory.workspace.review_runner._open_browser",
         lambda url: opened_urls.append(url) or True,
     )
     monkeypatch.setattr(
@@ -389,19 +430,16 @@ async def test_review_runner_skips_browser_when_disabled(monkeypatch) -> None:
         worktree_root="/tmp/review-root",
         keep=True,
         prepare_command=None,
-        console=Console(file=io.StringIO(), force_terminal=False, color_system=None),
     )
     with pytest.raises(ReviewError, match="exited"):
         await runner.run(
-            [
-                ReviewTarget(
-                    target="ENG-12",
-                    kind="ticket",
-                    ticket_identifier="ENG-12",
-                    ticket_number=12,
-                    ref="abc123",
-                )
-            ],
+            ReviewTarget(
+                target="ENG-12",
+                kind="ticket",
+                ticket_identifier="ENG-12",
+                ticket_number=12,
+                ref="abc123",
+            ),
             (
                 ReviewServerSettings(
                     name="web",
@@ -413,6 +451,69 @@ async def test_review_runner_skips_browser_when_disabled(monkeypatch) -> None:
             ),
         )
     assert opened_urls == []
+
+
+@pytest.mark.asyncio
+async def test_review_runner_fails_fast_when_port_is_in_use(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "code_factory.workspace.review_runner._create_worktree",
+        lambda *_args, **_kwargs: asyncio.sleep(0),
+    )
+    monkeypatch.setattr(
+        "code_factory.workspace.review_runner._head_sha",
+        lambda _worktree: asyncio.sleep(0, result="abc123"),
+    )
+
+    monkeypatch.setattr(
+        "code_factory.workspace.review_ports.review_port_in_use",
+        lambda host, port: host == "127.0.0.1" and port == 3000,
+    )
+    monkeypatch.setattr(
+        "code_factory.workspace.review_ports.review_port_owner_details",
+        lambda port: "Occupying PID: 66665 (`python -m uvicorn`).",
+    )
+    monkeypatch.setattr(
+        "code_factory.workspace.review_runner.ProcessTree.spawn_shell",
+        classmethod(lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError())),
+    )
+    runner = ReviewRunner(
+        repo_root="/repo",
+        worktree_root="/tmp/review-root",
+        keep=True,
+        prepare_command=None,
+    )
+    with pytest.raises(
+        ReviewError,
+        match="port 3000 .* already in use\\. Occupying PID: 66665",
+    ):
+        await runner.run(
+            ReviewTarget(
+                target="main",
+                kind="main",
+                ticket_identifier=None,
+                ticket_number=None,
+                ref="origin/main",
+            ),
+            (
+                ReviewServerSettings(
+                    name="web",
+                    command="pnpm dev --port {{ review.port }}",
+                    base_port=3000,
+                    url="http://127.0.0.1:{{ review.port }}",
+                ),
+            ),
+        )
+
+
+def test_review_port_preflight_helpers_cover_default_paths(monkeypatch) -> None:
+    launch = cast(
+        Any,
+        SimpleNamespace(name="worker", port=None, url=None),
+    )
+    ensure_review_port_available(
+        ReviewTarget("main", "main", None, None, "origin/main"), launch
+    )
+    assert review_host(None) == "127.0.0.1"
 
 
 @pytest.mark.asyncio
@@ -543,6 +644,10 @@ async def test_review_runner_keep_skips_cleanup(monkeypatch) -> None:
         worktree_root="/tmp/review-root",
         keep=True,
         prepare_command=None,
-        console=Console(file=io.StringIO(), force_terminal=False, color_system=None),
     )
-    await runner._cleanup_worktrees(["/tmp/review-root/ENG-12"])
+    await runner._cleanup_worktree(
+        ReviewConsoleObserver(
+            Console(file=io.StringIO(), force_terminal=False, color_system=None)
+        ),
+        "/tmp/review-root/ENG-12",
+    )

@@ -1,14 +1,14 @@
 ---
 name: linear
 description: |
-  Tracker operations for Symphony agents. Use the flat `tracker_*` and
+  Tracker operations for CodeFactory agent runs. Use the flat `tracker_*` and
   `workpad_sync` tools for ticket work. Do not use raw tracker access in agent flows.
 ---
 
 # Tracker Operations
 
 All ticket operations go through the shared tracker tools exposed by
-Code Factory's app server. They handle auth automatically and keep the agent
+CodeFactory's app server. They handle auth automatically and keep the agent
 surface self-explanatory.
 
 Use one operation per tool call. A top-level `errors` array means the operation
@@ -27,13 +27,13 @@ attachments, or relations only when they matter to the task.
 
 ## Workpad
 
-Code Factory hydrates a local `workpad.md` file in the workspace before the run.
+CodeFactory hydrates a local `workpad.md` file in the workspace before the run.
 Treat that file as the working copy for plan, acceptance criteria, validation
 notes, and final handoff summary.
 
 - Edit `workpad.md` locally throughout the run.
 - Use `workpad_sync` when you want the tracker comment updated immediately.
-- Code Factory also syncs the local workpad automatically before it persists the
+- CodeFactory also syncs the local workpad automatically before it persists the
   final state/result transition.
 
 ## Write
