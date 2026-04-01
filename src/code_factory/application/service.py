@@ -17,8 +17,8 @@ from .dashboard import (
     LiveStatusDashboard,
     StatusDashboardContext,
 )
-from .dashboard_diagnostics import DashboardDiagnostics
-from .dashboard_workflow import dashboard_url, project_url
+from .dashboard.dashboard_diagnostics import DashboardDiagnostics
+from .dashboard.dashboard_workflow import dashboard_url, project_url
 from .logging import configure_logging
 
 LOGGER = logging.getLogger(__name__)

@@ -16,7 +16,7 @@ import pytest
 from typer.testing import CliRunner
 
 from code_factory.application import CodeFactoryService
-from code_factory.application.dashboard_diagnostics import (
+from code_factory.application.dashboard.dashboard_diagnostics import (
     DashboardDiagnostics,
     DashboardDiagnosticsHandler,
 )
@@ -76,7 +76,7 @@ from code_factory.workflow.loader import (
     split_front_matter,
     workflow_file_path,
 )
-from code_factory.workflow.state_profiles import parse_state_profiles
+from code_factory.workflow.profiles.state_profiles import parse_state_profiles
 from code_factory.workflow.store import WorkflowStoreActor
 from code_factory.workflow.template import (
     WorkflowTemplateValues,

@@ -19,7 +19,7 @@ from ...workspace.repository import prepare_workspace_repository
 from ...workspace.workpad import workpad_content_hash
 from ..messages import AgentWorkerUpdate, WorkerExited, WorkpadHydrated
 from ..support import maybe_aclose
-from .completion import (
+from .quality_gates.completion import (
     run_pre_complete_turns,
 )
 from .results import build_prompt_issue_data, persist_state_result

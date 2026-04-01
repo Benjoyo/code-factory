@@ -9,8 +9,8 @@ from typing import Any
 from ..config.models import Settings
 from ..errors import ConfigValidationError
 from ..issues import normalize_issue_state
-from .review_profiles import WorkflowReviewType, normalize_review_name
-from .state_profiles import WorkflowStateProfile
+from .profiles.review_profiles import WorkflowReviewType, normalize_review_name
+from .profiles.state_profiles import WorkflowStateProfile
 
 
 def utc_now() -> datetime:

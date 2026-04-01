@@ -7,7 +7,10 @@ from logging import NullHandler
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from .dashboard_diagnostics import DashboardDiagnostics, DashboardDiagnosticsHandler
+from .dashboard.dashboard_diagnostics import (
+    DashboardDiagnostics,
+    DashboardDiagnosticsHandler,
+)
 
 
 def configure_logging(

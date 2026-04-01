@@ -20,7 +20,7 @@ from .observability.cli_support import (
 )
 from .trackers.cli import register_tracker_commands
 from .workflow.loader import DEFAULT_WORKFLOW_FILENAME
-from .workspace.review_session import run_review_session
+from .workspace.review.review_session import run_review_session
 
 ACK_FLAG = "--no-guardrails"
 _HELP_FLAGS = frozenset({"-h", "--help"})

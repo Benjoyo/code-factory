@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ..errors import WorkspaceError
 from ..issues import Issue
-from .review_shell import ShellResult, capture_shell
+from .review.review_shell import ShellResult, capture_shell
 from .workpad import WORKPAD_FILENAME
 
 _BRANCH_COMPONENT_RE = re.compile(r"[^a-z0-9._/-]+")

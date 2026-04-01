@@ -13,8 +13,8 @@ from watchfiles import awatch
 from ..config import parse_settings
 from .loader import current_stamp, load_workflow
 from .models import WorkflowSnapshot, WorkflowStoreState
-from .review_profiles import parse_review_types
-from .state_profiles import parse_state_profiles
+from .profiles.review_profiles import parse_review_types
+from .profiles.state_profiles import parse_state_profiles
 
 LOGGER = logging.getLogger(__name__)
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from itertools import permutations
 from pathlib import Path
 
 import pytest
@@ -7,23 +8,31 @@ from pytestarch import Rule, get_evaluable_architecture
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = ROOT / "src" / "code_factory"
-ALLOWED_TOP_LEVEL_ENTRIES = {
-    "__init__.py",
-    "__main__.py",
-    "application",
-    "cli.py",
+OPERATOR_PACKAGES = ("application", "observability")
+NON_OPERATOR_PACKAGES = (
     "coding_agents",
     "config",
-    "errors.py",
-    "issues.py",
-    "observability",
     "prompts",
     "runtime",
-    "structured_results.py",
     "trackers",
     "workflow",
     "workspace",
-}
+)
+SCOPED_IMPLEMENTATION_PACKAGES = (
+    ("application.dashboard", "application"),
+    ("coding_agents.codex.tools.tracker", "coding_agents"),
+    ("runtime.worker.quality_gates", "runtime"),
+    ("trackers.linear.ops", "trackers"),
+)
+SIBLING_IMPLEMENTATION_GROUPS = (
+    ("trackers.linear", "trackers.memory"),
+    ("workspace.review", "workspace.ai_review"),
+)
+SIBLING_IMPLEMENTATION_PAIRS = tuple(
+    (left, right)
+    for group in SIBLING_IMPLEMENTATION_GROUPS
+    for left, right in permutations(group, 2)
+)
 
 
 @pytest.fixture(scope="session")
@@ -155,16 +164,64 @@ def test_tracker_implementations_do_not_depend_on_coding_agent_packages(
     rule.assert_applies(evaluable_architecture)
 
 
-def test_top_level_package_layout_is_curated() -> None:
-    actual_entries = {
-        path.name for path in SRC_ROOT.iterdir() if path.name != "__pycache__"
-    }
-    assert actual_entries == ALLOWED_TOP_LEVEL_ENTRIES
+def test_non_operator_packages_do_not_depend_on_operator_layers(
+    evaluable_architecture, module_prefix: str
+) -> None:
+    rule = (
+        Rule()
+        .modules_that()
+        .are_sub_modules_of(
+            [f"{module_prefix}.{package}" for package in NON_OPERATOR_PACKAGES]
+        )
+        .should_not()
+        .import_modules_that()
+        .are_sub_modules_of(
+            [f"{module_prefix}.{package}" for package in OPERATOR_PACKAGES]
+        )
+    )
+    rule.assert_applies(evaluable_architecture)
 
 
-def test_no_legacy_top_level_concrete_packages_exist() -> None:
-    assert not (SRC_ROOT / "codex").exists()
-    assert not (SRC_ROOT / "linear").exists()
+@pytest.mark.parametrize(
+    ("implementation_package", "owner_package"),
+    SCOPED_IMPLEMENTATION_PACKAGES,
+)
+def test_nested_implementation_packages_are_only_imported_inside_owner_package(
+    evaluable_architecture,
+    module_prefix: str,
+    implementation_package: str,
+    owner_package: str,
+) -> None:
+    rule = (
+        Rule()
+        .modules_that()
+        .are_sub_modules_of(f"{module_prefix}.{implementation_package}")
+        .should_not()
+        .be_imported_by_modules_except_modules_that()
+        .are_sub_modules_of(f"{module_prefix}.{owner_package}")
+    )
+    rule.assert_applies(evaluable_architecture)
+
+
+@pytest.mark.parametrize(
+    ("left_package", "right_package"),
+    SIBLING_IMPLEMENTATION_PAIRS,
+)
+def test_sibling_implementation_packages_do_not_depend_on_each_other(
+    evaluable_architecture,
+    module_prefix: str,
+    left_package: str,
+    right_package: str,
+) -> None:
+    rule = (
+        Rule()
+        .modules_that()
+        .are_sub_modules_of(f"{module_prefix}.{left_package}")
+        .should_not()
+        .import_modules_that()
+        .are_sub_modules_of(f"{module_prefix}.{right_package}")
+    )
+    rule.assert_applies(evaluable_architecture)
 
 
 def test_all_source_files_stay_under_three_hundred_lines() -> None:

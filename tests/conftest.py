@@ -11,8 +11,8 @@ import yaml
 from code_factory.config import parse_settings
 from code_factory.issues import Issue
 from code_factory.workflow import WorkflowSnapshot, current_stamp, load_workflow
-from code_factory.workflow.review_profiles import parse_review_types
-from code_factory.workflow.state_profiles import parse_state_profiles
+from code_factory.workflow.profiles.review_profiles import parse_review_types
+from code_factory.workflow.profiles.state_profiles import parse_state_profiles
 
 DEFAULT_PROMPT = "# prompt: default\nYou are an agent for this repository."
 

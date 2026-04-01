@@ -18,14 +18,14 @@ from code_factory.runtime.orchestration.dispatching import DispatchingMixin
 from code_factory.runtime.orchestration.models import RetryEntry
 from code_factory.runtime.orchestration.recovery import RecoveryMixin
 from code_factory.runtime.orchestration.retrying import RetryingMixin
-from code_factory.runtime.worker.readiness import native_readiness_result
+from code_factory.runtime.worker.quality_gates.readiness import native_readiness_result
 from code_factory.runtime.worker.workpad import (
     _load_workpad_body,
     sync_workspace_workpad,
 )
 from code_factory.trackers.cli import _cli_allowed_roots, _render_human
 from code_factory.trackers.tooling import UnsupportedTrackerOps, build_tracker_ops
-from code_factory.workflow.review_profiles import (
+from code_factory.workflow.profiles.review_profiles import (
     WorkflowReviewType,
     parse_review_types,
     parse_state_review_refs,
@@ -35,15 +35,15 @@ from code_factory.workspace.repository import (
     upstream_head_sha,
     upstream_name,
 )
-from code_factory.workspace.review_models import ReviewTarget
-from code_factory.workspace.review_output import ReviewConsoleObserver
-from code_factory.workspace.review_resolution import (
+from code_factory.workspace.review.review_models import ReviewTarget
+from code_factory.workspace.review.review_output import ReviewConsoleObserver
+from code_factory.workspace.review.review_resolution import (
     fetch_pull_request,
     resolve_repo_root,
     resolve_review_target,
     trailing_ticket_number,
 )
-from code_factory.workspace.review_runner import (
+from code_factory.workspace.review.review_runner import (
     ReviewRunner,
     _cancel_log_tasks,
     _create_worktree,
@@ -52,8 +52,8 @@ from code_factory.workspace.review_runner import (
     _stream_output,
     _wait_for_exit,
 )
-from code_factory.workspace.review_session import run_review_session
-from code_factory.workspace.review_shell import ShellResult
+from code_factory.workspace.review.review_session import run_review_session
+from code_factory.workspace.review.review_shell import ShellResult
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
 
@@ -293,27 +293,27 @@ async def test_remaining_runtime_and_review_runner_branches(
     issue = make_issue(identifier="ENG-1", branch_name="codex/eng-1")
 
     monkeypatch.setattr(
-        "code_factory.runtime.worker.readiness.ensure_git_repository",
+        "code_factory.runtime.worker.quality_gates.readiness.ensure_git_repository",
         lambda _workspace: asyncio.sleep(0),
     )
     monkeypatch.setattr(
-        "code_factory.runtime.worker.readiness.current_branch_name",
+        "code_factory.runtime.worker.quality_gates.readiness.current_branch_name",
         lambda _workspace: asyncio.sleep(0, result="codex/eng-1"),
     )
     monkeypatch.setattr(
-        "code_factory.runtime.worker.readiness.worktree_status",
+        "code_factory.runtime.worker.quality_gates.readiness.worktree_status",
         lambda _workspace: asyncio.sleep(0, result=""),
     )
     monkeypatch.setattr(
-        "code_factory.runtime.worker.readiness.upstream_name",
+        "code_factory.runtime.worker.quality_gates.readiness.upstream_name",
         lambda _workspace: asyncio.sleep(0, result="origin/codex/eng-1"),
     )
     monkeypatch.setattr(
-        "code_factory.runtime.worker.readiness.head_sha",
+        "code_factory.runtime.worker.quality_gates.readiness.head_sha",
         lambda _workspace: asyncio.sleep(0, result="abc123"),
     )
     monkeypatch.setattr(
-        "code_factory.runtime.worker.readiness.upstream_head_sha",
+        "code_factory.runtime.worker.quality_gates.readiness.upstream_head_sha",
         lambda _workspace: asyncio.sleep(0, result=None),
     )
     readiness = await native_readiness_result(str(tmp_path), issue, profile)
@@ -365,11 +365,11 @@ async def test_remaining_runtime_and_review_runner_branches(
             runner_calls.append((target, tuple(servers)))
 
     monkeypatch.setattr(
-        "code_factory.workspace.review_session.resolve_repo_root",
+        "code_factory.workspace.review.review_session.resolve_repo_root",
         lambda _workflow_path: asyncio.sleep(0, result="/repo"),
     )
     monkeypatch.setattr(
-        "code_factory.workspace.review_session.resolve_review_target",
+        "code_factory.workspace.review.review_session.resolve_review_target",
         lambda repo_root, settings, target: asyncio.sleep(
             0,
             result=ReviewTarget(
@@ -382,10 +382,10 @@ async def test_remaining_runtime_and_review_runner_branches(
         ),
     )
     monkeypatch.setattr(
-        "code_factory.workspace.review_session.ReviewRunner", FakeRunner
+        "code_factory.workspace.review.review_session.ReviewRunner", FakeRunner
     )
     monkeypatch.setattr(
-        "code_factory.workspace.review_session._interactive_review_supported",
+        "code_factory.workspace.review.review_session._interactive_review_supported",
         lambda *_args, **_kwargs: False,
     )
     await run_review_session(str(workflow), "main", keep=True)
@@ -399,7 +399,7 @@ async def test_remaining_runtime_and_review_runner_branches(
         prepare_command="prepare",
     )
     monkeypatch.setattr(
-        "code_factory.workspace.review_runner.capture_shell",
+        "code_factory.workspace.review.review_runner.capture_shell",
         lambda command, *, cwd, env=None: asyncio.sleep(
             0, result=ShellResult(1, "", "boom")
         ),
@@ -425,7 +425,8 @@ async def test_remaining_runtime_and_review_runner_branches(
         raise AssertionError(command)
 
     monkeypatch.setattr(
-        "code_factory.workspace.review_runner.capture_shell", invalid_reference_capture
+        "code_factory.workspace.review.review_runner.capture_shell",
+        invalid_reference_capture,
     )
     with pytest.raises(ReviewError, match="Failed to create review worktree"):
         await _create_worktree(
@@ -435,7 +436,7 @@ async def test_remaining_runtime_and_review_runner_branches(
         )
 
     monkeypatch.setattr(
-        "code_factory.workspace.review_runner.capture_shell",
+        "code_factory.workspace.review.review_runner.capture_shell",
         lambda command, *, cwd, env=None: asyncio.sleep(
             0, result=ShellResult(0, "abc123\n", "")
         ),

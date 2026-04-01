@@ -33,16 +33,16 @@ from code_factory.trackers.cli import (
     _run_and_render,
     _run_ops,
 )
-from code_factory.trackers.linear.ops_common import LinearOpsCommon
-from code_factory.trackers.linear.ops_files import read_binary_file, resolve_path
-from code_factory.trackers.linear.ops_normalize import (
+from code_factory.trackers.linear.ops.ops_common import LinearOpsCommon
+from code_factory.trackers.linear.ops.ops_files import read_binary_file, resolve_path
+from code_factory.trackers.linear.ops.ops_normalize import (
     normalize_issue,
     normalize_project,
     normalize_relation,
     normalize_state,
     normalize_team,
 )
-from code_factory.trackers.linear.ops_resolution import (
+from code_factory.trackers.linear.ops.ops_resolution import (
     find_exact,
     find_optional,
     matches_identity,
@@ -51,17 +51,20 @@ from code_factory.trackers.linear.ops_resolution import (
 from code_factory.trackers.tooling import UnsupportedTrackerOps, build_tracker_ops
 from code_factory.workflow.loader import finalize_prompt_section
 from code_factory.workflow.models import WorkflowSnapshot
-from code_factory.workflow.review_profiles import parse_review_types
-from code_factory.workspace.review_models import ReviewTarget, RunningReviewServer
-from code_factory.workspace.review_output import ReviewConsoleObserver
-from code_factory.workspace.review_resolution import (
+from code_factory.workflow.profiles.review_profiles import parse_review_types
+from code_factory.workspace.review.review_models import (
+    ReviewTarget,
+    RunningReviewServer,
+)
+from code_factory.workspace.review.review_output import ReviewConsoleObserver
+from code_factory.workspace.review.review_resolution import (
     ensure_github_ready,
     fetch_pull_request,
     resolve_main_ref,
     resolve_repo_root,
     resolve_ticket_target,
 )
-from code_factory.workspace.review_runner import (
+from code_factory.workspace.review.review_runner import (
     _cancel_log_tasks,
     _create_worktree,
     _head_sha,
@@ -69,8 +72,8 @@ from code_factory.workspace.review_runner import (
     _review_temp_root,
     _wait_for_exit,
 )
-from code_factory.workspace.review_shell import ShellResult
-from code_factory.workspace.review_templates import (
+from code_factory.workspace.review.review_shell import ShellResult
+from code_factory.workspace.review.review_templates import (
     build_review_environment,
     computed_review_port,
     render_review_template,
@@ -276,13 +279,14 @@ async def test_review_resolution_edge_paths(
         raise AssertionError(command)
 
     monkeypatch.setattr(
-        "code_factory.workspace.review_resolution.shutil.which", lambda _name: None
+        "code_factory.workspace.review.review_resolution.shutil.which",
+        lambda _name: None,
     )
     with pytest.raises(ReviewError, match="GitHub CLI"):
         await ensure_github_ready("/repo", shell_capture=ok_capture)
 
     monkeypatch.setattr(
-        "code_factory.workspace.review_resolution.shutil.which",
+        "code_factory.workspace.review.review_resolution.shutil.which",
         lambda _name: "/usr/bin/gh",
     )
     with pytest.raises(ReviewError, match="not logged in"):
@@ -359,7 +363,7 @@ async def test_review_runner_edge_paths(
 ) -> None:
     workflow = write_workflow_file(tmp_path / "WORKFLOW.md")
     with pytest.raises(ReviewError, match="review.servers"):
-        from code_factory.workspace.review_session import run_review_session
+        from code_factory.workspace.review.review_session import run_review_session
 
         await run_review_session(str(workflow), "main", keep=False)
 
@@ -387,7 +391,7 @@ async def test_review_runner_edge_paths(
         raise AssertionError(command)
 
     monkeypatch.setattr(
-        "code_factory.workspace.review_runner.capture_shell", failed_capture
+        "code_factory.workspace.review.review_runner.capture_shell", failed_capture
     )
     with pytest.raises(ReviewError, match="Failed to create review worktree"):
         await _create_worktree(
@@ -433,7 +437,7 @@ async def test_review_runner_edge_paths(
         head_sha="sha",
     )
     monkeypatch.setattr(
-        "code_factory.workspace.review_runner.wait_for_http_ready",
+        "code_factory.workspace.review.review_runner.wait_for_http_ready",
         lambda _url: asyncio.sleep(0, result=False),
     )
     await _open_review_urls(ReviewConsoleObserver(console), [cast(Any, browser_entry)])
@@ -442,11 +446,11 @@ async def test_review_runner_edge_paths(
     console_io = io.StringIO()
     console = Console(file=console_io, force_terminal=False, color_system=None)
     monkeypatch.setattr(
-        "code_factory.workspace.review_runner.wait_for_http_ready",
+        "code_factory.workspace.review.review_runner.wait_for_http_ready",
         lambda _url: asyncio.sleep(0, result=True),
     )
     monkeypatch.setattr(
-        "code_factory.workspace.review_runner._open_browser", lambda _url: False
+        "code_factory.workspace.review.review_runner._open_browser", lambda _url: False
     )
     await _open_review_urls(ReviewConsoleObserver(console), [cast(Any, browser_entry)])
     assert "Failed to open browser" in console_io.getvalue()
@@ -627,7 +631,7 @@ async def test_linear_common_and_runtime_helper_edges(
             closed.append("closed")
 
     monkeypatch.setattr(
-        "code_factory.trackers.linear.ops_common.LinearGraphQLClient", FakeClient
+        "code_factory.trackers.linear.ops.ops_common.LinearGraphQLClient", FakeClient
     )
     ops = LinearOpsCommon.from_settings(settings)
     assert await ops.raw_graphql("query") == {"data": {"ok": True}}
