@@ -50,11 +50,16 @@ Use these write tools for explicit mutations:
 - `tracker_pr_link` to attach the branch PR to the issue. Omit `issue` to use
   the current ticket.
 - `tracker_file_upload` to upload validation media from the workspace.
+  Paste the returned `markdown` value into `workpad.md` verbatim on its own
+  line when you want Linear to render the media.
 
 ## Common Workflows
 
 - Inspect issue context with `tracker_issue_get` before making assumptions.
 - Keep `workpad.md` current locally and let CodeFactory handle the tracker syncs.
+- When embedding uploaded media in `workpad.md`, place the raw Markdown snippet
+  on its own line. Do not wrap it in backticks, code fences, or explanatory
+  prose, or Linear will render it as text instead of media.
 - Create follow-up tickets in the same project when scope spillover is real.
 - Attach PRs and validation media as part of the handoff, not as separate
   tracking chores.

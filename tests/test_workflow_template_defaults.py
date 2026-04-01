@@ -13,6 +13,8 @@ def test_default_workflow_template_includes_workpad_qa_plan_guidance() -> None:
         / "default.md"
     ).read_text(encoding="utf-8")
 
-    assert "`Acceptance Criteria`, `QA Plan`, and `Validation`" in template
-    assert "Fill in `QA Plan` with operator-facing manual test scenarios" in template
-    assert "`Plan`, `Acceptance Criteria`, `QA Plan`, and `Validation`" in template
+    assert "Add explicit acceptance criteria and TODOs in checklist form" in template
+    assert "copy those requirements into the workpad `Acceptance Criteria`" in template
+    assert "`Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work" in template
+    assert "embed the returned Markdown" in template
+    assert "Do not wrap uploaded media Markdown in backticks" in template

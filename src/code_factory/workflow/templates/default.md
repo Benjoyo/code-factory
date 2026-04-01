@@ -248,8 +248,11 @@ Use this only when completion is blocked by missing required tools or missing au
     - Revert every temporary proof edit before commit/push.
     - Document these temporary proof steps and outcomes in the workpad `Validation`/`Notes` sections so reviewers can follow the evidence.
     - If app-touching, run runtime validation and capture screenshots/recordings.
-      Upload media with `tracker_file_upload` and embed the returned link or
-      Markdown snippet in `workpad.md`.
+      Upload media with `tracker_file_upload` and embed the returned Markdown
+      snippet in `workpad.md` as raw Markdown on its own line.
+    - Do not wrap uploaded media Markdown in backticks, inline code, fenced
+      code blocks, or prose such as `uploaded ...`; those forms will not render
+      in Linear comments.
 6.  Re-check all acceptance criteria and close any gaps.
 7.  Before every `git push` attempt, run the required validation for your scope and confirm it passes; if it fails, address issues and rerun until green, then commit and push changes.
 8.  Attach PR URL to the issue (prefer attachment; use the synced workpad only if attachment is unavailable).
