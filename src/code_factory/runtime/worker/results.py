@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Any
 
 from ...issues import Issue, IssueComment
 from ...structured_results import (
+    LEGACY_RESULT_COMMENT_PREFIX,
     RESULT_COMMENT_PREFIX,
     StructuredTurnResult,
     parse_result_comment,
@@ -24,22 +26,11 @@ async def persist_state_result(
     state_name: str,
     result: StructuredTurnResult,
 ) -> None:
-    """Create or update the persisted result comment for one issue/state pair."""
+    """Append the persisted result comment for one issue/state run."""
 
     if not issue.id:
         return
     rendered = render_result_comment(state_name, result)
-    comments = await tracker.fetch_issue_comments(issue.id)
-    for comment in comments:
-        parsed = _require_parsed_result_comment(comment, issue.id)
-        if parsed is None or parsed[0] != state_name:
-            continue
-        if comment.id is None:
-            raise RuntimeError(
-                f"missing_state_result_comment_id issue_id={issue.id} state={state_name}"
-            )
-        await tracker.update_comment(comment.id, rendered)
-        return
     await tracker.create_comment(issue.id, rendered)
 
 
@@ -83,10 +74,13 @@ async def build_prompt_issue_data(tracker: Tracker, issue: Issue) -> dict[str, A
 def parse_results_by_state(
     comments: list[IssueComment], *, ticket_label: str
 ) -> dict[str, dict[str, Any]]:
-    """Return parsed state results keyed by the human state name."""
+    """Return the latest parsed result for each state keyed by state name."""
 
     results_by_state: dict[str, dict[str, Any]] = {}
-    for comment in comments:
+    for _, comment in sorted(
+        enumerate(comments),
+        key=lambda item: _result_comment_sort_key(item[0], item[1]),
+    ):
         parsed = _require_parsed_result_comment(comment, ticket_label)
         if parsed is None:
             continue
@@ -101,8 +95,19 @@ def _require_parsed_result_comment(
     parsed = parse_result_comment(comment.body)
     if parsed is not None:
         return parsed
-    if isinstance(comment.body, str) and comment.body.startswith(RESULT_COMMENT_PREFIX):
+    if isinstance(comment.body, str) and comment.body.startswith(
+        (RESULT_COMMENT_PREFIX, LEGACY_RESULT_COMMENT_PREFIX)
+    ):
         raise RuntimeError(
             f"malformed_state_result_comment ticket={ticket_label} comment_id={comment.id or 'n/a'}"
         )
     return None
+
+
+def _result_comment_sort_key(
+    index: int, comment: IssueComment
+) -> tuple[datetime, datetime, int]:
+    min_time = datetime.min.replace(tzinfo=UTC)
+    created_at = comment.created_at or min_time
+    updated_at = comment.updated_at or created_at
+    return created_at, updated_at, index

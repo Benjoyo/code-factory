@@ -1282,8 +1282,9 @@ persisted structured state results.
   mutating tracker state directly from the prompt.
 - The harness validates the requested next state against workflow policy and applies the tracker
   transition itself.
-- The harness also persists one structured result comment per issue/state so later stages and
-  dependent tickets can consume prior results deterministically.
+- The harness also persists one structured result comment per successful state run under the
+  heading `## State Result: <state>` so tracker history provides a chronological trace, while
+  later stages and dependent tickets consume the latest result for each state deterministically.
 - Coding agents may still use workflow-defined tools for PR metadata and similar task-local
   writes that are not the authoritative workflow state transition, while workpad sync can remain
   harness-owned.

@@ -1303,6 +1303,8 @@ def test_state_profiles_and_result_helpers_cover_edge_paths(tmp_path: Path) -> N
     )
     parsed = parse_result_comment(rendered)
     assert parsed is not None
+    assert rendered.startswith("## State Result: Review\n\n")
+    assert "version:" not in rendered
     assert parsed[0] == "Review"
     assert parsed[1].summary == "Completed review\nWith notes"
     assert normalize_structured_turn_result(
@@ -1327,17 +1329,17 @@ def test_state_profiles_and_result_helpers_cover_edge_paths(tmp_path: Path) -> N
     )
     assert parse_result_comment(None) is None
     assert parse_result_comment("not a result comment") is None
-    assert parse_result_comment("## Code Factory Result: \n\nversion: 1\n") is None
-    assert parse_result_comment("## Code Factory Result: Review\n\n- nope\n") is None
-    assert (
-        parse_result_comment(
-            "## Code Factory Result: Review\n\nversion: 2\ndecision: transition\nsummary: |\n  x\n"
-        )
-        is None
+    assert parse_result_comment("## State Result: \n\ndecision: transition\n") is None
+    assert parse_result_comment("## State Result: Review\n\n- nope\n") is None
+    assert parse_result_comment(
+        "## Code Factory Result: Review\n\nversion: 2\ndecision: transition\nsummary: |\n  x\n"
+    ) == (
+        "Review",
+        StructuredTurnResult(decision="transition", summary="x", next_state=None),
     )
     assert (
         parse_result_comment(
-            "## Code Factory Result: Review\n\nversion: 1\ndecision: invalid\nsummary: |\n  x\n"
+            "## State Result: Review\n\ndecision: invalid\nsummary: |\n  x\n"
         )
         is None
     )

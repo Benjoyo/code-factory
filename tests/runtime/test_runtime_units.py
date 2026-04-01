@@ -853,11 +853,11 @@ async def test_issue_worker_state_edge_paths_and_result_helpers(
     tracker = MemoryTracker([upstream])
     await tracker.create_comment(
         "up-1",
-        "## Code Factory Result: Review\n\nversion: 1\ndecision: transition\nnext_state: Done\nsummary: |\n  done\n",
+        "## State Result: Review\n\ndecision: transition\nnext_state: Done\nsummary: |\n  done\n",
     )
     await tracker.create_comment(
         "up-1",
-        "## Code Factory Result: Review\n\nversion: 1\ndecision: nope\nsummary: |\n  bad\n",
+        "## State Result: Review\n\ndecision: nope\nsummary: |\n  bad\n",
     )
     with pytest.raises(RuntimeError, match="malformed_state_result_comment"):
         await build_prompt_issue_data(tracker, dependent)
@@ -871,25 +871,15 @@ async def test_issue_worker_state_edge_paths_and_result_helpers(
             next_state="Done",
         ),
     )
-    assert len(await tracker.fetch_issue_comments("up-1")) == 2
-    missing_comment_id_tracker = MemoryTracker([upstream])
-    missing_comment_id_tracker._comments_by_issue["up-1"] = [
-        IssueComment(
-            id=None,
-            body="## Code Factory Result: Review\n\nversion: 1\ndecision: transition\nnext_state: Done\nsummary: |\n  ok\n",
-        )
-    ]
-    with pytest.raises(RuntimeError, match="missing_state_result_comment_id"):
-        await persist_state_result(
-            missing_comment_id_tracker,
-            replace(upstream, blocked_by=()),
-            "Review",
-            StructuredTurnResult(
-                decision="transition",
-                summary="updated",
-                next_state="Done",
-            ),
-        )
+    persisted_comments = await tracker.fetch_issue_comments("up-1")
+    assert len(persisted_comments) == 3
+    assert persisted_comments[-1].body == (
+        "## State Result: Review\n\n"
+        "decision: transition\n"
+        "next_state: Done\n"
+        "summary: |\n"
+        "  updated\n"
+    )
 
     class MissingUpstreamIdTracker(MemoryTracker):
         async def fetch_issue_states_by_ids(self, issue_ids: list[str]) -> list[Any]:
@@ -909,19 +899,36 @@ async def test_issue_worker_state_edge_paths_and_result_helpers(
         [
             IssueComment(
                 id="1",
-                body="## Code Factory Result: Review\n\nversion: 1\ndecision: transition\nnext_state: Done\nsummary: |\n  ok\n",
+                body="## State Result: Review\n\ndecision: transition\nnext_state: Done\nsummary: |\n  ok\n",
             ),
             IssueComment(id="3", body="ordinary comment"),
         ],
         ticket_label="ENG-UP",
     )
     assert parsed_results["Review"]["next_state"] == "Done"
+    ordered_results = parse_results_by_state(
+        [
+            IssueComment(
+                id="newer",
+                body="## State Result: Build\n\ndecision: transition\nnext_state: Review\nsummary: |\n  newer\n",
+                created_at=datetime(2026, 1, 2, tzinfo=UTC),
+            ),
+            IssueComment(
+                id="older",
+                body="## State Result: Build\n\ndecision: transition\nnext_state: Done\nsummary: |\n  older\n",
+                created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            ),
+        ],
+        ticket_label="ENG-UP",
+    )
+    assert ordered_results["Build"]["summary"] == "newer"
+    assert ordered_results["Build"]["next_state"] == "Review"
     with pytest.raises(RuntimeError, match="malformed_state_result_comment"):
         parse_results_by_state(
             [
                 IssueComment(
                     id="2",
-                    body="## Code Factory Result: Review\n\nversion: 1\ndecision: nope\nsummary: |\n  bad\n",
+                    body="## State Result: Review\n\ndecision: nope\nsummary: |\n  bad\n",
                 )
             ],
             ticket_label="ENG-UP",

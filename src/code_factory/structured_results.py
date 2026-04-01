@@ -7,8 +7,8 @@ from typing import Any
 
 import yaml
 
-RESULT_COMMENT_PREFIX = "## Code Factory Result: "
-RESULT_COMMENT_VERSION = 1
+RESULT_COMMENT_PREFIX = "## State Result: "
+LEGACY_RESULT_COMMENT_PREFIX = "## Code Factory Result: "
 RESULT_DECISIONS = ("transition", "blocked")
 
 
@@ -88,7 +88,6 @@ def render_result_comment(state_name: str, result: StructuredTurnResult) -> str:
     indented_summary = "\n".join(f"  {line}" for line in result.summary.splitlines())
     return (
         f"{RESULT_COMMENT_PREFIX}{state_name}\n\n"
-        f"version: {RESULT_COMMENT_VERSION}\n"
         f"decision: {result.decision}\n"
         f"next_state: {next_state}\n"
         "summary: |\n"
@@ -102,18 +101,24 @@ def parse_result_comment(body: str | None) -> tuple[str, StructuredTurnResult] |
     if not isinstance(body, str):
         return None
     lines = body.splitlines()
-    if not lines or not lines[0].startswith(RESULT_COMMENT_PREFIX):
+    prefix = _result_comment_prefix(lines[0]) if lines else None
+    if prefix is None:
         return None
-    state_name = lines[0][len(RESULT_COMMENT_PREFIX) :].strip()
+    state_name = lines[0][len(prefix) :].strip()
     if not state_name:
         return None
     document = "\n".join(lines[2:]) if len(lines) > 2 else ""
     parsed = yaml.safe_load(document)
     if not isinstance(parsed, dict):
         return None
-    if parsed.get("version") != RESULT_COMMENT_VERSION:
-        return None
     result = normalize_structured_turn_result(parsed)
     if result is None:
         return None
     return state_name, result
+
+
+def _result_comment_prefix(line: str) -> str | None:
+    for prefix in (RESULT_COMMENT_PREFIX, LEGACY_RESULT_COMMENT_PREFIX):
+        if line.startswith(prefix):
+            return prefix
+    return None
