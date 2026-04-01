@@ -89,7 +89,11 @@ Work only in the provided repository copy. Do not touch any other path.
 - End every turn by emitting the required structured result.
 - Use `decision: "transition"` when the current workflow state is complete and the harness should move the ticket to `next_state`.
 - Use `decision: "blocked"` only for true external blockers; include a concise `summary` of what was completed, what blocked progress, and the exact missing requirement.
-- `summary` should be concise, factual, and useful to later workflow stages or dependent tickets.
+- `summary` is a downstream handoff artifact. Make it a concise, factual summary of the net implementation outcome for the entire workflow-state run, including any repair loops, not just the latest fix attempt.
+- Keep `summary` focused on shipped behavior, important code-path changes, new interfaces/contracts, migrations, or follow-up constraints that a dependent ticket needs to know.
+- Exclude operational noise from `summary`: branch names, PR links or numbers, commit SHAs, git/push/merge details, test commands or pass counts, review-loop narration, and workpad bookkeeping.
+- If the run was a repair/rework pass, still summarize the overall resulting implementation, not the repair mechanics.
+- For `blocked`, keep the same global summary posture, then state the exact external blocker and missing requirement.
 
 ## Tracker tools are available
 
@@ -273,6 +277,7 @@ Use this only when completion is blocked by missing required tools or missing au
     - Re-open and refresh `workpad.md` before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
 12. Only then finish the turn with a structured result that transitions the ticket to `Human Review`.
     - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, finish the turn with a structured `blocked` result targeting `Human Review`.
+    - Write the structured-result `summary` as durable downstream context about the final implementation outcome, not as an activity log of branch/PR/test/review actions.
 13. For `Todo` tickets that already had a PR attached at kickoff:
     - Ensure all existing PR feedback was reviewed and resolved, including inline review comments (code changes or explicit, justified pushback response).
     - Ensure branch was pushed with any required updates.

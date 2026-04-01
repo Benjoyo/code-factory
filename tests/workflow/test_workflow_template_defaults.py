@@ -21,3 +21,6 @@ def test_default_workflow_template_includes_workpad_qa_plan_guidance() -> None:
     )
     assert "embed the returned Markdown" in template
     assert "Do not wrap uploaded media Markdown in backticks" in template
+    assert "summary` is a downstream handoff artifact" in template
+    assert "Exclude operational noise from `summary`" in template
+    assert "not as an activity log of branch/PR/test/review actions" in template

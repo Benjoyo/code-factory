@@ -42,6 +42,8 @@ def ai_review_feedback_prompt(
         f"Triggered review types: {review_names or '<unknown>'}.\n"
         f"Feedback attempt {attempt} of {max_attempts}.\n"
         "Address every valid finding below thoughtfully, re-run the necessary validation, and then emit the required structured result again.\n"
+        "When you emit that result, keep `summary` global to the entire workflow-state run rather than this repair attempt.\n"
+        "Exclude operational noise such as branch/PR details, commit SHAs, git actions, test commands/results, and review-loop narration unless they are the blocker itself.\n"
         "Resolve review findings with durable, maintainable fixes. Do not apply quick patches, workaround logic, or narrow symptom-only edits. "
         "No bandaids, no comment-satisfying fake fixes, no special-case branching unless justified. "
         "Fix the underlying issue while preserving or improving design quality, keep the solution clean and minimal, and update tests as needed.\n\n"

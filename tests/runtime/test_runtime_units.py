@@ -2237,6 +2237,8 @@ async def test_before_complete_helper_edge_paths() -> None:
         3,
     )
     assert "truncated: before_complete stderr exceeded 12000 characters" in prompt
+    assert "keep `summary` global to the entire workflow-state run" in prompt
+    assert "Exclude operational noise such as branch/PR details" in prompt
     update = before_complete_update(
         "before_complete_passed",
         HookCommandResult(status=0, stdout="ok", stderr=""),

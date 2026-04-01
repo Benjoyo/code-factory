@@ -40,6 +40,8 @@ def before_complete_feedback_prompt(
         f"A {gate_label} blocked completion for this workflow state.\n"
         f"Feedback attempt {attempt} of {max_attempts}.\n"
         "Re-run the necessary validation, fix the reported problems, and then emit the required structured result again.\n"
+        "When you emit that result, keep `summary` global to the entire workflow-state run rather than this repair attempt.\n"
+        "Exclude operational noise such as branch/PR details, commit SHAs, git actions, test commands/results, and review-loop narration unless they are the blocker itself.\n"
         f"Previously proposed next state: {result.next_state or '<none>'}\n\n"
         "Gate stderr:\n"
         f"```text\n{feedback}\n```"

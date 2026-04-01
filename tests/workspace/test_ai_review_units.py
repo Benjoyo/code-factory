@@ -138,6 +138,8 @@ def test_ai_review_feedback_filters_low_confidence_findings() -> None:
         max_attempts=3,
     )
     assert "Triggered review types: Security." in feedback
+    assert "keep `summary` global to the entire workflow-state run" in feedback
+    assert "Exclude operational noise such as branch/PR details" in feedback
     assert "- Keep" in feedback
     assert "/tmp/a.py:10-12" in feedback
     assert "Drop" not in feedback
