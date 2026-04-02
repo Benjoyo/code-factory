@@ -17,7 +17,9 @@ def test_default_workflow_template_includes_manual_review_steps_guidance() -> No
     assert "copy those requirements into the workpad `Acceptance Criteria`" in template
     assert "Fill in `Manual Review Steps` for the human reviewer" in template
     assert "Keep `Manual Review Steps` non-checkable" in template
-    assert "Put the agent's own executed verification evidence in `Validation`" in template
+    assert (
+        "Put the agent's own executed verification evidence in `Validation`" in template
+    )
     assert "cf review {{ issue.identifier }}" in template
     assert (
         "`Plan`, `Acceptance Criteria`, `Manual Review Steps`, and `Validation` exactly match completed work"

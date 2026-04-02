@@ -1,11 +1,7 @@
-[build-system]
-requires = ["hatchling>=1.27.0"]
-build-backend = "hatchling.build"
-
 [project]
 name = "code-factory"
 version = "0.1.0"
-description = "Python asyncio port of the OpenAI Symphony spec"
+description = "Extended Python asyncio port of the OpenAI Symphony spec"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -28,6 +24,10 @@ dev = [
   "pyright>=1.1.398,<2",
   "ruff>=0.11.0,<0.12",
 ]
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
 
 [project.scripts]
 cf = "code_factory.cli:main"

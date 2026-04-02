@@ -1,10 +1,13 @@
-# Code Factory (Symphony Python Port)
+# Code Factory
 
-Asyncio-based Python port of the OpenAI Symphony spec.
+Code Factory is a Python asyncio implementation of the Symphony service spec: a
+long-running automation service that polls tracker work, creates isolated
+per-issue workspaces, runs coding-agent sessions inside them, and keeps the
+workflow contract versioned in `WORKFLOW.md`.
 
-This runtime keeps the same user-facing contract as the Elixir reference: it reads `WORKFLOW.md`, polls Linear for eligible issues, runs Codex app-server sessions in per-issue workspaces, hot-reloads workflow changes, and exposes a small observability API when enabled.
-
-Use this port if you want the Symphony behavior and workflow contract in a Python + `uv` environment rather than an Elixir deployment.
+Use it when you want repeatable issue execution, repo-owned workflow policy,
+and enough observability to operate concurrent agent runs without building a
+custom harness around your coding agent.
 
 ## What You Need
 
@@ -12,44 +15,70 @@ Use this port if you want the Symphony behavior and workflow contract in a Pytho
 - [`uv`](https://docs.astral.sh/uv/)
 - A valid `WORKFLOW.md`
 - Access to the tracker configured in `WORKFLOW.md`
-- A working Codex app-server command available to `codex.command`
+- A working coding-agent command available to `codex.command`
 
-Create a starter workflow in a new project by running:
+## Installation
+
+For day-to-day use from a local checkout, install `cf` as a `uv` tool:
 
 ```bash
-uv run cf init
+uv tool install --editable .
 ```
 
-`cf init` now walks you through the starter values with Rich prompts, renders a
+Then run it directly:
+
+```bash
+cf --help
+cf serve --no-guardrails
+```
+
+If you prefer not to install the tool, you can still run it from the repo with
+`uv run cf ...`.
+
+## Quick Start
+
+Create a starter workflow in a new project:
+
+```bash
+cf init
+```
+
+`cf init` walks you through the starter values with Rich prompts, renders a
 project-specific `WORKFLOW.md`, and copies this repo's bundled skills into
-`./.agents/skills`. The starter workflow now uses the required `states` mapping
-plus a shared `# prompt: default` section, with `Todo` rendered as a harness-run
-auto-transition to `In Progress` by default. Re-run with `--force` if you want
-to overwrite an existing workflow or skills bundle.
+`./.agents/skills`. Re-run with `--force` if you want to overwrite an existing
+workflow or skills bundle.
 
-## Running the Service
-
-Run from the package directory with `uv`:
+Start the service:
 
 ```bash
-uv run cf serve --no-guardrails /path/to/WORKFLOW.md
-```
-
-Or run it directly with `uvx`:
-
-```bash
-uvx --from /Users/bennet/git/code-factory cf serve --no-guardrails /path/to/WORKFLOW.md
+cf serve --no-guardrails /path/to/WORKFLOW.md
 ```
 
 If you omit the workflow path, the CLI defaults to `./WORKFLOW.md`. Bare service
-invocations like `cf --no-guardrails` are routed to `cf serve`.
+invocations such as `cf --no-guardrails` are routed to `cf serve`.
+
+## CLI Overview
+
+The main operator commands are:
+
+- `cf init` to bootstrap a repo-local workflow and bundled skills
+- `cf serve` to run the long-lived automation service
+- `cf review` to launch a review worktree and any configured review servers
+- `cf steer` to append operator guidance to an in-flight issue turn
+- `cf issue`, `cf comment`, `cf workpad`, and `cf tracker` for tracker-facing
+  operator actions
+
+See [docs/cli.md](docs/cli.md) for the general CLI reference and
+[docs/ticket-cli.md](docs/ticket-cli.md) for ticket-oriented commands.
 
 ## Ticket Surfaces
 
-Agent sessions use the flat `tracker_issue_*`, `tracker_comment_*`,
+Agent sessions use flat `tracker_issue_*`, `tracker_comment_*`,
 `tracker_pr_link`, and `tracker_file_upload` tools for ticket work. The
-orchestrator manages `workpad.md` synchronization automatically during the run.
-Operators use the CLI for the same ticket surface area:
+orchestrator manages `workpad.md` synchronization to a ticket comment
+automatically during the run.
+
+Operators can use the CLI for the same ticket surface area:
 
 ```bash
 cf issue get ISSUE
@@ -65,233 +94,45 @@ cf workpad get ISSUE
 cf workpad sync ISSUE
 ```
 
-See [docs/ticket-cli.md](docs/ticket-cli.md) for the full command reference and
-common workflows. The hidden `cf tracker raw` command is reserved for admin and
-debug use only.
+## Workflow
 
-## CLI Reference
+`WORKFLOW.md` is the main operator surface for Code Factory. It keeps tracker
+configuration, active states, prompt sections, completion gates, review setup,
+workspace hooks, and observability settings in the repo so teams can version and
+hot-reload automation policy alongside application code.
 
-Top-level commands:
+See the workflow docs for the current contract:
 
-```bash
-cf init [--force]
-cf review TARGET [--workflow WORKFLOW] [--keep]
-cf serve [OPTIONS] [WORKFLOW]
-cf steer ISSUE MESSAGE [--workflow WORKFLOW] [--port PORT]
-```
+- [Workflow docs](docs/workflow/README.md)
+- [Frontmatter reference](docs/workflow/frontmatter.md)
+- [Prompt template reference](docs/workflow/prompt-template.md)
+- [Specification](SPEC.md)
 
-`cf init`
+## Observability
 
-- Prompts for tracker kind, project slug, git repo, state lists, workspace
-  root, and max concurrent agents.
-- Renders `./WORKFLOW.md` from the bundled meta-template, using the new
-  `states` frontmatter mapping and one shared `# prompt: default` body section.
-- Copies the packaged skill directories to `./.agents/skills`.
-- Refuses to overwrite an existing workflow or skills bundle unless `--force`
-  is passed.
+Code Factory exposes a local observability API and, when stderr is attached to a
+TTY, a live terminal dashboard for operators. See
+[docs/observability.md](docs/observability.md) for endpoints, dashboard
+behavior, and steering/discovery details.
 
-`cf serve`
+## Runtime Notes
 
-- `--no-guardrails`
-  Required acknowledgement flag. The service will print a banner and exit without it.
-- `--logs-root <path>`
-  Enables a rotating log file at `<path>/log/code-factory.log`.
-- `--port <port>`
-  Overrides the default local control/observability port. `server.port` in `WORKFLOW.md` is the config-level override and the CLI flag still wins.
-  `0` is allowed if you want the OS to choose an ephemeral port.
-- `path-to-WORKFLOW.md`
-  Explicit workflow file path. If omitted, the CLI uses `WORKFLOW.md` in the current working directory.
-
-`cf review`
-
-- `TARGET`
-  One ticket identifier or the reserved keyword `main`.
-- `--workflow <path>`
-  Workflow path used to load `review:` config and locate the repository root. Defaults to `./WORKFLOW.md`.
-- `--keep`
-  Keep created review worktrees after the command exits instead of removing them automatically.
-
-`cf review` is an operator-side helper for `Human Review`: it resolves the single requested target to the exact review ref, creates a temporary detached worktree, optionally runs `review.prepare`, and launches the configured dev servers side by side inside a simple Textual TUI.
-
-The TUI has:
-
-- an overview tab with the current review table plus an `Open Browser` button for the selected server row
-- one log tab per configured review server
-- a final prepare tab that shows `review.prepare` output or an empty-state message when no prepare command is configured
-
-Outside an interactive terminal, `cf review` falls back to the existing plain console output.
-
-Server commands can derive stable per-ticket ports from `base_port + ticket_number`.
-
-If a server defines `url`, Code Factory prints it in the summary table. Browser
-launch defaults to enabled when `url` is present and can be disabled per server
-with `open_browser: false`.
-
-`cf steer`
-
-- `ISSUE`
-  Human issue identifier to steer, for example `ENG-123`.
-- `MESSAGE`
-  Steering text appended to the active in-flight Codex turn.
-- `--workflow <path>`
-  Workflow path used to discover the running service metadata. Defaults to `./WORKFLOW.md`.
-- `--port <port>`
-  Override discovery and target a specific local control-plane port directly.
-
-Use `cf --help`, `cf init --help`, `cf serve --help`, and `cf steer --help` for the full generated Typer help output.
-
-## Observability API
-
-The Python port currently ships a JSON API, not a full dashboard UI.
-
-The API starts by default on `127.0.0.1:4000`.
-
-- `server.port` in `WORKFLOW.md` overrides the default port.
-- `cf serve --port` overrides both the default and `server.port`.
-- If the chosen startup port is already in use, `cf serve` exits and tells you to rerun with a different `--port`.
-
-The service logs the listening URL during startup and writes a small runtime metadata file so `cf steer` can discover custom or ephemeral ports for the current workflow.
-
-Available routes:
-
-- `GET /api/v1/state`
-  Returns the current orchestrator snapshot: running workers, retry queue, token totals, and rate-limit data.
-- `GET /api/v1/{issue_identifier}`
-  Returns the current runtime view for a single issue if that issue is running or queued for retry.
-- `POST /api/v1/refresh`
-  Triggers an immediate reconcile/poll request and returns whether the request was queued or coalesced.
-- `POST /api/v1/{issue_identifier}/steer`
-  Appends more user input to the active in-flight Codex turn for that issue. Request body: `{ "message": "..." }`.
-
-Example:
-
-```bash
-uv run cf serve \
-  --no-guardrails \
-  /path/to/WORKFLOW.md
-```
-
-Then query:
-
-```bash
-curl http://127.0.0.1:4000/api/v1/state
-```
-
-Or steer a running issue:
-
-```bash
-uv run cf steer ENG-901 "Focus on failing tests first."
-```
-
-## What to Expect at Runtime
-
-- Startup validates the workflow and required dispatch settings before the scheduler loop begins.
-- `WORKFLOW.md` is hot-reloaded automatically; valid changes affect future dispatches without restarting the service.
+- Startup validates the workflow and required dispatch settings before the
+  scheduler loop begins.
+- `WORKFLOW.md` is hot-reloaded automatically; valid changes affect future
+  dispatches without restarting the service.
 - Only issues in active workflow states are dispatched.
-- The local control/observability API is always started unless startup fails to bind the selected port.
-- Polling Linear is normal service behavior; routine transport-level request logs are suppressed so the service's own logs stay readable.
 
-## Workflow Notes
-
-`WORKFLOW.md` is the main operator surface for this runtime. It controls:
-
-- Tracker configuration
-- Active and terminal states
-- Workspace root and lifecycle hooks
-- Review worktree/dev-server config for operator PR validation
-- Codex app-server command, model selection, and sandbox settings
-- State-specific prompt sections, transition policies, and harness-run auto transitions
-- Optional HTTP server host/port
-
-Operator review environments are configured with a top-level `review:` section:
-
-```yaml
-review:
-  temp_root: /tmp/code-factory-review
-  prepare: pnpm install
-  servers:
-    - name: web
-      base_port: 3000
-      command: pnpm dev --port {{ review.port }}
-      url: http://127.0.0.1:{{ review.port }}
-      open_browser: false
-```
-
-The review template context includes `review.target`, `review.kind`, `review.ticket_identifier`, `review.ticket_number`, `review.worktree`, `review.ref`, and `review.port`. Matching `CF_REVIEW_*` environment variables are exported for `prepare` and server commands.
-
-`WORKFLOW.md` uses the top-level `states` mapping as the source of truth for
-active workflow states:
-
-- Active states are derived from `states.keys()`.
-- A state is agent-run when it defines `prompt`, or harness-run when it defines
-  `auto_next_state`.
-- Agent-run states may optionally define `allowed_next_states` and
-  `failure_state`.
-- Agent-run states may optionally define `completion.require_pushed_head` and
-  `completion.require_pr` to enable native pre-complete readiness checks before
-  state persistence.
-- Agent-run states may optionally define `hooks.before_complete` and
-  `hooks.before_complete_max_feedback_loops` to enforce per-state completion
-  gates such as tests or lint checks.
-- Agent-run states may optionally define `ai_review` and reusable
-  top-level `ai_review.types` to run a read-only Codex review turn against the
-  current worktree diff after deterministic gates pass and before the tracker
-  transition is accepted.
-- Agent-run states may optionally define `codex.skills` as a repo-local
-  allowlist of direct child directories under `.agents/skills`; omitted or
-  `null` keeps all repo-local skills available, and `[]` disables all
-  repo-local skills for that state.
-- When `allowed_next_states` is set, the turn schema constrains `next_state` to
-  that set.
-- When `failure_state` is set, blocked results always route there regardless of
-  any agent-supplied `next_state`.
-- `completion.require_pushed_head` requires an attached branch, a clean
-  worktree, an upstream, and local `HEAD` fully pushed to the upstream before
-  the transition is accepted.
-- `completion.require_pr` implies `require_pushed_head` and additionally
-  requires exactly one open PR for the current branch at the current `HEAD`.
-- Before each agent session starts, the harness prepares the issue branch in the
-  workspace and adds `workpad.md` to the local git exclude file so the
-  workspace-local workpad does not dirty the tree.
-- `hooks.before_complete` runs after the agent emits a transition result but
-  after native completion checks pass, and before the harness persists the
-  result or updates the tracker state.
-- `before_complete` exit code `0` accepts completion, `2` feeds `stderr` back
-  into the same session for another turn up to the configured loop cap, and any
-  other non-zero status logs a warning but still allows completion.
-- When `ai_review` is configured, Code Factory evaluates all triggered review
-  types against the candidate patch, filters low-confidence findings, and feeds
-  one combined repair prompt back through the same completion-loop budget until
-  review passes or the failure path is exhausted.
-- AI review execution settings live under `ai_review.types.<name>.codex`, and
-  global or per-state Codex config may additionally set `codex.fast_mode: true`
-  to request Codex app-server `serviceTier: "fast"`.
-- The Markdown body must be split into named `# prompt: <id>` sections for any
-  agent-run states and named `# review: <id>` sections for reusable AI review
-  overlays.
-- Only `codex.model`, `codex.reasoning_effort`, `codex.fast_mode`, and
-  repo-local `codex.skills` can be overridden per agent-run state.
-- Agent-run states finish one workflow state per turn using structured output;
-  the harness validates the result, persists a state-result comment, and applies
-  the tracker transition.
-- Auto states do not start an agent session or create a workspace; the harness
-  updates the tracker state directly and can dispatch the next active state in
-  the same refresh cycle.
-
-If you want parity with the reference behavior, start from the shipped Elixir workflow and adjust only the repo-specific pieces such as `tracker.project_slug`, workspace hooks, and any local paths.
-
-## Development Verification
+## Development
 
 Install dev dependencies:
 
 ```bash
-uv sync --all-extras
+make setup
 ```
 
-Run the verification suite:
+Run the full verification suite:
 
 ```bash
-uv run ruff check .
-uv run pyright
-uv run python -m pytest -q
+make verify
 ```

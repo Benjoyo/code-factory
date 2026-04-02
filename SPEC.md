@@ -267,8 +267,8 @@ Fields:
 - `claimed` (set of issue IDs reserved/running/retrying)
 - `retry_attempts` (map `issue_id -> RetryEntry`)
 - `completed` (set of issue IDs; bookkeeping only, not dispatch gating)
-- `codex_totals` (aggregate tokens + runtime seconds)
-- `codex_rate_limits` (latest rate-limit snapshot from agent events)
+- `agent_totals` (aggregate tokens + runtime seconds)
+- `rate_limits` (latest rate-limit snapshot from agent events)
 
 ### 4.2 Stable Identifiers and Normalization Rules
 
@@ -335,6 +335,7 @@ Returned workflow object:
 
 Top-level keys:
 
+- `failure_state`
 - `tracker`
 - `polling`
 - `workspace`
@@ -373,6 +374,10 @@ Fields:
 
 Top-level workflow fields related to state policy:
 
+- `failure_state` (string)
+  - Required.
+  - Used as the default blocked/escalation state when an agent-run state emits `decision=blocked`
+    or when failure-driven retries are exhausted.
 - `active_states` (derived internal set)
   - Derived from the keys of top-level `states`.
 - `terminal_states` (list of strings)
@@ -392,9 +397,8 @@ Fields:
 
 - `root` (path string or `$VAR`)
   - Default: `<system-temp>/code-factory-workspaces`
-  - `~` and strings containing path separators are expanded.
-  - Bare strings without path separators are preserved as-is (relative roots are allowed but
-    discouraged).
+  - `~` and `$VAR` path values are expanded.
+  - The current runtime normalizes the effective value to an absolute path.
 
 #### 5.3.4 `hooks` (object)
 
@@ -417,7 +421,7 @@ Fields:
 - `timeout_ms` (integer, optional)
   - Default: `60000`
   - Applies to all workspace hooks.
-  - Non-positive values should be treated as invalid and fall back to the default.
+  - Non-positive values are invalid and fail validation.
   - Changes should be re-applied at runtime for future hook executions.
 
 #### 5.3.5 `agent` (object)
@@ -430,10 +434,14 @@ Fields:
 - `max_retry_backoff_ms` (integer or string integer)
   - Default: `300000` (5 minutes)
   - Changes should be re-applied at runtime and affect future retry scheduling.
+- `max_worker_retries` (integer or string integer)
+  - Default: `3`
+  - Failure-driven retries beyond this limit transition the issue to the configured failure state
+    instead of scheduling another retry.
 - `max_concurrent_agents_by_state` (map `state_name -> positive integer`)
   - Default: empty map.
   - State keys are normalized (`lowercase`) for lookup.
-  - Invalid entries (non-positive or non-numeric) are ignored.
+  - Invalid entries (non-positive or non-numeric) fail validation.
 
 #### 5.3.6 `codex` (object)
 
@@ -463,13 +471,6 @@ fields locally if they want stricter startup checks.
   - Default: `null`
   - When `true`, the runtime sends `serviceTier: "fast"` on Codex thread start.
   - When `false` or `null`, the runtime omits `serviceTier` rather than forcing `flex`.
-- `skills` (list of strings or null)
-  - Default: `null`
-  - Repo-local allowlist of direct child skill directories under `<workspace>/.agents/skills`.
-  - When present, the runtime disables repo-local skills not listed by injecting a
-    `skills.config=[...]` CLI override immediately before the `app-server` argument in
-    `codex.command`.
-  - User/admin/system skills are unaffected.
 - `approval_policy` (Codex `AskForApproval` value)
   - Default: implementation-defined.
 - `thread_sandbox` (Codex `SandboxMode` value)
@@ -599,9 +600,16 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `tracker.endpoint`: string, default `https://api.linear.app/graphql` when `tracker.kind=linear`
 - `tracker.api_key`: string or `$VAR`, canonical env `LINEAR_API_KEY` when `tracker.kind=linear`
 - `tracker.project_slug`: string, required when `tracker.kind=linear`
+- `failure_state`: string, required
 - `terminal_states`: list of strings, default `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]`
 - `states`: object mapping tracker state names to state profiles, required
 - `states.<state>.prompt`: string or non-empty list of strings referencing prompt section ids
+- `states.<state>.auto_next_state`: string, optional; auto-transition target used instead of an
+  agent run for that state
+- `states.<state>.allowed_next_states`: non-empty list of strings, optional; restricts
+  `next_state` values returned by `decision=transition`
+- `states.<state>.failure_state`: string, optional; overrides the top-level `failure_state` for
+  blocked transitions and retry exhaustion in that state
 - `states.<state>.ai_review`: optional for agent-run states only; either a string/non-empty
   list of strings referencing reusable AI review type ids, or an object with:
   - `types`: string or non-empty list of strings referencing reusable AI review type ids
@@ -636,6 +644,7 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `hooks.timeout_ms`: integer, default `60000`
 - `agent.max_concurrent_agents`: integer, default `10`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
+- `agent.max_worker_retries`: integer, default `3`
 - `agent.max_concurrent_agents_by_state`: map of positive integers, default `{}`
 - `codex.command`: shell command string, default `codex app-server`
 - `codex.model`: string or null, default `null`
@@ -806,6 +815,8 @@ Backoff formula:
 
 - Failure-driven retries use `delay = min(10000 * 2^(attempt - 1), agent.max_retry_backoff_ms)`.
 - Power is capped by the configured max retry backoff (default `300000` / 5m).
+- If a failure-driven retry would exceed `agent.max_worker_retries`, the runtime transitions the
+  issue to the resolved failure state instead of queueing another retry.
 
 Retry handling behavior:
 
@@ -971,7 +982,8 @@ Compatibility profile:
 Subprocess launch parameters:
 
 - Command: `codex.command` with optional `codex.model`, `codex.reasoning_effort`, and
-  repo-local `codex.skills` CLI overrides, plus optional thread-start `codex.fast_mode`
+  repo-local state-level `states.<state>.codex.skills` CLI overrides, plus optional thread-start
+  `codex.fast_mode`
 - Invocation: `bash -lc <effective codex command>`
 - Working directory: workspace path
 - Stdout/stderr: separate streams
@@ -980,11 +992,12 @@ Subprocess launch parameters:
 Notes:
 
 - The default command is `codex app-server`.
-- If configured, `codex.model`, `codex.reasoning_effort`, and repo-local `codex.skills`
-  overrides are injected immediately before `app-server`.
+- If configured, `codex.model`, `codex.reasoning_effort`, and repo-local
+  `states.<state>.codex.skills` overrides are injected immediately before `app-server`.
 - If `codex.fast_mode=true`, the runtime sends `serviceTier: "fast"` on thread start.
-- `codex.skills` only affects repo-local skills under `<workspace>/.agents/skills`; when an
-  allowlist references a missing repo skill directory, launch fails before the subprocess starts.
+- `states.<state>.codex.skills` only affects repo-local skills under
+  `<workspace>/.agents/skills`; when an allowlist references a missing repo skill directory,
+  launch fails before the subprocess starts.
 - Approval policy, cwd, and prompt are expressed in the protocol messages in Section 10.2.
 
 Recommended additional process settings:
@@ -1362,11 +1375,11 @@ should return:
 - `running` (list of running session rows)
 - each running row should include `turn_count`
 - `retrying` (list of retry queue rows)
-- `codex_totals`
+- `agent_totals`
   - `input_tokens`
   - `output_tokens`
   - `total_tokens`
-  - `seconds_running` (aggregate runtime seconds as of snapshot time, including active sessions)
+  - `seconds_running` (cumulative runtime seconds recorded when sessions end)
 - `rate_limits` (latest coding-agent rate limit payload, if available)
 
 Recommended snapshot error modes:
@@ -1400,10 +1413,10 @@ Token accounting rules:
 
 Runtime accounting:
 
-- Runtime should be reported as a live aggregate at snapshot/render time.
-- Implementations may maintain a cumulative counter for ended sessions and add active-session
-  elapsed time derived from `running` entries (for example `started_at`) when producing a
-  snapshot/status view.
+- The current runtime maintains a cumulative counter for ended sessions and exposes that value in
+  aggregate totals.
+- Implementations may additionally expose active-session elapsed time separately in running-entry
+  details or status surfaces.
 - Add run duration seconds to the cumulative ended-session runtime when a session ends (normal exit
   or cancellation/termination).
 - Continuous background ticking of runtime totals is not required.
@@ -1449,9 +1462,11 @@ Enablement (extension):
 - Changes to HTTP listener settings (for example `server.port`) do not need to hot-rebind;
   restart-required behavior is conformant.
 
-#### 13.7.1 Human-Readable Dashboard (`/`)
+#### 13.7.1 Optional Human-Readable Dashboard (HTTP)
 
-- Host a human-readable dashboard at `/`.
+- An implementation may serve a human-readable dashboard over HTTP, but it is not required when the
+  HTTP extension is present.
+- If served, `/` is a reasonable default route.
 - The returned document should depict the current state of the system (for example active sessions,
   retry delays, token consumption, runtime totals, recent events, and health/error indicators).
 - It is up to the implementation whether this is server-generated HTML or a client-side app that
@@ -1502,11 +1517,11 @@ Minimum endpoints:
           "error": "no available orchestrator slots"
         }
       ],
-      "codex_totals": {
+      "agent_totals": {
         "input_tokens": 5000,
         "output_tokens": 2400,
         "total_tokens": 7400,
-        "seconds_running": 1834.2
+        "seconds_running": 1834
       },
       "rate_limits": null
     }
@@ -1545,7 +1560,7 @@ Minimum endpoints:
       },
       "retry": null,
       "logs": {
-        "codex_session_logs": [
+        "agent_session_logs": [
           {
             "label": "latest",
             "path": "/var/log/code-factory/codex/MT-649/latest.log",
@@ -1790,8 +1805,8 @@ function start_service():
     claimed: set(),
     retry_attempts: {},
     completed: set(),
-    codex_totals: {input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-    codex_rate_limits: null
+    agent_totals: {input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+    rate_limits: null
   }
 
   validation = validate_dispatch_config()
@@ -2032,9 +2047,12 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - `codex.command` is preserved as a shell command string
 - `codex.model` and `codex.reasoning_effort` inject CLI overrides ahead of `app-server`
 - `codex.fast_mode=true` sends `serviceTier: "fast"` and `false`/`null` omit `serviceTier`
-- `codex.skills` disables only repo-local skills ahead of launch and errors on missing
-  allowlisted repo skill directories
-- Per-state concurrency override map normalizes state names and ignores invalid values
+- Required `failure_state` is validated
+- `states.<state>.codex.skills` disables only repo-local skills ahead of launch and errors on
+  missing allowlisted repo skill directories
+- `agent.max_worker_retries` limits failure-driven retries before transition to the resolved
+  failure state
+- Per-state concurrency override map normalizes state names and invalid values fail validation
 - Prompt template renders `issue` and `attempt`
 - Prompt rendering fails on unknown variables (strict mode)
 

@@ -5,16 +5,16 @@ This package is a long-running automation service that reads tracker work, creat
 
 ## 2. Folder Structure
 - `src/code_factory`: Python package entrypoints, shared models, and package roots.
-  - `application`: service bootstrap, logging setup, and top-level runtime wiring.
+  - `application`: service bootstrap, logging setup, project bootstrap assets, and operator dashboard rendering.
   - `runtime`: orchestrator, worker, runtime messages, and subprocess/process lifecycle code.
   - `trackers`: generic tracker boundary plus concrete tracker implementations.
   - `coding_agents`: generic coding-agent boundary plus concrete coding-agent implementations.
   - `config`: typed settings models, parsing, defaults, and validation helpers.
-  - `workflow`: `WORKFLOW.md` loading, front-matter parsing, and workflow snapshot/state handling.
-  - `workspace`: workspace path safety, hook execution, and workspace lifecycle management.
-  - `observability`: operator-facing API payloads and HTTP server.
-  - `prompts`: workflow prompt rendering and prompt data shaping.
-- `tests`: behavior, protocol, integration, and architecture tests; keep new tests close to the layer they protect.
+  - `workflow`: `WORKFLOW.md` loading, templates, front-matter parsing, and workflow snapshot/state handling.
+  - `workspace`: workspace path safety, hook execution, workspace lifecycle management, and operator review/AI review flows.
+  - `observability`: operator-facing API payloads, CLI discovery helpers, runtime metadata, and HTTP server.
+  - `prompts`: workflow prompt rendering, review prompt assets, and prompt data shaping.
+- `tests`: behavior, CLI, integration, and architecture tests; keep new tests close to the layer they protect.
 - `pyproject.toml`: package metadata, lint/type/test tool configuration, and `uv` dependency management.
 - `README.md`: operator-facing usage and API/CLI documentation.
 
