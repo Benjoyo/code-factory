@@ -1,9 +1,21 @@
-# Code Factory
+<div align="center">
 
-Code Factory is a Python asyncio implementation of the Symphony service spec: a
-long-running automation service that polls tracker work, creates isolated
-per-issue workspaces, runs coding-agent sessions inside them, and keeps the
-workflow contract versioned in `WORKFLOW.md`.
+<h1>Code Factory</h1>
+
+<p><strong>🏭 Orchestrate coding agents via Kanban — high autonomy, isolated per-issue workspaces, single-file repo-owned workflow contract</strong></p>
+
+<p><a href="#quick-start">Quick Start</a> · <a href="docs/cli.md">CLI</a> · <a href="docs/workflow/README.md">Workflow</a> · <a href="SPEC.md">Specification</a></p>
+
+</div>
+
+<p align="center">
+  <img src="docs/images/code-factory-dashboard.png" alt="Code Factory operator dashboard showing live issue execution, throughput, token usage, and operator links" width="1257" />
+</p>
+
+Code Factory is a Python asyncio implementation and extension of the OpenAI Symphony spec. It
+polls tracker work, creates isolated per-issue workspaces, runs coding-agent
+sessions inside them, and keeps the workflow contract versioned in
+`WORKFLOW.md`.
 
 Use it when you want repeatable issue execution, repo-owned workflow policy,
 and enough observability to operate concurrent agent runs without building a
@@ -37,7 +49,7 @@ If you prefer not to install the tool, you can still run it from the repo with
 
 ## Quick Start
 
-### 1. Create a starter workflow in a new project:
+### 1. Create a starter workflow in a new project
 
 ```bash
 cf init
@@ -48,7 +60,7 @@ project-specific `WORKFLOW.md`, and copies this repo's bundled skills into
 `./.agents/skills`. Re-run with `--force` if you want to overwrite an existing
 workflow or skills bundle.
 
-### 2. Start the service:
+### 2. Start the service
 
 ```bash
 cf serve --no-guardrails
@@ -56,22 +68,22 @@ cf serve --no-guardrails
 
 If you omit the workflow path, the CLI defaults to `./WORKFLOW.md`.
 
-### 3. Create issues and move to Todo:
+### 3. Create issues and move to Todo
 
-* Create new issues in Linear Backlog
-* Move ready-for-dev issues to Todo
+- Create new issues in Linear Backlog
+- Move ready-for-dev issues to Todo
 
-### 4. Steer agents during execution (optional):
+### 4. Steer agents during execution (optional)
 
-Run 
+Run:
 
 ```bash
 cf steer ENG-123 "also add integration tests please"
 ```
 
-to append operator guidance to an in-flight issue turn
+This appends operator guidance to an in-flight issue turn.
 
-### 5. Review PRs:
+### 5. Review PRs
 
 Run:
 
@@ -80,16 +92,18 @@ cf review ENG-123
 ```
 
 This will:
-* Launch a review worktree and any configured review servers. 
-* Open the browser automatically, if configured.
-* Allow you to quickly submit PR comments with any problems you find
 
-### 6. Move issues to Merging, Todo, or Rework:
+- Launch a review worktree and any configured review servers.
+- Open the browser automatically, if configured.
+- Let you quickly submit PR comments with any problems you find.
+
+### 6. Move issues to Merging, Todo, or Rework
 
 Move reviewed issues to:
-* Merging, if review was successful
-* Todo, if you left review comments in the PR
-* Rework, if you left review comments and want a full, clean re-attempt at the issue.
+
+- Merging, if review was successful
+- Todo, if you left review comments in the PR
+- Rework, if you left review comments and want a full, clean re-attempt at the issue
 
 ## CLI Overview
 
