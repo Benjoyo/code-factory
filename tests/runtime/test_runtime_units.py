@@ -370,7 +370,8 @@ async def test_workspace_workpad_helpers_fallback_paths(tmp_path: Path) -> None:
     path = await hydrate_workspace_workpad(settings, tracker, issue, str(workspace))
     assert path == workspace_workpad_path(str(workspace))
     assert Path(path).read_text(encoding="utf-8") == DEFAULT_WORKPAD_BODY
-    assert "### QA Plan" in DEFAULT_WORKPAD_BODY
+    assert "### Manual Review Steps" in DEFAULT_WORKPAD_BODY
+    assert workpad_content_hash(str(workspace / "missing.md")) is None
 
     existing_body = f"{WORKPAD_HEADER}\n\nexisting\n"
     await tracker.create_comment(issue.id or "", existing_body)

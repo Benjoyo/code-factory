@@ -179,7 +179,7 @@ and `tracker_file_upload` tools.
 3.  Immediately reconcile the workpad before new edits:
     - Check off items that are already done.
     - Expand/fix the plan so it is comprehensive for current scope.
-    - Ensure `Acceptance Criteria` and `Validation` are current and still make sense for the task.
+    - Ensure `Acceptance Criteria`, `Manual Review Steps`, and `Validation` are current and still make sense for the task.
     - If the user has steered the run since the last sync, log the steering
       request and resulting scope change in `workpad.md`, then update the main
       tracker ticket to keep the title/description/acceptance criteria aligned.
@@ -191,6 +191,10 @@ and `tracker_file_upload` tools.
 6.  Add explicit acceptance criteria and TODOs in checklist form in `workpad.md`.
     - If changes are user-facing, include a UI walkthrough acceptance criterion that describes the end-to-end user path to validate.
     - If changes touch app files or app behavior, add explicit app-specific flow checks to `Acceptance Criteria` in the workpad (for example: launch path, changed interaction path, and expected result path).
+    - Fill in `Manual Review Steps` for the human reviewer who will validate the work after handoff.
+    - Write `Manual Review Steps` as actionable black-box instructions using observable actions and expected results.
+    - Keep `Manual Review Steps` non-checkable: do not use checkboxes there. Checkboxes belong in `Plan`, `Acceptance Criteria`, and `Validation`.
+    - Put the agent's own executed verification evidence in `Validation`, not in `Manual Review Steps`.
     - If the ticket description/comment context includes `Validation`, `Test Plan`, or `Testing` sections, copy those requirements into the workpad `Acceptance Criteria` and `Validation` sections as required checkboxes (no optional downgrade).
 7.  Run a principal-style self-review of the plan and refine it in `workpad.md`.
 8.  Before implementing, capture a concrete reproduction signal and record it in the workpad `Notes` section (command/output, screenshot, or deterministic UI behavior).
@@ -269,12 +273,12 @@ Use this only when completion is blocked by missing required tools or missing au
     - Add a short `### Confusions` section at the bottom when any part of task execution was unclear/confusing, with concise bullets.
     - Do not post any additional completion summary comment.
 11. Before moving to `Human Review`, poll PR feedback and checks:
-    - Read the PR `Manual QA Plan` comment (when present) and use it to sharpen UI/runtime test coverage for the current change.
+    - Ensure `Manual Review Steps` tells the human reviewer to launch the review environment with `cf review {{ issue.identifier }}` instead of giving a generic hint to start apps or servers.
     - Run the full PR feedback sweep protocol.
     - Confirm PR checks are passing (green) after the latest changes.
     - Confirm every required ticket-provided validation/test-plan item is explicitly marked complete in the workpad.
     - Repeat this check-address-verify loop until no outstanding comments remain and checks are fully passing.
-    - Re-open and refresh `workpad.md` before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
+    - Re-open and refresh `workpad.md` before state transition so `Plan`, `Acceptance Criteria`, `Manual Review Steps`, and `Validation` exactly match completed work.
 12. Only then finish the turn with a structured result that transitions the ticket to `Human Review`.
     - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, finish the turn with a structured `blocked` result targeting `Human Review`.
     - Write the structured-result `summary` as durable downstream context about the final implementation outcome, not as an activity log of branch/PR/test/review actions.

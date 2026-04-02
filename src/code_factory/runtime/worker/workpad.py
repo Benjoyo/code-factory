@@ -19,7 +19,7 @@ DEFAULT_WORKPAD_BODY = """## Codex Workpad
 
 ### Acceptance Criteria
 
-### QA Plan
+### Manual Review Steps
 
 ### Validation
 

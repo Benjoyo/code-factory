@@ -55,7 +55,11 @@ def prompt_project_init(
         console=prompt_console,
     ).strip()
     project_slug = prompt_non_empty(
-        "Project slug",
+        (
+            "Linear project (name or slug)"
+            if tracker_kind == "linear"
+            else "Project slug"
+        ),
         console=prompt_console,
         default=default_project_slug(resolved_target),
     )

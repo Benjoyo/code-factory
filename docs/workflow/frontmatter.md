@@ -1,13 +1,15 @@
 # Workflow Frontmatter
 
-This document describes the YAML frontmatter accepted by Code Factory's `WORKFLOW.md` loader and config parser.
+This document describes the YAML frontmatter currently accepted by Code Factory's
+`WORKFLOW.md` loader, config parser, and workflow-profile validators.
 
 ## File format
 
-The workflow file may begin with YAML frontmatter:
+`WORKFLOW.md` may begin with YAML frontmatter:
 
 ```md
 ---
+failure_state: Human Review
 tracker:
   kind: linear
 states:
@@ -20,31 +22,69 @@ Your prompt section goes here.
 
 Parsing rules:
 
-- Frontmatter is only parsed when the file starts with a line that is exactly `---`.
-- Parsing stops at the next line that is exactly `---`.
+- Frontmatter is parsed only when the file starts with a line that is exactly `---`.
+- Frontmatter ends at the next line that is exactly `---`.
+- If the closing fence is missing, the rest of the file is treated as frontmatter and the Markdown body is empty.
 - The YAML root must be an object/map.
+- Empty frontmatter is allowed and becomes `{}`.
 - If frontmatter is absent, the whole file becomes the raw prompt body and the config map is empty.
-- Unknown top-level keys are ignored.
+- Unknown top-level keys are ignored unless another parser reads them.
 - A runnable workflow must define top-level `states`.
+- A dispatchable workflow must also define top-level `failure_state`.
+
+## Body section parsing
+
+When top-level `states` is present, Code Factory parses the Markdown body into
+named sections instead of treating it as one monolithic prompt.
+
+Section rules:
+
+- Only level-1 headings of the form `# prompt: <id>` and `# review: <id>` are recognized.
+- `prompt` and `review` in those headings are lowercase and matched literally.
+- Section ids are trimmed.
+- Non-empty body content outside a named section is invalid.
+- At least one `# prompt:` section must exist when `states` is present.
+- Prompt section references are matched exactly after trimming.
+- Review-section references from `ai_review.types.<name>.prompt` are matched exactly after trimming.
 
 ## Top-level keys
 
-Core keys used by this runtime:
+Code Factory currently reads these top-level keys:
 
+- `failure_state`
+- `terminal_states`
 - `tracker`
 - `states`
+- `ai_review`
 - `polling`
 - `workspace`
 - `agent`
 - `codex`
 - `hooks`
+- `review`
 - `observability`
 - `server`
 
-Implementation notes:
+## `failure_state`
 
-- `server` is an implementation extension and is already referenced in `SPEC.md`.
-- `observability` is implemented in this runtime but is not currently listed in the core `SPEC.md` frontmatter section.
+Global failure fallback used when an agent run blocks or exhausts retries.
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `failure_state` | non-blank string | none | Required. Per-state `states.<state>.failure_state` may override it. |
+
+## `terminal_states`
+
+Tracker states treated as terminal by the orchestrator.
+
+| Field | Type | Default |
+| --- | --- | --- |
+| `terminal_states` | list of strings | `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]` |
+
+Notes:
+
+- Items are stored as provided.
+- The parser validates only that this is a list of strings.
 
 ## `tracker`
 
@@ -54,27 +94,24 @@ Tracker configuration controls how issues are discovered and updated.
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `tracker.kind` | string | `null` | Required for dispatch validation. |
+| `tracker.kind` | string or `null` | `null` | Required later by dispatch validation. |
 | `tracker.endpoint` | string | `https://api.linear.app/graphql` | Used by the Linear tracker. |
-| `tracker.api_key` | string or `$VAR_NAME` | `LINEAR_API_KEY` env fallback | Empty string is treated as missing. |
-| `tracker.project_slug` | string or `null` | `null` | Required for `linear`. |
-| `tracker.assignee` | string or `$VAR_NAME` or `null` | `LINEAR_ASSIGNEE` env fallback | Optional routing filter. |
-| `tracker.terminal_states` | list of strings | `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]` | These states are treated as terminal. |
+| `tracker.api_key` | string or `$VAR_NAME` or `null` | `LINEAR_API_KEY` env fallback | Empty string resolves to `null`. |
+| `tracker.project_slug` | string or `null` | `null` | Required for `linear` dispatch validation. |
+| `tracker.assignee` | string or `$VAR_NAME` or `null` | `LINEAR_ASSIGNEE` env fallback | Optional assignee filter. |
 
 ### `tracker.kind` values
 
 | Value | Description |
 | --- | --- |
-| `linear` | Production tracker integration. Requires `tracker.api_key` and `tracker.project_slug` before dispatch can start. |
-| `memory` | In-memory tracker used by tests and local debugging. Accepted by the runtime, but not part of the core `SPEC.md` tracker contract. |
+| `linear` | Production tracker integration. |
+| `memory` | In-memory tracker used by tests and local debugging. |
 
 ### `tracker.assignee` behavior
 
-`tracker.assignee` is not an enum, but it has one special value:
-
 | Value | Description |
 | --- | --- |
-| `me` | Resolve the authenticated Linear viewer id and only route issues assigned to that user. |
+| `me` | Special value interpreted by the Linear integration as the authenticated viewer. |
 | any other non-empty string | Match that assignee id directly. |
 | `null`, `""`, or omitted | Do not filter candidate issues by assignee. |
 
@@ -82,64 +119,105 @@ Tracker configuration controls how issues are discovered and updated.
 
 For `tracker.api_key` and `tracker.assignee`:
 
-- a literal string is used as-is
-- a full `$VAR_NAME` token loads from the environment
-- if the environment variable is unset, the configured fallback is used
-- if the resolved value is `""`, the setting becomes `null`
+- A literal string is used as-is.
+- A full `$VAR_NAME` token loads from the environment.
+- If the environment variable is unset, the configured fallback is used.
+- If the resolved value is `""`, the setting becomes `null`.
 
 ## `states`
 
-`states` defines the active workflow states, selects prompt sections for each
-agent-run state, optionally configures harness-owned transitions, and may attach
-reusable AI review types to agent-run states.
+`states` defines the active tracker states and the per-state workflow behavior.
+The active state list is derived directly from the `states` keys.
 
 ### Fields
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `states` | object | none | Required. Keys are active tracker states. |
-| `states.<state>.prompt` | string or non-empty list of strings | none | Required for agent-run states. References named `# prompt: <id>` sections from the Markdown body. |
-| `states.<state>.ai_review` | string or non-empty list of strings | none | Optional for agent-run states. References reusable `ai_review.types` definitions by name. |
-| `states.<state>.codex.model` | string or `null` | inherit global `codex.model` | Optional per-state Codex model override for agent-run states only. |
-| `states.<state>.codex.reasoning_effort` | string or `null` | inherit global `codex.reasoning_effort` | Optional per-state reasoning override for agent-run states only. |
-| `states.<state>.codex.fast_mode` | boolean or `null` | inherit global `codex.fast_mode` | Optional per-state fast-mode override for agent-run states only. |
-| `states.<state>.allowed_next_states` | list of strings | unrestricted | Optional allowlist for harness-applied transitions. Also constrains the turn schema `next_state` enum when present. |
-| `states.<state>.failure_state` | string or `null` | `null` | Optional deterministic blocked-state target. When set, it overrides any agent-supplied `next_state` for `blocked` results. |
+| `states.<state>.prompt` | string or non-empty list of strings | none | Required for agent-run states. References `# prompt: <id>` sections. |
+| `states.<state>.ai_review` | string, non-empty list of strings, or object | none | Optional reusable AI review types for agent-run states. |
+| `states.<state>.codex.model` | string or `null` | inherit top-level `codex.model` | Agent-run states only. |
+| `states.<state>.codex.reasoning_effort` | string or `null` | inherit top-level `codex.reasoning_effort` | Agent-run states only. |
+| `states.<state>.codex.fast_mode` | boolean or `null` | inherit top-level `codex.fast_mode` | Agent-run states only. |
+| `states.<state>.codex.skills` | list of strings or `null` | inherit current repo-skill allowlist | Agent-run states only. Restricts enabled repo skills to this allowlist. |
+| `states.<state>.completion.require_pushed_head` | boolean | `false` | Native completion gate. |
+| `states.<state>.completion.require_pr` | boolean | `false` | Native completion gate. Also implies `require_pushed_head`. |
+| `states.<state>.hooks.before_complete` | string or `null` | `null` | Optional shell quality gate for agent-run states. |
+| `states.<state>.hooks.before_complete_max_feedback_loops` | non-negative integer | `10` | Maximum repair loops for `before_complete` and related native completion feedback. |
+| `states.<state>.allowed_next_states` | list of strings | unrestricted | Optional allowlist for structured result `next_state`. |
+| `states.<state>.failure_state` | string or `null` | inherit top-level `failure_state` | Optional per-state blocked/failure override. |
 | `states.<state>.auto_next_state` | string or `null` | `null` | Makes the state harness-run instead of agent-run. |
 
-Rules:
+### `states.<state>.ai_review` forms
+
+Short form:
+
+```yaml
+states:
+  "In Progress":
+    prompt: default
+    ai_review:
+      - security
+      - frontend
+```
+
+Expanded form:
+
+```yaml
+states:
+  "In Progress":
+    prompt: default
+    ai_review:
+      types:
+        - security
+        - frontend
+      scope: branch
+```
+
+Expanded-form fields:
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `states.<state>.ai_review.types` | string or non-empty list of strings | none | Required in object form. References `ai_review.types` by name. |
+| `states.<state>.ai_review.scope` | `auto`, `worktree`, or `branch` | `auto` | Controls whether review runs against the worktree or branch diff. |
+
+`scope: auto` resolves to:
+
+- `worktree` when native completion is disabled for the state
+- `branch` when `completion.require_pushed_head` or `completion.require_pr` is enabled
+
+### Rules
 
 - `states` must be an object with at least one entry.
 - State names are trimmed and matched case-insensitively at runtime.
 - Duplicate normalized state names are invalid.
-- Every state must define exactly one mode:
+- Each state must define exactly one mode:
   - agent-run via `prompt`
   - harness-run via `auto_next_state`
-- `states.<state>.prompt` may reference one prompt section or several prompt sections.
-- `states.<state>.ai_review` may reference one review type or several review types.
-- Prompt references are matched exactly after trimming.
-- Referencing a missing prompt section is invalid.
-- Review references are matched case-insensitively after trimming.
-- Referencing a missing review type is invalid.
-- Only `codex.model`, `codex.reasoning_effort`, `codex.fast_mode`, and `codex.skills` may be overridden per state.
 - `prompt` and `auto_next_state` are mutually exclusive.
-- `codex` overrides are rejected for auto states.
-- `ai_review` is rejected for auto states.
+- Agent-run states require at least one valid prompt reference.
+- Auto states must not define `prompt`.
 - `allowed_next_states` must be a list of non-blank state names with no duplicate normalized values.
 - `failure_state` and `auto_next_state` must be non-blank strings when present.
-- `failure_state` must not equal the current state.
+- `states.<state>.failure_state` must not normalize to the current state name.
+- `states.<state>.codex` only supports `model`, `reasoning_effort`, `fast_mode`, and `skills`.
+- `states.<state>.completion` only supports `require_pushed_head` and `require_pr`.
+- `states.<state>.hooks` only supports `before_complete` and `before_complete_max_feedback_loops`.
+- `states.<state>.ai_review` is not supported for auto states.
+- `states.<state>.completion` is not supported for auto states.
+- `states.<state>.codex` overrides are not supported for auto states.
+- `states.<state>.hooks.before_complete` is not supported for auto states.
+- `states.<state>.hooks.before_complete_max_feedback_loops` requires `before_complete` unless native completion is enabled for that state.
 - Other per-state keys are rejected.
 
-Runtime behavior:
+### Runtime behavior
 
-- Active states are derived from `states` keys.
-- Agent-run states start a fresh coding-agent session and render the referenced prompt section bodies concatenated with a blank line between sections, in listed order.
-- Agent-run states may additionally request zero, one, or several reusable AI review types as completion gates after deterministic readiness checks pass.
+- Agent-run states start a fresh coding-agent session.
+- The effective state prompt is the referenced `# prompt:` bodies joined with a blank line, in listed order.
 - Auto states do not start an agent. The harness moves the issue directly to `auto_next_state`.
-- Successful agent turns return structured output with `decision`, `summary`, and optional `next_state`, and the harness performs the validated state transition.
-- `allowed_next_states` constrains agent-selected `next_state` values in the turn schema when it is configured.
-- `failure_state`, when configured, takes precedence over any agent-selected `next_state` for `blocked` results.
-- Triggered AI review types run against the current worktree diff in fresh read-only Codex review turns, filter low-confidence findings internally, and feed one combined repair prompt back through the existing completion loop budget before the transition is accepted.
+- `allowed_next_states` constrains the structured-result `next_state` enum when configured.
+- Per-state `failure_state` overrides the global `failure_state` for that state.
+- State `completion` and `hooks.before_complete` participate in the completion/repair loop before the transition is accepted.
 
 Minimal example:
 
@@ -150,10 +228,16 @@ states:
   "In Progress":
     prompt: default
     ai_review:
-      - security
-      - frontend
+      types:
+        - security
+      scope: auto
+    completion:
+      require_pr: true
+    hooks:
+      before_complete: uv run pytest -q
+      before_complete_max_feedback_loops: 2
     allowed_next_states:
-      - Review
+      - Human Review
       - Blocked
     failure_state: Blocked
   "Merging":
@@ -162,37 +246,39 @@ states:
       model: gpt-5.4-mini
       reasoning_effort: low
       fast_mode: true
+      skills:
+        - land
 ```
 
 ## `ai_review`
 
-`ai_review` defines reusable workflow-facing AI review types. This namespace is
-separate from the existing top-level `review` settings used for operator-side
-human review worktrees.
+`ai_review` defines reusable workflow-facing AI review types. This is separate
+from the top-level `review` section used for operator review worktrees.
 
 ### Fields
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `ai_review.types` | object | `{}` | Optional mapping of reusable review type definitions. |
-| `ai_review.types.<name>.prompt` | string | none | Required. References a named `# review: <id>` section from the Markdown body. |
-| `ai_review.types.<name>.codex.model` | string or `null` | inherit effective session `codex.model` | Optional review-model override. |
-| `ai_review.types.<name>.codex.reasoning_effort` | string or `null` | inherit effective session `codex.reasoning_effort` | Optional review reasoning override. |
-| `ai_review.types.<name>.codex.fast_mode` | boolean or `null` | inherit effective session `codex.fast_mode` | Optional review fast-mode override. |
-| `ai_review.types.<name>.lines_changed` | non-negative integer or `null` | `null` | Optional changed-line threshold for triggering runtime AI review. |
-| `ai_review.types.<name>.paths.only` | non-empty list of strings | `[]` | Optional path trigger requiring every changed path to match at least one glob. |
-| `ai_review.types.<name>.paths.include` | non-empty list of strings | `[]` | Optional path trigger requiring at least one changed path to match. |
-| `ai_review.types.<name>.paths.exclude` | non-empty list of strings | `[]` | Optional path trigger requiring no changed path to match. |
+| `ai_review.types` | object | `{}` | Optional mapping of reusable review-type definitions. |
+| `ai_review.types.<name>.prompt` | string | none | Required. References a named `# review: <id>` section. |
+| `ai_review.types.<name>.codex.model` | string or `null` | inherit effective session model | Optional review override. |
+| `ai_review.types.<name>.codex.reasoning_effort` | string or `null` | inherit effective session reasoning | Optional review override. |
+| `ai_review.types.<name>.codex.fast_mode` | boolean or `null` | inherit effective session fast mode | Optional review override. |
+| `ai_review.types.<name>.lines_changed` | non-negative integer or `null` | `null` | Optional changed-line threshold trigger. |
+| `ai_review.types.<name>.paths.only` | non-empty list of strings | `[]` | Require every changed path to match. |
+| `ai_review.types.<name>.paths.include` | non-empty list of strings | `[]` | Require at least one changed path to match. |
+| `ai_review.types.<name>.paths.exclude` | non-empty list of strings | `[]` | Require no changed path to match. |
 
 Rules:
 
+- `ai_review` only supports the `types` key.
 - `ai_review.types` keys must not be blank.
-- Review type names are matched case-insensitively after trimming.
+- Review type names are trimmed and matched case-insensitively.
 - Duplicate normalized review type names are invalid.
-- `prompt` must reference an existing `# review: <id>` section.
-- `codex`, when present, only supports `model`, `reasoning_effort`, and `fast_mode`.
-- `paths` only supports `only`, `include`, and `exclude`.
-- Path-glob lists must contain non-blank strings and may not be empty when present.
+- `ai_review.types.<name>.prompt` must reference an existing `# review:` section.
+- `ai_review.types.<name>.codex` only supports `model`, `reasoning_effort`, and `fast_mode`.
+- `ai_review.types.<name>.paths` only supports `only`, `include`, and `exclude`.
+- Path-glob lists must contain non-blank strings, must not be empty when present, and must not contain duplicates.
 
 Minimal example:
 
@@ -204,22 +290,19 @@ ai_review:
       codex:
         model: gpt-5.4-mini
         reasoning_effort: high
-        fast_mode: true
       lines_changed: 25
       paths:
         include:
           - src/**
-        exclude:
-          - tests/**
 ```
 
 ## `polling`
 
 Polling controls how often the workflow store checks for work and workflow changes.
 
-| Field | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `polling.interval_ms` | positive integer or string integer | `30000` | Reloaded dynamically and used for future scheduling. |
+| Field | Type | Default |
+| --- | --- | --- |
+| `polling.interval_ms` | positive integer or string integer | `30000` |
 
 ## `workspace`
 
@@ -227,14 +310,15 @@ Workspace settings control where per-issue workspaces live.
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `workspace.root` | path string or `$VAR_NAME` | `<system-temp>/code-factory-workspaces` | Resolved with `expanduser()` and converted to an absolute path. |
+| `workspace.root` | path string or `$VAR_NAME` | `<system-temp>/code-factory-workspaces` | Resolved with `expanduser()` and normalized to an absolute path. |
 
 `workspace.root` details:
 
 - `~` is expanded.
 - A full `$VAR_NAME` token may point at the real path.
-- Relative paths are accepted and then normalized to an absolute path.
-- Embedded shell-style interpolation such as `$HOME/workspaces` is not expanded by Code Factory unless the whole value is a single `$VAR_NAME` token.
+- If that env var is unset or empty, the default workspace root is used.
+- Relative paths are accepted and converted to absolute paths.
+- Embedded shell interpolation such as `$HOME/workspaces` is not expanded unless the whole value is a single `$VAR_NAME` token.
 
 ## `agent`
 
@@ -244,68 +328,60 @@ Agent settings control orchestration concurrency and retry behavior.
 | --- | --- | --- | --- |
 | `agent.max_concurrent_agents` | positive integer or string integer | `10` | Global concurrent worker limit. |
 | `agent.max_retry_backoff_ms` | positive integer or string integer | `300000` | Upper bound for retry backoff. |
+| `agent.max_worker_retries` | positive integer or string integer | `3` | Maximum retry attempts after the initial run fails. |
 | `agent.max_concurrent_agents_by_state` | object of `state_name -> positive integer` | `{}` | Per-state concurrency overrides. |
 
 `agent.max_concurrent_agents_by_state` details:
 
 - Keys must be non-blank.
-- Keys are normalized with `strip().lower()` before lookup.
+- Keys are normalized case-insensitively before lookup.
 - Values must be positive integers.
-- Example: `In Progress: 4` and `in progress: 4` resolve to the same normalized state key.
 
 ## `codex`
 
-`codex` config controls how Code Factory launches and talks to Codex app-server.
+`codex` controls how Code Factory launches and talks to Codex app-server.
 
-Code Factory validates only a subset of these fields itself:
-
-- `codex.command` must be a non-empty string
-- `codex.model` and `codex.reasoning_effort` must be non-blank strings if present
-- `codex.fast_mode` must be a boolean if present
-- `codex.approval_policy` must be a string or object
-- `codex.turn_sandbox_policy` must be an object if present
-
-For the enum-like Codex values below, the concrete accepted values were verified against the locally generated app-server JSON schema on March 18, 2026.
+Code Factory currently validates only field shape and a few local invariants. It
+does not fully enum-validate Codex schema values itself.
 
 ### Fields
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `codex.command` | non-empty string | `codex app-server` | Base app-server command launched in the workspace with a shell. |
+| `codex.command` | non-empty string | `codex app-server` | Base command launched in the workspace with a shell. |
 | `codex.model` | non-blank string or `null` | `null` | Injected as `--model <value>` immediately before `app-server`. |
 | `codex.reasoning_effort` | non-blank string or `null` | `null` | Injected as `--config model_reasoning_effort=<value>` immediately before `app-server`. |
-| `codex.fast_mode` | boolean or `null` | `null` | When `true`, Code Factory sends `serviceTier: "fast"` on Codex thread start. `false` and `null` omit `serviceTier`. |
-| `codex.approval_policy` | string or object | `{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}` | Passed through to Codex thread start. |
+| `codex.fast_mode` | boolean or `null` | `null` | When `true`, Code Factory sends fast service-tier metadata on thread start. |
+| `codex.approval_policy` | string or object | reject-policy object | Passed through to Codex thread start. |
 | `codex.thread_sandbox` | string | `workspace-write` | Passed through to Codex thread start. |
-| `codex.turn_sandbox_policy` | object or `null` | `null` | Passed through to Codex turn start. If omitted, Code Factory builds a workspace-scoped default policy. |
+| `codex.turn_sandbox_policy` | object or `null` | `null` | Passed through to Codex turn start. When omitted, Code Factory builds a workspace-scoped default turn policy. |
 | `codex.turn_timeout_ms` | positive integer | `3600000` | Per-turn timeout. |
 | `codex.read_timeout_ms` | positive integer | `5000` | App-server protocol read timeout. |
 | `codex.stall_timeout_ms` | non-negative integer | `300000` | `0` disables stall detection. |
 
-`codex.command` remains the base shell command. If `codex.model` or
-`codex.reasoning_effort` is set, Code Factory parses the command as shell-style
-argv, inserts those flags immediately before the `app-server` argument, and
-launches the resulting command. This means the base command should keep
-`app-server` as an explicit argument when you use these workflow-managed
-overrides.
+Notes:
 
-`codex.fast_mode` is protocol-level only. It does not inject CLI flags into
-`codex.command`.
+- Top-level `codex` does not support a `skills` key.
+- If `codex.model`, `codex.reasoning_effort`, or a per-state `codex.skills` allowlist is used, `codex.command` must be valid shell-style argv and must include an explicit `app-server` argument.
+- `codex.fast_mode` is protocol-level only. It does not inject CLI flags into `codex.command`.
 
-### `codex.approval_policy` string values
+### `codex.approval_policy`
 
-These values come from the Codex `AskForApproval` schema and OpenAI's Codex CLI guidance.
+Accepted shapes:
+
+- string
+- object
+
+Common string values currently used with Codex:
 
 | Value | Description |
 | --- | --- |
-| `untrusted` | Conservative approval mode. Most commands need approval except a limited safe-read allowlist. |
-| `on-failure` | Run in the sandbox first; if the command fails because it needs more access, rerun with approval. |
-| `on-request` | Run in the sandbox by default and explicitly request escalation when needed. |
-| `never` | Non-interactive mode. Never ask for approval. Work within the available constraints. |
+| `untrusted` | Conservative approval mode. |
+| `on-failure` | Retry with approval if sandbox execution fails. |
+| `on-request` | Ask for escalation explicitly when needed. |
+| `never` | Non-interactive mode. Never ask for approval. |
 
-### `codex.approval_policy` object form
-
-The installed schema also accepts a reject-policy object:
+Object form example:
 
 ```yaml
 codex:
@@ -317,20 +393,20 @@ codex:
       request_permissions: false
 ```
 
-Object fields:
+Built-in default:
 
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `reject.sandbox_approval` | boolean | none | Reject sandbox approval requests. |
-| `reject.rules` | boolean | none | Reject rules-related approval requests. |
-| `reject.mcp_elicitations` | boolean | none | Reject MCP elicitation requests. |
-| `reject.request_permissions` | boolean | `false` | Reject permission-request approvals. |
+```yaml
+codex:
+  approval_policy:
+    reject:
+      sandbox_approval: true
+      rules: true
+      mcp_elicitations: true
+```
 
-Code Factory's built-in default uses the object form with the first three booleans set to `true`.
+### `codex.thread_sandbox`
 
-### `codex.thread_sandbox` values
-
-These values come from the Codex `SandboxMode` schema.
+Common values currently used with Codex:
 
 | Value | Description |
 | --- | --- |
@@ -340,85 +416,20 @@ These values come from the Codex `SandboxMode` schema.
 
 ### `codex.turn_sandbox_policy`
 
-If `codex.turn_sandbox_policy` is omitted, Code Factory sends this default policy for each turn:
+If `codex.turn_sandbox_policy` is omitted, Code Factory sends a workspace-write
+policy rooted at the current workspace path.
 
-```yaml
-codex:
-  turn_sandbox_policy:
-    type: workspaceWrite
-    writableRoots:
-      - /absolute/path/to/current/workspace
-    readOnlyAccess:
-      type: fullAccess
-    networkAccess: false
-    excludeTmpdirEnvVar: false
-    excludeSlashTmp: false
-```
+Supported policy shapes are passed through as objects. Common variants used with
+Codex include:
 
-Supported policy object variants from the installed Codex schema:
-
-#### `type: dangerFullAccess`
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `type` | enum | none | Must be `dangerFullAccess`. Disables filesystem sandboxing for the turn. |
-
-#### `type: readOnly`
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `type` | enum | none | Must be `readOnly`. |
-| `networkAccess` | boolean | `false` | Whether network access is enabled for the turn. |
-| `access` | object | `{type: fullAccess}` | Read-only access scope. |
-
-`readOnly.access.type` values:
-
-| Value | Description |
-| --- | --- |
-| `fullAccess` | Allow reading any path available inside the sandbox. |
-| `restricted` | Only allow reads from the listed roots, optionally including platform defaults. |
-
-`readOnly.access` fields when `type: restricted`:
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `type` | enum | none | Must be `restricted`. |
-| `includePlatformDefaults` | boolean | `true` | Keep Codex's platform-default readable roots in addition to your explicit roots. |
-| `readableRoots` | array of absolute paths | `[]` | Extra readable roots. |
-
-#### `type: externalSandbox`
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `type` | enum | none | Must be `externalSandbox`. |
-| `networkAccess` | enum | `restricted` | Network policy for the external sandbox. |
-
-`externalSandbox.networkAccess` values:
-
-| Value | Description |
-| --- | --- |
-| `restricted` | Use the schema's restricted network mode for the external sandbox. |
-| `enabled` | Enable network access in the external sandbox. |
-
-#### `type: workspaceWrite`
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `type` | enum | none | Must be `workspaceWrite`. |
-| `writableRoots` | array of absolute paths | `[]` | Additional writable roots for the turn. |
-| `readOnlyAccess` | object | `{type: fullAccess}` | Read scope outside writable roots. |
-| `networkAccess` | boolean | `false` | Whether network access is enabled for the turn. |
-| `excludeTmpdirEnvVar` | boolean | `false` | Exclude the current `TMPDIR`/tmpdir env path from writable roots if Codex would otherwise include it. |
-| `excludeSlashTmp` | boolean | `false` | Exclude `/tmp` from writable roots if Codex would otherwise include it. |
-
-`workspaceWrite.readOnlyAccess.type` values are the same as the `readOnly.access.type` values above:
-
-- `fullAccess`
-- `restricted`
+- `type: dangerFullAccess`
+- `type: readOnly`
+- `type: externalSandbox`
+- `type: workspaceWrite`
 
 ## `hooks`
 
-Hooks are shell snippets executed in the workspace directory.
+Top-level hooks are shell snippets executed in the workspace directory.
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
@@ -426,60 +437,108 @@ Hooks are shell snippets executed in the workspace directory.
 | `hooks.before_run` | string or `null` | `null` | Runs before each worker attempt. Failure aborts the attempt. |
 | `hooks.after_run` | string or `null` | `null` | Runs after each worker attempt. Failures are logged and ignored. |
 | `hooks.before_remove` | string or `null` | `null` | Runs before deleting a workspace directory. Failures are logged and ignored. |
-| `hooks.timeout_ms` | positive integer | `60000` | Shared timeout for all hooks. |
+| `hooks.timeout_ms` | positive integer | `60000` | Shared timeout for all top-level hooks. |
+
+## `review`
+
+`review` configures operator review worktrees and optional dev servers used by
+the `cf review` flow.
+
+### Fields
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `review.temp_root` | path string, `$VAR_NAME`, or `null` | `null` | Optional root for temporary review worktrees. Resolved to an absolute path. Empty resolves to `null`. |
+| `review.prepare` | string or `null` | `null` | Optional command run before review servers start. |
+| `review.servers` | non-empty list or omitted | omitted | Optional review server definitions. |
+| `review.servers[].name` | non-blank string | none | Must be unique within `review.servers`. |
+| `review.servers[].command` | non-blank string | none | Rendered with Liquid using the `review` context and the current server definition as `server`. |
+| `review.servers[].base_port` | positive integer or `null` | `null` | For ticket targets, the runtime computes `base_port + trailing_ticket_number`. |
+| `review.servers[].url` | string or `null` | `null` | Optional Liquid-rendered browser URL. The same `review` and `server` context is available. |
+| `review.servers[].open_browser` | boolean or `null` | `null` | If omitted, opens automatically when `url` is present. |
+
+Notes:
+
+- `review.servers` must be a non-empty list when present.
+- `review.temp_root` supports `~` expansion and full `$VAR_NAME` tokens.
+- `review.temp_root` differs from `workspace.root`: an unset or empty env token resolves to `null`, not to a default path.
 
 ## `observability`
 
-This is an implementation-specific top-level section for the TUI dashboard.
+Implementation-specific settings for the live dashboard.
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `observability.dashboard_enabled` | boolean | `true` | Only has an effect when stderr is a TTY. |
-| `observability.refresh_ms` | positive integer | `1000` | The live dashboard currently clamps this to the range `250..1000` ms. |
-| `observability.render_interval_ms` | positive integer | `16` | Parsed and stored, but currently unused by `LiveStatusDashboard`. |
+| `observability.dashboard_enabled` | boolean | `true` | Only takes effect when stderr is a TTY. |
+| `observability.refresh_ms` | positive integer | `1000` | The dashboard currently clamps this to the range `250..1000` ms. |
+| `observability.render_interval_ms` | positive integer | `16` | Parsed and stored; currently not used by the live dashboard refresh loop. |
 
 ## `server`
 
-This is an implementation extension for the optional observability HTTP API.
+Implementation-specific settings for the optional observability HTTP API.
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `server.port` | non-negative integer or `null` | `null` | Enables the HTTP API when set. `0` asks the OS for an ephemeral port. CLI `--port` overrides this value. |
+| `server.port` | non-negative integer or `null` | `4000` | `0` asks the OS for an ephemeral port. `null` behaves like omission and resolves to the default. CLI `--port` overrides this value for the current run. |
 | `server.host` | string | `127.0.0.1` | Bind host for the HTTP server. |
 
 Operational notes:
 
-- The service only starts the HTTP server at boot.
-- A workflow reload can change `server.port` or `server.host` in the parsed settings, but the current implementation does not hot-rebind an already running server.
+- The current runtime default is to expose the HTTP API on port `4000`.
+- The service starts the HTTP server only at boot.
+- Workflow reloads can change the parsed `server.host` and `server.port`, but the running server is not hot-rebound.
 
 ## Example frontmatter
 
 ```yaml
 ---
+failure_state: Human Review
+terminal_states:
+  - Closed
+  - Cancelled
+  - Canceled
+  - Duplicate
+  - Done
+
 tracker:
   kind: linear
   endpoint: https://api.linear.app/graphql
   api_key: $LINEAR_API_KEY
   project_slug: code-factory
   assignee: me
-  terminal_states:
-    - Closed
-    - Cancelled
-    - Canceled
-    - Duplicate
-    - Done
 
 states:
   "Todo":
-    prompt: default
+    auto_next_state: In Progress
   "In Progress":
     prompt: default
+    completion:
+      require_pr: true
+    hooks:
+      before_complete: uv run pytest -q
+    ai_review:
+      types:
+        - security
+      scope: auto
+    allowed_next_states:
+      - Human Review
+    failure_state: Blocked
   "Merging":
     prompt: merge
     codex:
       model: gpt-5.4-mini
       reasoning_effort: low
       fast_mode: true
+      skills:
+        - land
+
+ai_review:
+  types:
+    security:
+      prompt: security
+      paths:
+        include:
+          - src/**
 
 polling:
   interval_ms: 30000
@@ -490,6 +549,7 @@ workspace:
 agent:
   max_concurrent_agents: 10
   max_retry_backoff_ms: 300000
+  max_worker_retries: 3
   max_concurrent_agents_by_state:
     in progress: 5
 
@@ -506,6 +566,15 @@ hooks:
   after_run: uv run pytest -q
   timeout_ms: 60000
 
+review:
+  temp_root: /tmp/code-factory-review
+  prepare: pnpm install
+  servers:
+    - name: web
+      command: pnpm dev --port {{ review.port }}
+      base_port: 3000
+      url: http://127.0.0.1:{{ review.port }}
+
 observability:
   dashboard_enabled: true
   refresh_ms: 1000
@@ -519,11 +588,16 @@ server:
 
 ## Validation summary
 
-At startup and before each dispatch tick, Code Factory validates the minimum config needed to do real work:
+At startup and before dispatching work, Code Factory validates the minimum
+config needed to do real work:
 
-- `tracker.kind` must be present and supported
-- `tracker.api_key` must be present when required by the selected tracker
-- `tracker.project_slug` must be present when required by the selected tracker
-- `codex.command` must be present and non-empty
+- `states` must be present and valid.
+- `failure_state` must be present and non-blank.
+- `tracker.kind` must be present and supported.
+- `tracker.api_key` must be present when required by the selected tracker.
+- `tracker.project_slug` must be present when required by the selected tracker.
+- `codex.command` must be present and non-empty.
 
-If parsing or validation fails, new dispatches are blocked until the workflow is fixed. Existing in-flight work is not forcibly restarted.
+If workflow parsing or validation fails during reload, new dispatches are
+blocked until the workflow is fixed. The last known good snapshot stays active
+for the running service.

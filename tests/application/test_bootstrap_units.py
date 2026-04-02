@@ -236,7 +236,7 @@ def test_prompt_project_init_collects_all_values(
     monkeypatch.setattr(
         "code_factory.application.bootstrap.prompt_non_empty",
         lambda label, **kwargs: {
-            "Project slug": "demo-project",
+            "Linear project (name or slug)": "demo-project",
             "Git repository": "git@github.com:example/demo.git",
             "Failure state": DEFAULT_FAILURE_STATE,
             "Workspace root": "/tmp/code-factory-workspaces",

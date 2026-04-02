@@ -58,6 +58,7 @@ from code_factory.config.utils import (
 )
 from code_factory.errors import ConfigValidationError, WorkflowLoadError, WorkspaceError
 from code_factory.issues import Issue, normalize_issue_state
+from code_factory.project_init import PreparedProjectInit
 from code_factory.prompts.values import to_liquid_value
 from code_factory.runtime.support import maybe_aclose
 from code_factory.structured_results import (
@@ -173,7 +174,10 @@ def test_init_command_copies_default_workflow(
         workspace_root="/tmp/demo-workspaces",
         max_concurrent_agents=3,
     )
-    monkeypatch.setattr("code_factory.cli.prompt_project_init", lambda **_: values)
+    monkeypatch.setattr(
+        "code_factory.cli.prepare_project_init",
+        lambda **_: PreparedProjectInit(values=values, warnings=()),
+    )
 
     result = runner.invoke(app, ["init"])
 
@@ -190,16 +194,19 @@ def test_init_command_rejects_existing_workflow(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "code_factory.cli.prompt_project_init",
-        lambda **_: WorkflowTemplateValues(
-            tracker_kind="linear",
-            project_slug="demo-project",
-            git_repo="git@github.com:example/demo.git",
-            failure_state="Human Review",
-            active_states=("Todo",),
-            terminal_states=("Done",),
-            workspace_root="/tmp/demo-workspaces",
-            max_concurrent_agents=2,
+        "code_factory.cli.prepare_project_init",
+        lambda **_: PreparedProjectInit(
+            values=WorkflowTemplateValues(
+                tracker_kind="linear",
+                project_slug="demo-project",
+                git_repo="git@github.com:example/demo.git",
+                failure_state="Human Review",
+                active_states=("Todo",),
+                terminal_states=("Done",),
+                workspace_root="/tmp/demo-workspaces",
+                max_concurrent_agents=2,
+            ),
+            warnings=(),
         ),
     )
     workflow = tmp_path / DEFAULT_WORKFLOW_FILENAME
@@ -226,7 +233,10 @@ def test_init_command_force_overwrites_existing_workflow(
         workspace_root="/tmp/demo-workspaces",
         max_concurrent_agents=4,
     )
-    monkeypatch.setattr("code_factory.cli.prompt_project_init", lambda **_: values)
+    monkeypatch.setattr(
+        "code_factory.cli.prepare_project_init",
+        lambda **_: PreparedProjectInit(values=values, warnings=()),
+    )
     workflow = tmp_path / DEFAULT_WORKFLOW_FILENAME
     workflow.write_text("existing\n", encoding="utf-8")
     skills_dir = tmp_path / ".agents" / "skills"
@@ -239,6 +249,34 @@ def test_init_command_force_overwrites_existing_workflow(
     assert workflow.read_text(encoding="utf-8") == render_default_workflow(values)
     assert not (skills_dir / "old.txt").exists()
     assert (skills_dir / "land" / "land_watch.py").is_file()
+
+
+def test_init_command_renders_bootstrap_warnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    values = WorkflowTemplateValues(
+        tracker_kind="linear",
+        project_slug="demo-project",
+        git_repo="git@github.com:example/demo.git",
+        failure_state="Human Review",
+        active_states=("Todo",),
+        terminal_states=("Done",),
+        workspace_root="/tmp/demo-workspaces",
+        max_concurrent_agents=2,
+    )
+    monkeypatch.setattr(
+        "code_factory.cli.prepare_project_init",
+        lambda **_: PreparedProjectInit(
+            values=values,
+            warnings=("warning text",),
+        ),
+    )
+
+    result = runner.invoke(app, ["init"])
+
+    assert result.exit_code == 0
+    assert "warning text" in result.output
 
 
 def test_main_returns_acknowledgement_failure(

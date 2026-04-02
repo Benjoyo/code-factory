@@ -248,6 +248,26 @@ def test_prompt_builder_is_strict_and_uses_default_template(tmp_path: Path) -> N
     assert "No description provided." in prompt
 
 
+def test_default_prompt_renders_ticket_specific_review_command(tmp_path: Path) -> None:
+    template = (
+        Path(__file__).resolve().parent.parent
+        / "src"
+        / "code_factory"
+        / "workflow"
+        / "templates"
+        / "default.md"
+    ).read_text(encoding="utf-8")
+    prompt = template.split("---\n", 2)[2].strip()
+    workflow = write_workflow_file(tmp_path / "WORKFLOW.md", prompt=prompt)
+    snapshot = make_snapshot(workflow)
+    issue = make_issue(identifier="ENG-12")
+    issue_data = asdict(issue) | {"upstream_tickets": []}
+
+    rendered = build_prompt(issue, snapshot, issue_data=issue_data)
+
+    assert "cf review ENG-12" in rendered
+
+
 @pytest.mark.asyncio
 async def test_service_fails_startup_preflight_for_invalid_dispatch_config(
     tmp_path: Path,

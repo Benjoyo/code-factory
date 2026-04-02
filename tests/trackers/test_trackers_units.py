@@ -14,7 +14,11 @@ from code_factory.trackers.base import (
     parse_tracker_settings,
     validate_tracker_settings,
 )
+from code_factory.trackers.bootstrap import build_tracker_bootstrapper
 from code_factory.trackers.linear import LinearOps
+from code_factory.trackers.linear.bootstrap import LinearBootstrapper
+from code_factory.trackers.linear.bootstrap import _data as bootstrap_data
+from code_factory.trackers.linear.bootstrap import _nodes as bootstrap_nodes
 from code_factory.trackers.linear.client import LinearClient
 from code_factory.trackers.linear.config import (
     parse_tracker_settings as parse_linear_tracker_settings,
@@ -50,6 +54,8 @@ from code_factory.trackers.linear.ops.ops_queries import (
     CREATE_RELATION_MUTATION,
     FILE_UPLOAD_MUTATION,
     ISSUES_QUERY,
+    PROJECTS_QUERY,
+    TEAMS_QUERY,
 )
 from code_factory.trackers.linear.queries import (
     COMMENTS_QUERY,
@@ -297,6 +303,350 @@ async def test_linear_graphql_client_request_and_summary(tmp_path: Path) -> None
     assert (
         summarize_error_body(httpx.Response(500, content=b"plain text")) == "plain text"
     )
+
+
+@pytest.mark.asyncio
+async def test_linear_bootstrapper_resolves_projects_and_creates_missing_states() -> (
+    None
+):
+    requests: list[dict[str, Any]] = []
+
+    async def request_fun(
+        payload: dict[str, Any], headers: list[tuple[str, str]]
+    ) -> httpx.Response:
+        requests.append(payload)
+        assert ("Authorization", "token") in headers
+        query = str(payload["query"])
+        if query == PROJECTS_QUERY:
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "projects": {
+                            "nodes": [
+                                {
+                                    "id": "project-1",
+                                    "name": "Demo Project",
+                                    "slugId": "demo-project",
+                                    "teams": {
+                                        "nodes": [
+                                            {
+                                                "id": "team-1",
+                                                "name": "Engineering",
+                                                "key": "ENG",
+                                                "states": {
+                                                    "nodes": [
+                                                        {
+                                                            "id": "state-1",
+                                                            "name": "Todo",
+                                                            "type": "unstarted",
+                                                        }
+                                                    ]
+                                                },
+                                            }
+                                        ]
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
+        if "workflowStateCreate" in query:
+            state_name = payload["variables"]["input"]["name"]
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "workflowStateCreate": {
+                            "success": True,
+                            "workflowState": {
+                                "id": f"{state_name}-id",
+                                "name": state_name,
+                                "type": payload["variables"]["input"]["type"],
+                            },
+                        }
+                    }
+                },
+            )
+        raise AssertionError(query)
+
+    bootstrapper = LinearBootstrapper(api_key="token", request_fun=request_fun)
+    by_slug = await bootstrapper.resolve_project("demo-project")
+    project = await bootstrapper.resolve_project("Demo Project")
+    assert by_slug is not None
+    assert by_slug.slug_id == "demo-project"
+    assert project is not None
+    assert project.slug_id == "demo-project"
+
+    created = await bootstrapper.ensure_states(
+        team=project.teams[0],
+        required_states=(
+            ("Todo", "unstarted"),
+            ("Human Review", "started"),
+            ("Done", "completed"),
+        ),
+    )
+
+    assert [state.name for state in created] == ["Human Review", "Done"]
+    assert requests[0]["variables"] == {"first": 100}
+    await bootstrapper.close()
+
+
+@pytest.mark.asyncio
+async def test_linear_bootstrapper_creates_project_and_resolves_team() -> None:
+    requests: list[dict[str, Any]] = []
+
+    async def request_fun(
+        payload: dict[str, Any], _headers: list[tuple[str, str]]
+    ) -> httpx.Response:
+        requests.append(payload)
+        query = str(payload["query"])
+        if query == TEAMS_QUERY:
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "teams": {
+                            "nodes": [
+                                {
+                                    "id": "team-1",
+                                    "name": "Engineering",
+                                    "key": "ENG",
+                                    "states": {"nodes": []},
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
+        if "projectCreate" in query:
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "projectCreate": {
+                            "success": True,
+                            "project": {
+                                "id": "project-1",
+                                "name": "Demo Project",
+                                "slugId": "demo-project-1",
+                                "teams": {
+                                    "nodes": [
+                                        {
+                                            "id": "team-1",
+                                            "name": "Engineering",
+                                            "key": "ENG",
+                                            "states": {"nodes": []},
+                                        }
+                                    ]
+                                },
+                            },
+                        }
+                    }
+                },
+            )
+        raise AssertionError(query)
+
+    bootstrapper = LinearBootstrapper(api_key="token", request_fun=request_fun)
+    team = await bootstrapper.resolve_team("ENG")
+    project = await bootstrapper.create_project(name="Demo Project", team=team)
+
+    assert team.key == "ENG"
+    assert project.slug_id == "demo-project-1"
+    assert requests[1]["variables"]["input"] == {
+        "name": "Demo Project",
+        "teamIds": ["team-1"],
+    }
+    await bootstrapper.close()
+
+
+@pytest.mark.asyncio
+async def test_linear_bootstrapper_error_paths_and_generic_factory() -> None:
+    assert isinstance(
+        build_tracker_bootstrapper(tracker_kind="linear", api_key="token"),
+        LinearBootstrapper,
+    )
+    with pytest.raises(ValueError, match="unsupported tracker bootstrap kind"):
+        build_tracker_bootstrapper(tracker_kind="memory", api_key="token")
+
+    async def ambiguous_projects(
+        payload: dict[str, Any], _headers: list[tuple[str, str]]
+    ) -> httpx.Response:
+        query = str(payload["query"])
+        if query == PROJECTS_QUERY:
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "projects": {
+                            "nodes": [
+                                {
+                                    "id": "project-1",
+                                    "name": "Demo",
+                                    "slugId": "demo",
+                                    "teams": {"nodes": []},
+                                },
+                                {
+                                    "id": "project-2",
+                                    "name": "Other",
+                                    "slugId": "demo",
+                                    "teams": {"nodes": []},
+                                },
+                            ]
+                        }
+                    }
+                },
+            )
+        raise AssertionError(query)
+
+    with pytest.raises(TrackerClientError, match="tracker_ambiguous"):
+        await LinearBootstrapper(
+            api_key="token", request_fun=ambiguous_projects
+        ).resolve_project("demo")
+
+    async def ambiguous_name_projects(
+        payload: dict[str, Any], _headers: list[tuple[str, str]]
+    ) -> httpx.Response:
+        if str(payload["query"]) == PROJECTS_QUERY:
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "projects": {
+                            "nodes": [
+                                {
+                                    "id": "project-1",
+                                    "name": "Demo",
+                                    "slugId": "demo-one",
+                                    "teams": {"nodes": []},
+                                },
+                                {
+                                    "id": "project-2",
+                                    "name": "Demo",
+                                    "slugId": "demo-two",
+                                    "teams": {"nodes": []},
+                                },
+                            ]
+                        }
+                    }
+                },
+            )
+        raise AssertionError(payload["query"])
+
+    with pytest.raises(TrackerClientError, match="tracker_ambiguous"):
+        await LinearBootstrapper(
+            api_key="token", request_fun=ambiguous_name_projects
+        ).resolve_project("Demo")
+
+    async def missing_project(
+        payload: dict[str, Any], _headers: list[tuple[str, str]]
+    ) -> httpx.Response:
+        if str(payload["query"]) == PROJECTS_QUERY:
+            return httpx.Response(200, json={"data": {"projects": {"nodes": []}}})
+        raise AssertionError(payload["query"])
+
+    assert (
+        await LinearBootstrapper(
+            api_key="token", request_fun=missing_project
+        ).resolve_project("missing")
+        is None
+    )
+
+    async def missing_team(
+        payload: dict[str, Any], _headers: list[tuple[str, str]]
+    ) -> httpx.Response:
+        if str(payload["query"]) == TEAMS_QUERY:
+            return httpx.Response(200, json={"data": {"teams": {"nodes": []}}})
+        raise AssertionError(payload["query"])
+
+    with pytest.raises(TrackerClientError, match="tracker_not_found"):
+        await LinearBootstrapper(
+            api_key="token", request_fun=missing_team
+        ).resolve_team("ENG")
+
+    failing_team = {
+        "id": "team-1",
+        "name": "Engineering",
+        "key": "ENG",
+        "states": {"nodes": []},
+    }
+
+    async def mutation_failures(
+        payload: dict[str, Any], _headers: list[tuple[str, str]]
+    ) -> httpx.Response:
+        query = str(payload["query"])
+        if "projectCreate" in query:
+            return httpx.Response(
+                200, json={"data": {"projectCreate": {"success": False}}}
+            )
+        if "workflowStateCreate" in query:
+            return httpx.Response(
+                200,
+                json={"data": {"workflowStateCreate": {"success": False}}},
+            )
+        raise AssertionError(query)
+
+    bootstrapper = LinearBootstrapper(api_key="token", request_fun=mutation_failures)
+    team = await LinearBootstrapper(
+        api_key="token",
+        request_fun=lambda payload, _headers: asyncio.sleep(
+            0,
+            result=httpx.Response(
+                200, json={"data": {"teams": {"nodes": [failing_team]}}}
+            ),
+        ),
+    ).resolve_team("ENG")
+    with pytest.raises(TrackerClientError, match="tracker project creation failed"):
+        await bootstrapper.create_project(name="Demo", team=team)
+    with pytest.raises(
+        TrackerClientError, match="tracker workflow state creation failed"
+    ):
+        await bootstrapper.ensure_states(
+            team=team,
+            required_states=(("Todo", "unstarted"),),
+        )
+
+    async def invalid_mutation_payloads(
+        payload: dict[str, Any], _headers: list[tuple[str, str]]
+    ) -> httpx.Response:
+        query = str(payload["query"])
+        if "projectCreate" in query:
+            return httpx.Response(
+                200,
+                json={"data": {"projectCreate": {"success": True, "project": []}}},
+            )
+        if "workflowStateCreate" in query:
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "workflowStateCreate": {
+                            "success": True,
+                            "workflowState": [],
+                        }
+                    }
+                },
+            )
+        raise AssertionError(query)
+
+    invalid_bootstrapper = LinearBootstrapper(
+        api_key="token", request_fun=invalid_mutation_payloads
+    )
+    with pytest.raises(TrackerClientError, match="linear_unknown_payload"):
+        await invalid_bootstrapper.create_project(name="Demo", team=team)
+    with pytest.raises(TrackerClientError, match="linear_unknown_payload"):
+        await invalid_bootstrapper.ensure_states(
+            team=team,
+            required_states=(("Todo", "unstarted"),),
+        )
+
+    with pytest.raises(TrackerClientError, match="tracker_operation_failed"):
+        bootstrap_data({"errors": [{"message": "boom"}]}, "projects")
+    with pytest.raises(TrackerClientError, match="linear_unknown_payload"):
+        bootstrap_data({"data": {"projects": []}}, "projects")
+    with pytest.raises(TrackerClientError, match="linear_unknown_payload"):
+        bootstrap_nodes({"nodes": "bad"})
 
 
 @pytest.mark.asyncio

@@ -10,7 +10,7 @@ import typer
 from rich.console import Console
 
 from .application import CodeFactoryService
-from .application.bootstrap import initialize_project, prompt_project_init
+from .application.bootstrap import initialize_project
 from .errors import ControlRequestError, ReviewError
 from .observability.api.client import steer_issue
 from .observability.cli_support import (
@@ -18,6 +18,7 @@ from .observability.cli_support import (
     build_cli_config,
     resolve_control_endpoint,
 )
+from .project_init import prepare_project_init
 from .trackers.cli import register_tracker_commands
 from .workflow.loader import DEFAULT_WORKFLOW_FILENAME
 from .workspace.review.review_session import run_review_session
@@ -148,9 +149,9 @@ def init_command(
     """Interactively create a starter workflow and bundled skills in this project."""
 
     console = Console()
-    values = prompt_project_init(console=console, target_dir=Path.cwd())
+    prepared = prepare_project_init(console=console, target_dir=Path.cwd())
     try:
-        result = initialize_project(values, target_dir=Path.cwd(), force=force)
+        result = initialize_project(prepared.values, target_dir=Path.cwd(), force=force)
     except FileExistsError:
         typer.echo(
             "Bootstrap target already exists. Re-run with `--force` to overwrite "
@@ -164,7 +165,9 @@ def init_command(
         f"Created {written_path_label(result.workflow_path)} and copied skills to "
         f"{written_path_label(result.skills_path)}."
     )
-    if values.tracker_kind != "linear":
+    for warning in prepared.warnings:
+        console.print(f"[yellow]{warning}[/yellow]")
+    if prepared.values.tracker_kind != "linear":
         console.print(
             "[yellow]The bundled prompt body still contains Linear-specific guidance. "
             "Review WORKFLOW.md before first use.[/yellow]"
