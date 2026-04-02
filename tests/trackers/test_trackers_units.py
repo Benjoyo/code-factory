@@ -83,7 +83,7 @@ def test_tracker_base_build_validate_and_parse(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     memory_settings = make_settings(
-        tmp_path, tracker={"kind": "memory", "api_key": None, "project_slug": None}
+        tmp_path, tracker={"kind": "memory", "api_key": None, "project": None}
     )
     linear_settings = make_settings(tmp_path)
 
@@ -101,14 +101,14 @@ def test_tracker_base_build_validate_and_parse(
     with pytest.raises(ConfigValidationError, match="tracker.kind is required"):
         validate_tracker_settings(
             make_settings(
-                tmp_path, tracker={"kind": None, "api_key": "t", "project_slug": "p"}
+                tmp_path, tracker={"kind": None, "api_key": "t", "project": "p"}
             )
         )
     validate_tracker_settings(memory_settings)
     with pytest.raises(ConfigValidationError, match="unsupported tracker kind"):
         validate_tracker_settings(
             make_settings(
-                tmp_path, tracker={"kind": "jira", "api_key": "t", "project_slug": "p"}
+                tmp_path, tracker={"kind": "jira", "api_key": "t", "project": "p"}
             )
         )
 
@@ -154,11 +154,11 @@ def test_linear_config_defaults_env_and_validation(
     monkeypatch.delenv("LINEAR_API_KEY")
     with pytest.raises(ConfigValidationError, match="LINEAR_API_KEY is required"):
         validate_linear_tracker_settings(
-            make_settings(tmp_path, tracker={"api_key": None, "project_slug": "p"})
+            make_settings(tmp_path, tracker={"api_key": None, "project": "p"})
         )
-    with pytest.raises(ConfigValidationError, match="tracker.project_slug is required"):
+    with pytest.raises(ConfigValidationError, match="tracker.project is required"):
         validate_linear_tracker_settings(
-            make_settings(tmp_path, tracker={"project_slug": None})
+            make_settings(tmp_path, tracker={"project": None})
         )
 
 
@@ -317,7 +317,7 @@ async def test_linear_bootstrapper_resolves_projects_and_creates_missing_states(
         requests.append(payload)
         assert ("Authorization", "token") in headers
         query = str(payload["query"])
-        if query == PROJECTS_QUERY:
+        if "CodeFactoryTrackerProjectByName" in query:
             return httpx.Response(
                 200,
                 json={
@@ -352,6 +352,32 @@ async def test_linear_bootstrapper_resolves_projects_and_creates_missing_states(
                     }
                 },
             )
+        if query == TEAMS_QUERY:
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "teams": {
+                            "nodes": [
+                                {
+                                    "id": "team-1",
+                                    "name": "Engineering",
+                                    "key": "ENG",
+                                    "states": {
+                                        "nodes": [
+                                            {
+                                                "id": "state-1",
+                                                "name": "Todo",
+                                                "type": "unstarted",
+                                            }
+                                        ]
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
         if "workflowStateCreate" in query:
             state_name = payload["variables"]["input"]["name"]
             return httpx.Response(
@@ -372,7 +398,7 @@ async def test_linear_bootstrapper_resolves_projects_and_creates_missing_states(
         raise AssertionError(query)
 
     bootstrapper = LinearBootstrapper(api_key="token", request_fun=request_fun)
-    by_slug = await bootstrapper.resolve_project("demo-project")
+    by_slug = await bootstrapper.resolve_project("Demo Project")
     project = await bootstrapper.resolve_project("Demo Project")
     assert by_slug is not None
     assert by_slug.slug_id == "demo-project"
@@ -389,7 +415,8 @@ async def test_linear_bootstrapper_resolves_projects_and_creates_missing_states(
     )
 
     assert [state.name for state in created] == ["Human Review", "Done"]
-    assert requests[0]["variables"] == {"first": 100}
+    assert requests[0]["variables"] == {"name": "Demo Project", "first": 10}
+    assert requests[1]["variables"] == {"first": 100}
     await bootstrapper.close()
 
 
@@ -474,7 +501,7 @@ async def test_linear_bootstrapper_error_paths_and_generic_factory() -> None:
         payload: dict[str, Any], _headers: list[tuple[str, str]]
     ) -> httpx.Response:
         query = str(payload["query"])
-        if query == PROJECTS_QUERY:
+        if "CodeFactoryTrackerProjectByName" in query:
             return httpx.Response(
                 200,
                 json={
@@ -489,8 +516,8 @@ async def test_linear_bootstrapper_error_paths_and_generic_factory() -> None:
                                 },
                                 {
                                     "id": "project-2",
-                                    "name": "Other",
-                                    "slugId": "demo",
+                                    "name": "Demo",
+                                    "slugId": "other",
                                     "teams": {"nodes": []},
                                 },
                             ]
@@ -500,7 +527,7 @@ async def test_linear_bootstrapper_error_paths_and_generic_factory() -> None:
             )
         raise AssertionError(query)
 
-    with pytest.raises(TrackerClientError, match="tracker_ambiguous"):
+    with pytest.raises(TrackerClientError, match="tracker_project_ambiguous"):
         await LinearBootstrapper(
             api_key="token", request_fun=ambiguous_projects
         ).resolve_project("demo")
@@ -508,7 +535,7 @@ async def test_linear_bootstrapper_error_paths_and_generic_factory() -> None:
     async def ambiguous_name_projects(
         payload: dict[str, Any], _headers: list[tuple[str, str]]
     ) -> httpx.Response:
-        if str(payload["query"]) == PROJECTS_QUERY:
+        if "CodeFactoryTrackerProjectByName" in str(payload["query"]):
             return httpx.Response(
                 200,
                 json={
@@ -534,7 +561,7 @@ async def test_linear_bootstrapper_error_paths_and_generic_factory() -> None:
             )
         raise AssertionError(payload["query"])
 
-    with pytest.raises(TrackerClientError, match="tracker_ambiguous"):
+    with pytest.raises(TrackerClientError, match="tracker_project_ambiguous"):
         await LinearBootstrapper(
             api_key="token", request_fun=ambiguous_name_projects
         ).resolve_project("Demo")
@@ -542,7 +569,7 @@ async def test_linear_bootstrapper_error_paths_and_generic_factory() -> None:
     async def missing_project(
         payload: dict[str, Any], _headers: list[tuple[str, str]]
     ) -> httpx.Response:
-        if str(payload["query"]) == PROJECTS_QUERY:
+        if "CodeFactoryTrackerProjectByName" in str(payload["query"]):
             return httpx.Response(200, json={"data": {"projects": {"nodes": []}}})
         raise AssertionError(payload["query"])
 
@@ -698,6 +725,21 @@ async def test_linear_client_core_behaviors(tmp_path: Path) -> None:
             calls.append((query, payload))
             if query == VIEWER_QUERY:
                 return {"data": {"viewer": {"id": "viewer-1"}}}
+            if "CodeFactoryTrackerProjectByName" in query:
+                return {
+                    "data": {
+                        "projects": {
+                            "nodes": [
+                                {
+                                    "id": "project-1",
+                                    "name": "project",
+                                    "slugId": "project",
+                                    "url": "https://linear.app/project/project",
+                                }
+                            ]
+                        }
+                    }
+                }
             if query == QUERY:
                 after = payload.get("after")
                 node = {
@@ -857,11 +899,11 @@ async def test_linear_client_core_behaviors(tmp_path: Path) -> None:
     with pytest.raises(TrackerClientError, match="missing_linear_api_token"):
         await missing_client.fetch_candidate_issues()
 
-    missing_slug_settings = make_settings(tmp_path, tracker={"project_slug": None})
+    missing_slug_settings = make_settings(tmp_path, tracker={"project": None})
     missing_slug_client = LinearClient(
         missing_slug_settings, client_factory=cast(Any, lambda: FakeGraphQL())
     )
-    with pytest.raises(TrackerClientError, match="missing_linear_project_slug"):
+    with pytest.raises(TrackerClientError, match="missing_linear_project"):
         await missing_slug_client.fetch_candidate_issues()
 
     class BrokenGraphQL:
@@ -892,6 +934,30 @@ async def test_linear_ops_read_issues_paginates_before_filtering(
     calls: list[dict[str, Any]] = []
 
     async def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        if "CodeFactoryTrackerProjectByName" in query:
+            return {
+                "data": {
+                    "projects": {
+                        "nodes": [
+                            {
+                                "id": "project-1",
+                                "name": "project",
+                                "slugId": "project",
+                                "url": "https://example/project-1",
+                                "teams": {
+                                    "nodes": [
+                                        {
+                                            "id": "team-1",
+                                            "name": "Team",
+                                            "key": "ENG",
+                                        }
+                                    ]
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
         assert query == ISSUES_QUERY
         calls.append(variables)
         if variables.get("after") is None:

@@ -54,14 +54,10 @@ def prompt_project_init(
         default=DEFAULT_TRACKER_KIND,
         console=prompt_console,
     ).strip()
-    project_slug = prompt_non_empty(
-        (
-            "Linear project (name or slug)"
-            if tracker_kind == "linear"
-            else "Project slug"
-        ),
+    project = prompt_non_empty(
+        "Linear project name" if tracker_kind == "linear" else "Project",
         console=prompt_console,
-        default=default_project_slug(resolved_target),
+        default=default_project(resolved_target),
     )
     git_repo = prompt_non_empty(
         "Git repository",
@@ -95,7 +91,7 @@ def prompt_project_init(
     )
     return WorkflowTemplateValues(
         tracker_kind=tracker_kind,
-        project_slug=project_slug,
+        project=project,
         git_repo=git_repo,
         failure_state=failure_state,
         active_states=active_states,
@@ -262,8 +258,8 @@ def detect_git_repo(target_dir: Path) -> str | None:
     return detected or None
 
 
-def default_project_slug(target_dir: Path) -> str:
-    """Return a sensible starter project slug for the current directory."""
+def default_project(target_dir: Path) -> str:
+    """Return a sensible starter project name for the current directory."""
 
     return target_dir.name or "project"
 

@@ -19,7 +19,7 @@ class WorkflowTemplateValues:
     """Values injected into the starter workflow meta-template."""
 
     tracker_kind: str
-    project_slug: str
+    project: str
     git_repo: str
     failure_state: str
     active_states: tuple[str, ...]
@@ -44,7 +44,7 @@ def render_default_workflow(values: WorkflowTemplateValues) -> str:
     rendered = default_workflow_template()
     replacements = {
         "TRACKER_KIND": yaml_string(values.tracker_kind),
-        "PROJECT_SLUG": yaml_string(values.project_slug),
+        "PROJECT": yaml_string(values.project),
         "GIT_REPO": shlex.quote(values.git_repo),
         "FAILURE_STATE": yaml_string(values.failure_state),
         "STATE_PROFILES": yaml_state_profiles(values.active_states),

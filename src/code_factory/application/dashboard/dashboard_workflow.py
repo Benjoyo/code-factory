@@ -9,14 +9,10 @@ from rich.text import Text
 from .dashboard_format import clean_inline, int_value, pick
 
 
-def project_url(project_slug: str | None) -> str | None:
-    """Provide a tracker-specific URL linking to the configured Linear project."""
+def project_url(project: str | None) -> str | None:
+    """Return a non-empty project URL when one has been resolved."""
 
-    return (
-        f"https://linear.app/project/{project_slug}/issues"
-        if isinstance(project_slug, str) and project_slug.strip()
-        else None
-    )
+    return project.strip() if isinstance(project, str) and project.strip() else None
 
 
 def dashboard_url(host: str, port: int | None) -> str | None:
@@ -46,7 +42,7 @@ def project_link(
 ) -> str | None:
     tracker = workflow.get("tracker")
     if isinstance(tracker, dict):
-        live_link = project_url(str(pick(tracker, "project_slug") or ""))
+        live_link = project_url(str(pick(tracker, "project_url") or ""))
         if live_link is not None:
             return live_link
     return configured_project_url

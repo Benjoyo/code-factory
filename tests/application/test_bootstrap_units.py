@@ -15,7 +15,7 @@ from code_factory.application.bootstrap import (
     ProjectInitResult,
     build_state_table,
     copy_bootstrap_skills,
-    default_project_slug,
+    default_project,
     detect_git_repo,
     initialize_project,
     parse_state_selection,
@@ -40,7 +40,7 @@ from code_factory.workflow.template import (
 def sample_values() -> WorkflowTemplateValues:
     return WorkflowTemplateValues(
         tracker_kind="linear",
-        project_slug="demo-project",
+        project="demo-project",
         git_repo="git@github.com:example/demo.git",
         failure_state="Human Review",
         active_states=("Todo", "In Progress"),
@@ -85,7 +85,7 @@ def test_render_default_workflow_replaces_template_tokens() -> None:
 def test_default_workflow_template_contains_meta_tokens() -> None:
     template = default_workflow_template()
 
-    assert token("PROJECT_SLUG") in template
+    assert token("PROJECT") in template
     assert token("FAILURE_STATE") in template
     assert token("STATE_PROFILES") in template
 
@@ -170,7 +170,7 @@ def test_prompt_non_empty_reprompts_until_value(
     )
     console = Console(record=True)
 
-    assert prompt_non_empty("Project slug", console=console, default=None) == "demo"
+    assert prompt_non_empty("Project", console=console, default=None) == "demo"
     assert "cannot be empty" in console.export_text()
 
 
@@ -221,8 +221,8 @@ def test_detect_git_repo_returns_none_when_missing(
     assert detect_git_repo(Path.cwd()) is None
 
 
-def test_default_project_slug_uses_directory_name(tmp_path: Path) -> None:
-    assert default_project_slug(tmp_path / "demo-project") == "demo-project"
+def test_default_project_uses_directory_name(tmp_path: Path) -> None:
+    assert default_project(tmp_path / "demo-project") == "demo-project"
 
 
 def test_prompt_project_init_collects_all_values(
@@ -236,7 +236,7 @@ def test_prompt_project_init_collects_all_values(
     monkeypatch.setattr(
         "code_factory.application.bootstrap.prompt_non_empty",
         lambda label, **kwargs: {
-            "Linear project (name or slug)": "demo-project",
+            "Linear project name": "demo-project",
             "Git repository": "git@github.com:example/demo.git",
             "Failure state": DEFAULT_FAILURE_STATE,
             "Workspace root": "/tmp/code-factory-workspaces",
@@ -258,7 +258,7 @@ def test_prompt_project_init_collects_all_values(
     assert prompt_project_init(console=Console(record=True), target_dir=Path.cwd()) == (
         WorkflowTemplateValues(
             tracker_kind="linear",
-            project_slug="demo-project",
+            project="demo-project",
             git_repo="git@github.com:example/demo.git",
             failure_state=DEFAULT_FAILURE_STATE,
             active_states=DEFAULT_ACTIVE_STATES,

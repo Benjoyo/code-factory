@@ -118,7 +118,7 @@ async def test_integration_dispatch_refresh_failures_and_stale_revalidation_do_n
             tracker={
                 "kind": None,
                 "api_key": None,
-                "project_slug": None,
+                "project": None,
                 "terminal_states": ["Done", "Canceled"],
             },
             workspace={"root": str(tmp_path / "workspaces")},

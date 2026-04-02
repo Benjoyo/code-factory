@@ -34,6 +34,30 @@ class _RemainingOps(LinearOps):
         async def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
             if query == ISSUE_QUERY:
                 return {"data": {"issue": self._issue_payload(str(variables["id"]))}}
+            if "CodeFactoryTrackerProjectByName" in query:
+                return {
+                    "data": {
+                        "projects": {
+                            "nodes": [
+                                {
+                                    "id": "project-1",
+                                    "name": "Project",
+                                    "slugId": "project",
+                                    "url": "https://example/project",
+                                    "teams": {
+                                        "nodes": [
+                                            {
+                                                "id": "team-1",
+                                                "name": "Team",
+                                                "key": "ENG",
+                                            }
+                                        ]
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                }
             if query == ISSUES_QUERY:
                 return {
                     "data": {
@@ -321,7 +345,7 @@ async def test_linear_read_remaining_branches(
         include_relations=False,
     )
     assert issues["count"] == 2
-    assert (await ops.read_project("project"))["project"]["slug"] == "project"
+    assert (await ops.read_project("Project"))["project"]["name"] == "Project"
     assert (await ops.read_projects(query=None, limit=10))["count"] == 1
 
     monkeypatch.setattr(

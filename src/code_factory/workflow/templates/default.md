@@ -1,7 +1,7 @@
 ---
 tracker:
   kind: [[CF_TRACKER_KIND]]
-  project_slug: [[CF_PROJECT_SLUG]]
+  project: [[CF_PROJECT]]
 failure_state: [[CF_FAILURE_STATE]]
 terminal_states:
 [[CF_TERMINAL_STATES]]

@@ -39,7 +39,7 @@ def prepare_project_init(
 
     api_key = os.getenv("LINEAR_API_KEY")
     if not api_key:
-        return PreparedProjectInit(values=values, warnings=(_manual_slug_warning(),))
+        return PreparedProjectInit(values=values, warnings=(_manual_project_warning(),))
     try:
         prepared = asyncio.run(
             _prepare_linear_project_init(
@@ -56,7 +56,7 @@ def prepare_project_init(
             values=values,
             warnings=(
                 "Skipping Linear project verification/provisioning: "
-                f"{_format_tracker_error(exc)}. {_manual_slug_warning()}",
+                f"{_format_tracker_error(exc)}. {_manual_project_warning()}",
             ),
         )
     return prepared
@@ -69,16 +69,15 @@ async def _prepare_linear_project_init(
     bootstrapper: ProjectBootstrapper,
 ) -> PreparedProjectInit:
     try:
-        project = await bootstrapper.resolve_project(values.project_slug)
+        project = await bootstrapper.resolve_project(values.project)
         if project is None:
             return await _create_or_skip_project(
                 values=values,
                 console=console,
                 bootstrapper=bootstrapper,
             )
-        canonical = replace(values, project_slug=project.slug_id)
         return await _reconcile_existing_project(
-            values=canonical,
+            values=values,
             project=project,
             console=console,
             bootstrapper=bootstrapper,
@@ -102,12 +101,12 @@ async def _create_or_skip_project(
             values=values,
             warnings=(
                 "Linear project was not created; create it manually or update "
-                "`tracker.project_slug` before running the service.",
+                "`tracker.project` before running the service.",
             ),
         )
     team_name = prompt_non_empty("Linear team (name or key)", console=console)
     team = await bootstrapper.resolve_team(team_name)
-    project = await bootstrapper.create_project(name=values.project_slug, team=team)
+    project = await bootstrapper.create_project(name=values.project, team=team)
     created = await bootstrapper.ensure_states(
         team=_single_team(project),
         required_states=_missing_state_specs(
@@ -116,13 +115,10 @@ async def _create_or_skip_project(
     )
     if created:
         console.print(
-            f"Provisioned Linear project `{project.slug_id}` and created "
+            f"Provisioned Linear project `{project.name}` and created "
             f"{len(created)} workflow state(s) on team `{_single_team(project).key}`."
         )
-    return PreparedProjectInit(
-        values=replace(values, project_slug=project.slug_id),
-        warnings=(),
-    )
+    return PreparedProjectInit(values=values, warnings=())
 
 
 async def _reconcile_existing_project(
@@ -214,11 +210,10 @@ def _linear_state_type(name: str, values: WorkflowTemplateValues) -> str:
     return "started"
 
 
-def _manual_slug_warning() -> str:
+def _manual_project_warning() -> str:
     return (
         "Linear verification was skipped, so `WORKFLOW.md` will use the entered "
-        "project value as `tracker.project_slug`; if you entered a project name, "
-        "replace it with the Linear slug manually."
+        "project value as `tracker.project`."
     )
 
 

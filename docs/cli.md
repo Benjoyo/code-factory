@@ -29,7 +29,7 @@ cf serve --no-guardrails ./WORKFLOW.md
 Bootstraps a project with a starter `WORKFLOW.md` and bundled skills in
 `./.agents/skills`.
 
-- Prompts for tracker kind, project slug, git repo, states, workspace root, and
+- Prompts for tracker kind, Linear project name, git repo, states, workspace root, and
   max concurrent agents.
 - Writes a workflow using the current `states`-based format and shared prompt
   sections.

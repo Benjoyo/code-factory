@@ -17,6 +17,12 @@ from .decoding import (
     normalize_issue,
 )
 from .graphql import LinearGraphQLClient, RequestFunction
+from .project_resolution import (
+    PROJECT_LOOKUP_QUERY,
+    project_ambiguous_error,
+    project_not_found_error,
+    validate_project_name,
+)
 from .queries import (
     COMMENTS_QUERY,
     CREATE_COMMENT_MUTATION,
@@ -53,6 +59,7 @@ class LinearClient:
             if client_factory
             else LinearGraphQLClient(settings, request_fun=request_fun)
         )
+        self._project_node: dict[str, Any] | None = None
 
     async def close(self) -> None:
         await self._graphql_client.close()
@@ -152,8 +159,9 @@ class LinearClient:
     def _require_credentials(self) -> None:
         if not self._settings.tracker.api_key:
             raise TrackerClientError("missing_linear_api_token")
-        if not self._settings.tracker.project_slug:
-            raise TrackerClientError("missing_linear_project_slug")
+        if not self._settings.tracker.project:
+            raise TrackerClientError("missing_linear_project")
+        validate_project_name(self._settings.tracker.project, config_error=False)
 
     async def _fetch_by_states(
         self,
@@ -167,7 +175,7 @@ class LinearClient:
             body = await self.graphql(
                 QUERY,
                 {
-                    "projectSlug": self._settings.tracker.project_slug,
+                    "projectId": await self._project_id(),
                     "stateNames": state_names,
                     "first": self.ISSUE_PAGE_SIZE,
                     "relationFirst": self.ISSUE_PAGE_SIZE,
@@ -233,3 +241,28 @@ class LinearClient:
         if not isinstance(state_id, str):
             raise TrackerClientError("state_not_found")
         return state_id
+
+    async def _project_id(self) -> str:
+        return str((await self._project()).get("id") or "")
+
+    async def _project(self) -> dict[str, Any]:
+        if self._project_node is not None:
+            return self._project_node
+        assert self._settings.tracker.project is not None
+        project_name = validate_project_name(
+            self._settings.tracker.project, config_error=False
+        )
+        body = await self.graphql(
+            PROJECT_LOOKUP_QUERY,
+            {"name": project_name, "first": 10},
+        )
+        payload = (body.get("data") or {}).get("projects")
+        if not isinstance(payload, dict):
+            raise TrackerClientError("linear_unknown_payload")
+        nodes = [node for node in payload.get("nodes") or [] if isinstance(node, dict)]
+        if not nodes:
+            raise project_not_found_error(project_name)
+        if len(nodes) > 1:
+            raise project_ambiguous_error(project_name)
+        self._project_node = nodes[0]
+        return nodes[0]

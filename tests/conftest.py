@@ -31,7 +31,7 @@ def default_workflow_config() -> dict[str, Any]:
             "kind": "linear",
             "endpoint": "https://api.linear.app/graphql",
             "api_key": "token",
-            "project_slug": "project",
+            "project": "project",
             "assignee": None,
         },
         "states": {

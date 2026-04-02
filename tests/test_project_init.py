@@ -26,7 +26,7 @@ from code_factory.workflow.template import WorkflowTemplateValues
 def sample_values(*, tracker_kind: str = "linear") -> WorkflowTemplateValues:
     return WorkflowTemplateValues(
         tracker_kind=tracker_kind,
-        project_slug="demo-project",
+        project="demo-project",
         git_repo="git@github.com:example/demo.git",
         failure_state="Human Review",
         active_states=("Todo", "In Progress", "Merging", "Rework"),
@@ -130,8 +130,8 @@ def test_prepare_project_init_warns_when_linear_auth_is_missing(
 
     prepared = prepare_project_init(console=Console(record=True), target_dir=Path.cwd())
 
-    assert prepared.values.project_slug == "demo-project"
-    assert "tracker.project_slug" in prepared.warnings[0]
+    assert prepared.values.project == "demo-project"
+    assert "tracker.project" in prepared.warnings[0]
 
 
 def test_prepare_project_init_resolves_existing_project_and_missing_states(
@@ -169,7 +169,7 @@ def test_prepare_project_init_resolves_existing_project_and_missing_states(
 
     prepared = prepare_project_init(console=Console(record=True), target_dir=Path.cwd())
 
-    assert prepared.values.project_slug == "canonical-slug"
+    assert prepared.values.project == "demo-project"
     assert prepared.warnings == ()
     assert fake.created_states == [
         (
@@ -207,7 +207,7 @@ def test_prepare_project_init_creates_missing_project_and_states(
 
     prepared = prepare_project_init(console=Console(record=True), target_dir=Path.cwd())
 
-    assert prepared.values.project_slug == "demo-project-1"
+    assert prepared.values.project == "demo-project"
     assert fake.create_project_calls == [("demo-project", "ENG")]
     assert fake.created_states[0][0] == ("Todo", "unstarted")
 
@@ -236,7 +236,7 @@ def test_prepare_project_init_warns_for_multi_team_projects(
 
     prepared = prepare_project_init(console=Console(record=True), target_dir=Path.cwd())
 
-    assert prepared.values.project_slug == "canonical-slug"
+    assert prepared.values.project == "demo-project"
     assert "multiple teams" in prepared.warnings[0]
 
 
@@ -321,7 +321,7 @@ def test_prepare_project_init_handles_no_missing_states_and_declined_reconciliat
 
     prepared = prepare_project_init(console=Console(record=True), target_dir=Path.cwd())
 
-    assert prepared.values.project_slug == "canonical-slug"
+    assert prepared.values.project == "demo-project"
     assert fake.created_states == []
 
     fake.project_result = LinearBootstrapProject(

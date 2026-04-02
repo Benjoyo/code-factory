@@ -147,7 +147,7 @@ def test_issue_get_uses_workflow_defaults_and_human_output(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    write_workflow_file(tmp_path / "WORKFLOW.md", tracker={"project_slug": "project"})
+    write_workflow_file(tmp_path / "WORKFLOW.md", tracker={"project": "project"})
     calls: list[tuple[str, tuple, dict]] = []
 
     class FakeOps:
@@ -192,7 +192,7 @@ def test_issue_get_uses_workflow_defaults_and_human_output(
 
 def test_workpad_sync_reads_repo_relative_files(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
-    write_workflow_file(tmp_path / "WORKFLOW.md", tracker={"project_slug": "project"})
+    write_workflow_file(tmp_path / "WORKFLOW.md", tracker={"project": "project"})
     (tmp_path / "workpad.md").write_text("hello from cwd\n", encoding="utf-8")
     captured: dict[str, object] = {}
 

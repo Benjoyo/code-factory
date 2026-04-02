@@ -9,7 +9,6 @@ from .ops_normalize import (
     normalize_team,
 )
 from .ops_queries import ISSUES_QUERY
-from .ops_resolution import find_exact
 from .ops_resolution_service import LinearOpsResolutionMixin
 
 
@@ -54,7 +53,14 @@ class LinearOpsReadMixin(LinearOpsResolutionMixin):
         include_attachments: bool,
         include_relations: bool,
     ) -> dict:
-        project_filter = project or self._settings.tracker.project_slug
+        if limit <= 0:
+            return {"issues": [], "count": 0}
+        project_name = project or self._settings.tracker.project
+        project_filter_id = (
+            str((await self._project_node(project_name)).get("id"))
+            if project_name is not None
+            else None
+        )
         issues: list[dict] = []
         after: str | None = None
         while len(issues) < limit:
@@ -76,7 +82,7 @@ class LinearOpsReadMixin(LinearOpsResolutionMixin):
             for node in nodes:
                 if not self._matches_issue(
                     node,
-                    project=project_filter,
+                    project=project_filter_id,
                     state=state,
                     query=query,
                 ):
@@ -98,18 +104,22 @@ class LinearOpsReadMixin(LinearOpsResolutionMixin):
         return {"issues": issues, "count": len(issues)}
 
     async def read_project(self, project: str) -> dict:
-        node = find_exact(await self._projects(), project, "id", "name", "slugId")
+        node = self._hydrate_project_teams(
+            await self._project_node(project),
+            {
+                str(team.get("id")): team
+                for team in await self._teams()
+                if isinstance(team, dict) and team.get("id")
+            },
+        )
         return {"project": normalize_project(node, include_teams=True)}
 
     async def read_projects(self, *, query: str | None, limit: int) -> dict:
-        projects = await self._projects()
+        projects = await self._projects_with_team_states()
         if query:
             lowered = query.strip().lower()
             projects = [
-                node
-                for node in projects
-                if lowered in (node.get("name") or "").lower()
-                or lowered in (node.get("slugId") or "").lower()
+                node for node in projects if lowered in (node.get("name") or "").lower()
             ]
         normalized = [
             normalize_project(node, include_teams=True) for node in projects[:limit]
@@ -154,6 +164,7 @@ class LinearOpsReadMixin(LinearOpsResolutionMixin):
                     "one of `issue`, `team`, or a default workflow project is required",
                 )
             )
+        team_node = await self._team_with_states(team_node)
         normalized_team = normalize_team(team_node, include_states=False)
         normalized_with_states = normalize_team(team_node, include_states=True)
         if normalized_team is None or normalized_with_states is None:

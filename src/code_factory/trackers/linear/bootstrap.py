@@ -24,6 +24,11 @@ from .bootstrap_queries import (
 )
 from .graphql import LinearGraphQLClient, RequestFunction
 from .ops.ops_queries import PROJECTS_QUERY, TEAMS_QUERY
+from .project_resolution import (
+    PROJECT_LOOKUP_QUERY,
+    project_ambiguous_error,
+    validate_project_name,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +52,7 @@ class LinearBootstrapProject:
     name: str
     slug_id: str
     teams: tuple[LinearBootstrapTeam, ...]
+    url: str = ""
 
 
 class LinearBootstrapper:
@@ -68,27 +74,17 @@ class LinearBootstrapper:
         await self._client.close()
 
     async def resolve_project(self, reference: str) -> LinearBootstrapProject | None:
-        projects = await self._projects()
-        lowered = reference.strip().lower()
-        slug_matches = [
-            node
-            for node in projects
-            if str(node.get("slugId") or "").strip().lower() == lowered
-        ]
-        if len(slug_matches) > 1:
-            raise TrackerClientError(("tracker_ambiguous", reference))
-        if slug_matches:
-            return _project_from_node(slug_matches[0])
-        name_matches = [
-            node
-            for node in projects
-            if str(node.get("name") or "").strip().lower() == lowered
-        ]
-        if len(name_matches) > 1:
-            raise TrackerClientError(("tracker_ambiguous", reference))
-        if not name_matches:
+        project_name = validate_project_name(reference, config_error=False)
+        response = await self._client.request(
+            PROJECT_LOOKUP_QUERY,
+            {"name": project_name, "first": 10},
+        )
+        nodes = _nodes(_data(response, "projects"))
+        if not nodes:
             return None
-        return _project_from_node(name_matches[0])
+        if len(nodes) > 1:
+            raise project_ambiguous_error(project_name)
+        return await self._project_with_team_states(nodes[0])
 
     async def resolve_team(self, reference: str) -> LinearBootstrapTeam:
         lowered = reference.strip().lower()
@@ -124,7 +120,7 @@ class LinearBootstrapper:
         project_node = payload.get("project")
         if not isinstance(project_node, dict):
             raise TrackerClientError("linear_unknown_payload")
-        return _project_from_node(project_node)
+        return await self._project_with_team_states(project_node)
 
     async def ensure_states(
         self,
@@ -176,6 +172,18 @@ class LinearBootstrapper:
         )
         return _nodes(payload)
 
+    async def _project_with_team_states(
+        self, project_node: dict[str, Any]
+    ) -> LinearBootstrapProject:
+        teams_by_id = {
+            str(team.get("id")): team for team in await self._teams() if team.get("id")
+        }
+        teams = [
+            teams_by_id.get(str(team.get("id") or ""), team)
+            for team in _nodes(project_node.get("teams") or {})
+        ]
+        return _project_from_node({**project_node, "teams": {"nodes": teams}})
+
 
 def _bootstrap_settings(*, api_key: str, endpoint: str) -> Settings:
     return Settings(
@@ -185,7 +193,7 @@ def _bootstrap_settings(*, api_key: str, endpoint: str) -> Settings:
             kind="linear",
             endpoint=endpoint,
             api_key=api_key,
-            project_slug="bootstrap",
+            project="bootstrap",
         ),
         polling=PollingSettings(),
         workspace=WorkspaceSettings(),
@@ -223,6 +231,7 @@ def _project_from_node(node: dict[str, Any]) -> LinearBootstrapProject:
         id=str(node.get("id") or ""),
         name=str(node.get("name") or ""),
         slug_id=str(node.get("slugId") or ""),
+        url=str(node.get("url") or ""),
         teams=tuple(_team_from_node(team) for team in _nodes(node.get("teams") or {})),
     )
 

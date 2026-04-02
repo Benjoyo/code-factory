@@ -65,7 +65,7 @@ def workflow_payload(
         },
         "tracker": {
             "kind": settings.tracker.kind,
-            "project_slug": settings.tracker.project_slug,
+            "project": settings.tracker.project,
             "active_states": list(settings.tracker.active_states),
         },
         "terminal_states": list(settings.terminal_states),

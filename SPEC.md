@@ -369,8 +369,9 @@ Fields:
   - May be a literal token or `$VAR_NAME`.
   - Canonical environment variable for `tracker.kind == "linear"`: `LINEAR_API_KEY`.
   - If `$VAR_NAME` resolves to an empty string, treat the key as missing.
-- `project_slug` (string)
+- `project` (string)
   - Required for dispatch when `tracker.kind == "linear"`.
+  - Must be the exact Linear project name.
 
 Top-level workflow fields related to state policy:
 
@@ -589,7 +590,7 @@ Validation checks:
 - Workflow file can be loaded and parsed.
 - `tracker.kind` is present and supported.
 - `tracker.api_key` is present after `$` resolution.
-- `tracker.project_slug` is present when required by the selected tracker kind.
+- `tracker.project` is present when required by the selected tracker kind.
 - `codex.command` is present and non-empty.
 
 ### 6.4 Config Fields Summary (Cheat Sheet)
@@ -599,7 +600,7 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `tracker.kind`: string, required, currently `linear`
 - `tracker.endpoint`: string, default `https://api.linear.app/graphql` when `tracker.kind=linear`
 - `tracker.api_key`: string or `$VAR`, canonical env `LINEAR_API_KEY` when `tracker.kind=linear`
-- `tracker.project_slug`: string, required when `tracker.kind=linear`
+- `tracker.project`: string, required when `tracker.kind=linear`
 - `failure_state`: string, required
 - `terminal_states`: list of strings, default `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]`
 - `states`: object mapping tracker state names to state profiles, required
@@ -1241,8 +1242,10 @@ Linear-specific requirements for `tracker.kind == "linear"`:
 - `tracker.kind == "linear"`
 - GraphQL endpoint (default `https://api.linear.app/graphql`)
 - Auth token sent in `Authorization` header
-- `tracker.project_slug` maps to Linear project `slugId`
-- Candidate issue query filters project using `project: { slugId: { eq: $projectSlug } }`
+- `tracker.project` is the exact Linear project name entered by the user
+- Project references that look like a slug, URL segment, or full Linear URL are rejected
+- The client resolves the project name to a canonical project record before downstream work
+- Candidate issue query filters by the resolved Linear project `id`
 - Issue-state refresh query uses GraphQL issue IDs with variable type `[ID!]`
 - Pagination required for candidate issues
 - Page size default: `50`
@@ -1273,7 +1276,10 @@ Recommended error categories:
 
 - `unsupported_tracker_kind`
 - `missing_tracker_api_key`
-- `missing_tracker_project_slug`
+- `missing_linear_project`
+- `tracker_invalid_project_reference`
+- `tracker_project_not_found`
+- `tracker_project_ambiguous`
 - `linear_api_request` (transport failures)
 - `linear_api_status` (non-200 HTTP)
 - `tracker_operation_errors`
@@ -1640,7 +1646,7 @@ API design notes:
 1. `Workflow/Config Failures`
    - Missing `WORKFLOW.md`
    - Invalid YAML front matter
-   - Unsupported tracker kind or missing tracker credentials/project slug
+   - Unsupported tracker kind or missing tracker credentials/project name
    - Missing coding-agent executable
 
 2. `Workspace Failures`
@@ -2098,8 +2104,9 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 
 ### 17.3 Issue Tracker Client
 
-- Candidate issue fetch uses active states and project slug
-- Linear query uses the specified project filter field (`slugId`)
+- Candidate issue fetch uses active states and the configured project name
+- Linear project names are resolved to a canonical project before issue queries run
+- Issue queries use the resolved project `id`
 - Empty `fetch_issues_by_states([])` returns empty without API call
 - Pagination preserves order across multiple pages
 - Blockers are normalized from inverse relations of type `blocks`

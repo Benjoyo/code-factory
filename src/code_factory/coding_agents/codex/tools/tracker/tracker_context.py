@@ -16,7 +16,7 @@ def resolve_issue(context: ToolContext, issue: str | None) -> str:
 
 
 def resolve_project(context: ToolContext) -> str:
-    """Return the current turn's workflow project slug."""
+    """Return the current turn's workflow project name."""
 
     project = context.current_project
     if isinstance(project, str) and project.strip():

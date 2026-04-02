@@ -37,25 +37,59 @@ If you prefer not to install the tool, you can still run it from the repo with
 
 ## Quick Start
 
-Create a starter workflow in a new project:
+### 1. Create a starter workflow in a new project:
 
 ```bash
 cf init
 ```
 
-`cf init` walks you through the starter values with Rich prompts, renders a
+`cf init` walks you through the starter values, renders a
 project-specific `WORKFLOW.md`, and copies this repo's bundled skills into
 `./.agents/skills`. Re-run with `--force` if you want to overwrite an existing
 workflow or skills bundle.
 
-Start the service:
+### 2. Start the service:
 
 ```bash
-cf serve --no-guardrails /path/to/WORKFLOW.md
+cf serve --no-guardrails
 ```
 
-If you omit the workflow path, the CLI defaults to `./WORKFLOW.md`. Bare service
-invocations such as `cf --no-guardrails` are routed to `cf serve`.
+If you omit the workflow path, the CLI defaults to `./WORKFLOW.md`.
+
+### 3. Create issues and move to Todo:
+
+* Create new issues in Linear Backlog
+* Move ready-for-dev issues to Todo
+
+### 4. Steer agents during execution (optional):
+
+Run 
+
+```bash
+cf steer ENG-123 "also add integration tests please"
+```
+
+to append operator guidance to an in-flight issue turn
+
+### 5. Review PRs:
+
+Run:
+
+```bash
+cf review ENG-123
+```
+
+This will:
+* Launch a review worktree and any configured review servers. 
+* Open the browser automatically, if configured.
+* Allow you to quickly submit PR comments with any problems you find
+
+### 6. Move issues to Merging, Todo, or Rework:
+
+Move reviewed issues to:
+* Merging, if review was successful
+* Todo, if you left review comments in the PR
+* Rework, if you left review comments and want a full, clean re-attempt at the issue.
 
 ## CLI Overview
 

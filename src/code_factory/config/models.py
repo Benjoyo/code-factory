@@ -15,7 +15,7 @@ class TrackerSettings:
     kind: str | None = None
     endpoint: str = ""
     api_key: str | None = None
-    project_slug: str | None = None
+    project: str | None = None
     assignee: str | None = None
     active_states: tuple[str, ...] = ()
 

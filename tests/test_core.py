@@ -43,7 +43,7 @@ def test_config_defaults_and_env_resolution(
     monkeypatch.setenv("LINEAR_API_KEY", "env-linear-token")
     workflow = write_workflow_file(
         tmp_path / "WORKFLOW.md",
-        tracker={"api_key": None, "project_slug": "project"},
+        tracker={"api_key": None, "project": "project"},
         agent={"max_retry_backoff_ms": 5_000},
     )
     settings = parse_settings(load_workflow(str(workflow)).config)
@@ -75,7 +75,7 @@ def test_config_defaults_and_env_resolution(
 
     workflow = tmp_path / "MISSING_FAILURE_STATE.md"
     workflow.write_text(
-        "---\ntracker:\n  kind: linear\n  project_slug: project\nstates:\n  Todo:\n    prompt: default\n---\n# prompt: default\nBody\n",
+        "---\ntracker:\n  kind: linear\n  project: project\nstates:\n  Todo:\n    prompt: default\n---\n# prompt: default\nBody\n",
         encoding="utf-8",
     )
     with pytest.raises(ConfigValidationError, match="failure_state is required"):
@@ -167,7 +167,7 @@ def test_multi_state_workflow_rejects_missing_prompt_ref(tmp_path: Path) -> None
 def test_settings_require_states_mapping(tmp_path: Path) -> None:
     workflow = tmp_path / "WORKFLOW.md"
     workflow.write_text(
-        "---\ntracker:\n  kind: linear\n  project_slug: project\n---\n# prompt: default\nBody\n",
+        "---\ntracker:\n  kind: linear\n  project: project\n---\n# prompt: default\nBody\n",
         encoding="utf-8",
     )
     definition = parse_workflow(workflow.read_text(encoding="utf-8"))
@@ -274,7 +274,7 @@ async def test_service_fails_startup_preflight_for_invalid_dispatch_config(
 ) -> None:
     workflow = write_workflow_file(
         tmp_path / "INVALID_WORKFLOW.md",
-        tracker={"kind": None, "api_key": None, "project_slug": None},
+        tracker={"kind": None, "api_key": None, "project": None},
     )
 
     with pytest.raises(ConfigValidationError, match="tracker.kind is required"):

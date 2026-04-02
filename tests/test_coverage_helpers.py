@@ -553,8 +553,8 @@ def test_tracker_cli_and_tooling_helpers(
         "code_factory.trackers.cli.console.print_json",
         lambda *, data: console_calls.append(data),
     )
-    _render_human({"projects": [{"slug": "p", "name": "Project"}]})
-    _render_human({"project": {"slug": "p", "name": "Project"}})
+    _render_human({"projects": [{"name": "Project"}]})
+    _render_human({"project": {"name": "Project"}})
     _render_human({"other": True})
     assert console_calls == ['{"other": true}']
 

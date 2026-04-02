@@ -10,7 +10,7 @@ from .ops_queries import (
     UPDATE_ISSUE_MUTATION,
     USERS_QUERY,
 )
-from .ops_resolution import find_exact, find_optional, require_single
+from .ops_resolution import find_exact, require_single
 
 
 class LinearOpsResolutionMixin(LinearOpsCommon):
@@ -99,28 +99,14 @@ class LinearOpsResolutionMixin(LinearOpsCommon):
         team: object,
     ) -> tuple[dict | None, dict | None]:
         project_node = (
-            None
-            if project is None
-            else find_exact(
-                await self._projects(),
-                str(project),
-                "id",
-                "name",
-                "slugId",
-            )
+            None if project is None else await self._project_node(str(project))
         )
         team_node = await self._resolve_team(
             team=str(team) if team is not None else None,
             project=str(project) if project is not None else None,
         )
-        if project_node is None and self._settings.tracker.project_slug:
-            project_node = find_optional(
-                await self._projects(),
-                self._settings.tracker.project_slug,
-                "id",
-                "name",
-                "slugId",
-            )
+        if project_node is None and self._settings.tracker.project:
+            project_node = await self._project_node(self._settings.tracker.project)
         return team_node, project_node
 
     async def _resolve_team(
@@ -131,18 +117,12 @@ class LinearOpsResolutionMixin(LinearOpsCommon):
     ) -> dict | None:
         if team:
             return find_exact(await self._teams(), team, "id", "name", "key")
-        project_slug = project or self._settings.tracker.project_slug
-        if not project_slug:
+        project_name = project or self._settings.tracker.project
+        if not project_name:
             return None
-        project_node = find_exact(
-            await self._projects(),
-            project_slug,
-            "id",
-            "name",
-            "slugId",
-        )
+        project_node = await self._project_node(project_name)
         teams = (project_node.get("teams") or {}).get("nodes") or []
-        return require_single(teams, project_slug, field_name="team")
+        return require_single(teams, project_name, field_name="team")
 
     async def _resolve_state_id(
         self,
@@ -164,6 +144,9 @@ class LinearOpsResolutionMixin(LinearOpsCommon):
             raise TrackerClientError(
                 ("tracker_missing_field", "`state` requires a resolvable team")
             )
+        team_node = await self._team_with_states(team_node)
+        if team_node is None:
+            raise TrackerClientError(("tracker_not_found", "team"))
         state_node = find_exact(
             (team_node.get("states") or {}).get("nodes") or [],
             str(state),

@@ -18,8 +18,9 @@ from .dashboard import (
     StatusDashboardContext,
 )
 from .dashboard.dashboard_diagnostics import DashboardDiagnostics
-from .dashboard.dashboard_workflow import dashboard_url, project_url
+from .dashboard.dashboard_workflow import dashboard_url
 from .logging import configure_logging
+from .project_links import resolve_project_url
 
 LOGGER = logging.getLogger(__name__)
 
@@ -83,8 +84,16 @@ class CodeFactoryService:
                 on_snapshot=getattr(http_server, "apply_workflow_snapshot", None),
                 on_error=getattr(http_server, "apply_workflow_reload_error", None),
             )
+        dashboard_requested = LiveStatusDashboard.stream_supported(
+            sys.stderr
+        ) or LiveStatusDashboard.enabled(initial_snapshot.settings, sys.stderr)
         status_dashboard = self._build_status_dashboard(
-            initial_snapshot, orchestrator, diagnostics
+            initial_snapshot,
+            orchestrator,
+            diagnostics,
+            await resolve_project_url(initial_snapshot.settings)
+            if dashboard_requested
+            else None,
         )
         if status_dashboard is not None:
             self._subscribe_workflow_runtime(
@@ -162,6 +171,7 @@ class CodeFactoryService:
         initial_snapshot,
         orchestrator: OrchestratorActor,
         diagnostics: DashboardDiagnostics | None = None,
+        project_url_override: str | None = None,
     ) -> LiveStatusDashboard | None:
         """Create the live TUI dashboard if the workflow declares it."""
 
@@ -176,7 +186,7 @@ class CodeFactoryService:
             diagnostics=diagnostics,
             context=StatusDashboardContext(
                 max_agents=initial_snapshot.settings.agent.max_concurrent_agents,
-                project_url=project_url(initial_snapshot.settings.tracker.project_slug),
+                project_url=project_url_override,
                 dashboard_url=dashboard_url(
                     initial_snapshot.settings.server.host,
                     self._effective_port(initial_snapshot),
@@ -193,7 +203,7 @@ class CodeFactoryService:
             "Code Factory starting workflow=%s tracker=%s project=%s polling_interval_ms=%s max_concurrent_agents=%s workspace_root=%s",
             snapshot.path,
             snapshot.settings.tracker.kind,
-            snapshot.settings.tracker.project_slug,
+            snapshot.settings.tracker.project,
             snapshot.settings.polling.interval_ms,
             snapshot.settings.agent.max_concurrent_agents,
             snapshot.settings.workspace.root,

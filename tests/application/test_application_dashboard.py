@@ -53,8 +53,8 @@ from ..conftest import make_snapshot, write_workflow_file
 
 
 def test_dashboard_urls_match_elixir_style_host_rules() -> None:
-    assert project_url("labelforge-studio") == (
-        "https://linear.app/project/labelforge-studio/issues"
+    assert project_url("https://linear.app/project/labelforge-studio") == (
+        "https://linear.app/project/labelforge-studio"
     )
     assert dashboard_url("0.0.0.0", 4000) == "http://127.0.0.1:4000/"
     assert dashboard_url("::1", 4000) == "http://[::1]:4000/"
@@ -193,13 +193,13 @@ def test_render_status_dashboard_prefers_live_workflow_summary() -> None:
                     "loaded_at": "2026-03-19T10:00:00Z",
                     "reload_error": "'boom'",
                     "agent": {"max_concurrent_agents": 5},
-                    "tracker": {"project_slug": "live-project"},
+                    "tracker": {"project": "live-project"},
                     "server": {"host": "0.0.0.0", "port": 4321},
                 },
             },
             StatusDashboardContext(
                 max_agents=1,
-                project_url="https://linear.app/project/stale/issues",
+                project_url="https://linear.app/project/stale",
                 dashboard_url="http://stale:9999/",
             ),
             throughput_tps=0,
@@ -207,7 +207,7 @@ def test_render_status_dashboard_prefers_live_workflow_summary() -> None:
     )
     rendered = stream.getvalue()
     assert "1/5" in rendered
-    assert "live-project/issues" in rendered
+    assert "project/stale" in rendered
     assert "127.0.0.1:4321" in rendered
     assert "v2 loaded 2026-03-19T10:00:00Z" in rendered
     assert "'boom'" in rendered

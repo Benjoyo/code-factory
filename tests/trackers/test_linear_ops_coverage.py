@@ -230,6 +230,30 @@ async def test_linear_common_resolution_and_read_write_helpers_cover_edges(
                     }
                 if query == UPDATE_ISSUE_MUTATION:
                     return {"data": {"issueUpdate": {"issue": {"id": "issue-1"}}}}
+                if "CodeFactoryTrackerProjectByName" in query:
+                    return {
+                        "data": {
+                            "projects": {
+                                "nodes": [
+                                    {
+                                        "id": "project-1",
+                                        "name": "Project",
+                                        "slugId": "project",
+                                        "url": "https://example/project",
+                                        "teams": {
+                                            "nodes": [
+                                                {
+                                                    "id": "team-1",
+                                                    "name": "Team",
+                                                    "key": "ENG",
+                                                }
+                                            ]
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    }
                 if query == ISSUES_QUERY:
                     return {
                         "data": {
@@ -400,6 +424,14 @@ async def test_linear_common_resolution_and_read_write_helpers_cover_edges(
     ops = CoverageOps()
 
     assert await ops._resolve_issue_id("ENG-1") == "issue-1"
+    assert await ops._team_with_states(None) is None
+    assert await ops._team_with_states({"name": "Team"}) == {"name": "Team"}
+    assert await ops._team_with_states({"id": "team-1", "name": "Team"}) == {
+        "id": "team-1",
+        "name": "Team",
+        "key": "ENG",
+        "states": {"nodes": [{"id": "state-1", "name": "Todo"}]},
+    }
     with pytest.raises(TrackerClientError, match="tracker_not_found"):
         await LinearOpsCommon(
             settings,
@@ -507,12 +539,11 @@ async def test_linear_common_resolution_and_read_write_helpers_cover_edges(
         "id": "team-1",
         "name": "Team",
         "key": "ENG",
-        "states": {"nodes": [{"id": "state-1", "name": "Todo"}]},
     }
     no_project_settings = make_snapshot(
         write_workflow_file(
             tmp_path / "NO_PROJECT_TEAM.md",
-            tracker={"project_slug": None},
+            tracker={"project": None},
         )
     ).settings
     assert (
@@ -545,6 +576,21 @@ async def test_linear_common_resolution_and_read_write_helpers_cover_edges(
         await LinearOps(
             settings, lambda query, variables: __import__("asyncio").sleep(0, result={})
         )._resolve_state_id("Todo", issue_node=None, team_node=None, project_node=None)
+    with pytest.raises(TrackerClientError, match="tracker_not_found"):
+        no_team_ops = LinearOps(
+            settings, lambda query, variables: __import__("asyncio").sleep(0, result={})
+        )
+        monkeypatch.setattr(
+            no_team_ops,
+            "_team_with_states",
+            lambda team_node: __import__("asyncio").sleep(0, result=None),
+        )
+        await no_team_ops._resolve_state_id(
+            "Todo",
+            issue_node=None,
+            team_node={"id": "team-1"},
+            project_node=None,
+        )
     assert await ops._resolve_label_ids(["bug"]) == ["label-1"]
     assert await ops._resolve_user_id("Bennet") == "user-1"
     assert ops._string_list("bad") == []

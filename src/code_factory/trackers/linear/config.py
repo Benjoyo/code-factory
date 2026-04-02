@@ -15,6 +15,7 @@ from ...config.utils import (
     string_with_default,
 )
 from ...errors import ConfigValidationError
+from .project_resolution import validate_config_project, validate_project_name
 
 
 def supports_tracker_kind(kind: str | None) -> bool:
@@ -27,10 +28,11 @@ def validate_tracker_settings(settings: Settings) -> None:
         raise ConfigValidationError(
             "LINEAR_API_KEY is required", code="missing_linear_api_token"
         )
-    if not settings.tracker.project_slug:
+    if not settings.tracker.project:
         raise ConfigValidationError(
-            "tracker.project_slug is required", code="missing_linear_project_slug"
+            "tracker.project is required", code="missing_linear_project"
         )
+    validate_project_name(settings.tracker.project, config_error=True)
 
 
 def parse_tracker_settings(config: Mapping[str, Any] | Any) -> TrackerSettings:
@@ -40,6 +42,7 @@ def parse_tracker_settings(config: Mapping[str, Any] | Any) -> TrackerSettings:
         if isinstance(config, Mapping)
         else {}
     )
+    validate_config_project({"tracker": tracker_raw})
     return TrackerSettings(
         kind=optional_string(tracker_raw.get("kind"), "tracker.kind"),
         endpoint=string_with_default(
@@ -52,9 +55,7 @@ def parse_tracker_settings(config: Mapping[str, Any] | Any) -> TrackerSettings:
             os.getenv("LINEAR_API_KEY"),
             "tracker.api_key",
         ),
-        project_slug=optional_string(
-            tracker_raw.get("project_slug"), "tracker.project_slug"
-        ),
+        project=optional_string(tracker_raw.get("project"), "tracker.project"),
         assignee=resolve_secret_setting(
             tracker_raw.get("assignee"),
             os.getenv("LINEAR_ASSIGNEE"),

@@ -154,7 +154,6 @@ query CodeFactoryTrackerProjects($first: Int!) {
           id
           name
           key
-          states(first: 50) { nodes { id name type } }
         }
       }
     }

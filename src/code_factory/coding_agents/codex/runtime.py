@@ -99,7 +99,7 @@ class CodexRuntime:
             ops,
             allowed_roots=(workspace,),
             current_issue=issue.identifier,
-            current_project=self._settings.tracker.project_slug,
+            current_project=self._settings.tracker.project,
         )
 
 

@@ -113,7 +113,9 @@ async def test_integration_worker_driven_lifecycle_runs_hooks_and_cleans_workspa
         assert all(
             "You are an agent for this repository." in prompt for prompt in prompts
         )
-        snapshot = await harness.snapshot()
+        snapshot = await wait_for_snapshot(
+            harness, lambda current: not current["running"]
+        )
         assert snapshot["running"] == []
         assert snapshot["retrying"] == []
         assert snapshot["agent_totals"]["total_tokens"] == 54

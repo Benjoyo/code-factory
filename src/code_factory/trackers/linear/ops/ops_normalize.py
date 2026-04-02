@@ -79,7 +79,6 @@ def normalize_project(
     project = {
         "id": node.get("id"),
         "name": node.get("name"),
-        "slug": node.get("slugId"),
         "url": node.get("url"),
     }
     if include_teams:

@@ -97,7 +97,7 @@ Tracker configuration controls how issues are discovered and updated.
 | `tracker.kind` | string or `null` | `null` | Required later by dispatch validation. |
 | `tracker.endpoint` | string | `https://api.linear.app/graphql` | Used by the Linear tracker. |
 | `tracker.api_key` | string or `$VAR_NAME` or `null` | `LINEAR_API_KEY` env fallback | Empty string resolves to `null`. |
-| `tracker.project_slug` | string or `null` | `null` | Required for `linear` dispatch validation. |
+| `tracker.project` | string or `null` | `null` | Required for `linear` dispatch validation. |
 | `tracker.assignee` | string or `$VAR_NAME` or `null` | `LINEAR_ASSIGNEE` env fallback | Optional assignee filter. |
 
 ### `tracker.kind` values
@@ -504,7 +504,7 @@ tracker:
   kind: linear
   endpoint: https://api.linear.app/graphql
   api_key: $LINEAR_API_KEY
-  project_slug: code-factory
+  project: code-factory
   assignee: me
 
 states:
@@ -595,7 +595,7 @@ config needed to do real work:
 - `failure_state` must be present and non-blank.
 - `tracker.kind` must be present and supported.
 - `tracker.api_key` must be present when required by the selected tracker.
-- `tracker.project_slug` must be present when required by the selected tracker.
+- `tracker.project` must be present when required by the selected tracker.
 - `codex.command` must be present and non-empty.
 
 If workflow parsing or validation fails during reload, new dispatches are

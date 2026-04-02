@@ -223,9 +223,9 @@ async def test_dynamic_tool_executor_validation_and_error_paths(
             "message": "Code Factory is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`."
         }
     }
-    assert linear_error_payload(TrackerClientError("missing_linear_project_slug")) == {
+    assert linear_error_payload(TrackerClientError("missing_linear_project")) == {
         "error": {
-            "message": "Code Factory is missing the default tracker project. Set `tracker.project_slug` in `WORKFLOW.md` or pass an explicit project."
+            "message": "Code Factory is missing the default tracker project. Set `tracker.project` in `WORKFLOW.md`."
         }
     }
     assert linear_error_payload(TrackerClientError(("linear_api_status", 503))) == {

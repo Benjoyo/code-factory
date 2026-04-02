@@ -166,7 +166,7 @@ def test_init_command_copies_default_workflow(
     monkeypatch.chdir(tmp_path)
     values = WorkflowTemplateValues(
         tracker_kind="linear",
-        project_slug="demo-project",
+        project="demo-project",
         git_repo="git@github.com:example/demo.git",
         failure_state="Human Review",
         active_states=("Todo", "In Progress"),
@@ -198,7 +198,7 @@ def test_init_command_rejects_existing_workflow(
         lambda **_: PreparedProjectInit(
             values=WorkflowTemplateValues(
                 tracker_kind="linear",
-                project_slug="demo-project",
+                project="demo-project",
                 git_repo="git@github.com:example/demo.git",
                 failure_state="Human Review",
                 active_states=("Todo",),
@@ -225,7 +225,7 @@ def test_init_command_force_overwrites_existing_workflow(
     monkeypatch.chdir(tmp_path)
     values = WorkflowTemplateValues(
         tracker_kind="memory",
-        project_slug="demo-project",
+        project="demo-project",
         git_repo="https://github.com/example/demo.git",
         failure_state="Human Review",
         active_states=("Queued",),
@@ -257,7 +257,7 @@ def test_init_command_renders_bootstrap_warnings(
     monkeypatch.chdir(tmp_path)
     values = WorkflowTemplateValues(
         tracker_kind="linear",
-        project_slug="demo-project",
+        project="demo-project",
         git_repo="git@github.com:example/demo.git",
         failure_state="Human Review",
         active_states=("Todo",),
@@ -1417,7 +1417,7 @@ async def test_workflow_store_reload_run_and_error_paths(
     assert snapshots == []
 
     workflow.write_text(
-        "---\nfailure_state: Human Review\ntracker:\n  kind: linear\n  api_key: token\n  project_slug: next\n"
+        "---\nfailure_state: Human Review\ntracker:\n  kind: linear\n  api_key: token\n  project: next\n"
         "states:\n  Todo:\n    prompt: default\n---\n# prompt: default\nnew\n",
         encoding="utf-8",
     )
