@@ -2,8 +2,8 @@
 
 This directory documents the user-facing parts of `WORKFLOW.md`:
 
-- [Prompt templates](/Users/bennet/git/code-factory/docs/workflow/prompt-template.md): how named prompt sections are declared, composed, and rendered with Liquid.
-- [Frontmatter](/Users/bennet/git/code-factory/docs/workflow/frontmatter.md): the YAML schema, defaults, validation rules, supported enum values, and implementation notes.
+- [Prompt templates](./prompt-template.md): how named prompt sections are declared, composed, and rendered with Liquid.
+- [Frontmatter](./frontmatter.md): the YAML schema, defaults, validation rules, supported enum values, and implementation notes.
 
 A runnable `WORKFLOW.md` now has this high-level shape:
 

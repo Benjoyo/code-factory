@@ -50,7 +50,7 @@ There are no other top-level template variables.
 
 ## `issue` object reference
 
-`issue` contains every field from [`Issue`](/Users/bennet/git/code-factory/src/code_factory/issues.py).
+`issue` contains every field from [`Issue`](../../src/code_factory/issues.py).
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -72,7 +72,7 @@ There are no other top-level template variables.
 
 ### `issue.blocked_by[]` object reference
 
-Each blocker entry comes from [`BlockerRef`](/Users/bennet/git/code-factory/src/code_factory/issues.py).
+Each blocker entry comes from [`BlockerRef`](../../src/code_factory/issues.py).
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -240,6 +240,6 @@ Look for security regressions in the candidate patch.
 ## Built-in fallback prompt
 
 If the effective composed prompt is empty, Code Factory uses the default prompt from
-[`src/code_factory/config/defaults.py`](/Users/bennet/git/code-factory/src/code_factory/config/defaults.py).
+[`src/code_factory/config/defaults.py`](../../src/code_factory/config/defaults.py).
 
 That fallback is intentionally minimal. For real workflows, define explicit prompt sections in `WORKFLOW.md`.
