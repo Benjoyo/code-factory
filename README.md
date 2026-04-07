@@ -21,6 +21,10 @@ Use it when you want repeatable issue execution, repo-owned workflow policy,
 and enough observability to operate concurrent agent runs without building a
 custom harness around your coding agent.
 
+## Typical Workflow
+
+![Typical Code Factory workflow showing tracker intake, per-issue workspace creation, coding-agent execution, operator review, and issue state progression](docs/code-factory-typical-workflow.svg)
+
 ## What You Need
 
 - Python 3.12
