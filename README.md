@@ -70,6 +70,45 @@ project-specific `WORKFLOW.md`, and copies this repo's bundled skills into
 `./.agents/skills`. Re-run with `--force` if you want to overwrite an existing
 workflow or skills bundle.
 
+Most projects should make a few repo-specific edits before first real use. The
+starter workflow is intentionally generic; adapt the bootstrap, verification,
+and review setup to your stack.
+
+Example additions to copy into `WORKFLOW.md` and tailor:
+
+```yaml
+hooks:
+  after_create: |
+    git clone --depth 1 git@github.com:your-org/your-repo.git .
+    uv sync
+
+states:
+  "In Progress":
+    hooks:
+      before_complete: |
+        make verify
+  "Rework":
+    hooks:
+      before_complete: |
+        make verify
+
+review:
+  prepare: |
+    uv sync
+  servers:
+    - name: app
+      base_port: 8000
+      command: |
+        uv run python -m uvicorn your_project.app:app --host 127.0.0.1 --port {{ review.port }}
+      url: http://127.0.0.1:{{ review.port }}
+```
+
+Use these as patterns, not defaults:
+
+- `hooks.after_create`: install dependencies, build generated assets, or run any one-time workspace bootstrap your repo needs.
+- `states.<state>.hooks.before_complete`: run the quality gate your team expects before handoff, for example `make verify`, `uv run pytest -q`, or a lint/test script.
+- `review.prepare` and `review.servers`: make `cf review` immediately useful by starting the exact app or dev server a reviewer should inspect.
+
 ### 3. Start the service
 
 ```bash

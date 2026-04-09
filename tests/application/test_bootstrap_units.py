@@ -59,18 +59,30 @@ def test_render_default_workflow_replaces_template_tokens() -> None:
     assert "git clone --depth 1 git@github.com:example/demo.git ." in rendered
     assert "make setup" not in rendered
     assert 'failure_state: "Human Review"' in rendered
+    assert "ai_review:" in rendered
+    assert "    generic:" in rendered
+    assert "        reasoning_effort: low" in rendered
     assert '  "Todo":\n    auto_next_state: In Progress' in rendered
     assert (
         '  "In Progress":\n'
-        "    prompt: default\n"
+        "    prompt:\n"
+        "      - base\n"
+        "      - execute\n"
+        "    ai_review: generic\n"
+        "    allowed_next_states:\n"
+        '      - "Human Review"\n'
         "    completion:\n"
         "      require_pushed_head: true\n"
         "      require_pr: true"
     ) in rendered
     assert "  max_concurrent_agents: 2" in rendered
-    assert "# prompt: default" in rendered
+    assert "# prompt: base" in rendered
+    assert "# prompt: execute" in rendered
+    assert "# prompt: rework" in rendered
+    assert "# prompt: merge" in rendered
+    assert "# review: generic" in rendered
     assert "{{ issue.identifier }}" in rendered
-    assert "Blocked-by tickets:" in rendered
+    assert "Blocked-by context" in rendered
     assert "merge and delete the head branch" in rendered
     assert (
         "Treat explicit user steering during the run as authoritative task input."
@@ -80,6 +92,7 @@ def test_render_default_workflow_replaces_template_tokens() -> None:
         "Never remove already-implemented behavior solely because the original ticket text is stale"
         in rendered
     )
+    assert "record that dependency with\n  `blocked_by`" in rendered
 
 
 def test_default_workflow_template_contains_meta_tokens() -> None:
@@ -88,6 +101,41 @@ def test_default_workflow_template_contains_meta_tokens() -> None:
     assert token("PROJECT") in template
     assert token("FAILURE_STATE") in template
     assert token("STATE_PROFILES") in template
+
+
+def test_render_default_workflow_uses_state_specific_prompts_for_merge_and_rework() -> (
+    None
+):
+    rendered = render_default_workflow(
+        WorkflowTemplateValues(
+            tracker_kind="linear",
+            project="demo-project",
+            git_repo="git@github.com:example/demo.git",
+            failure_state="Human Review",
+            active_states=("Todo", "In Progress", "Merging", "Rework"),
+            terminal_states=("Done",),
+            workspace_root="/tmp/code-factory-workspaces",
+            max_concurrent_agents=2,
+        )
+    )
+
+    assert (
+        '  "Merging":\n'
+        "    prompt:\n"
+        "      - base\n"
+        "      - merge\n"
+        "    allowed_next_states:\n"
+        '      - "Done"\n'
+        '      - "Rework"'
+    ) in rendered
+    assert (
+        '  "Rework":\n'
+        "    prompt:\n"
+        "      - base\n"
+        "      - rework\n"
+        "      - execute\n"
+        "    ai_review: generic"
+    ) in rendered
 
 
 def test_initialize_workflow_writes_rendered_template(tmp_path: Path) -> None:

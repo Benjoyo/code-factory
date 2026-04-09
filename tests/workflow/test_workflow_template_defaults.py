@@ -25,6 +25,9 @@ def test_default_workflow_template_includes_manual_review_steps_guidance() -> No
         "`Plan`, `Acceptance Criteria`, `Manual Review Steps`, and `Validation` exactly match completed work"
         in template
     )
+    assert "# review: generic" in template
+    assert "ai_review:" in template
+    assert "prompt: generic" in template
     assert "embed the returned Markdown" in template
     assert "Do not wrap uploaded media Markdown in backticks" in template
     assert "summary` is a downstream handoff artifact" in template

@@ -258,7 +258,14 @@ def test_default_prompt_renders_ticket_specific_review_command(tmp_path: Path) -
         / "default.md"
     ).read_text(encoding="utf-8")
     prompt = template.split("---\n", 2)[2].strip()
-    workflow = write_workflow_file(tmp_path / "WORKFLOW.md", prompt=prompt)
+    workflow = write_workflow_file(
+        tmp_path / "WORKFLOW.md",
+        prompt=prompt,
+        states={
+            "Todo": {"auto_next_state": "In Progress"},
+            "In Progress": {"prompt": ["base", "execute"]},
+        },
+    )
     snapshot = make_snapshot(workflow)
     issue = make_issue(identifier="ENG-12")
     issue_data = asdict(issue) | {"upstream_tickets": []}

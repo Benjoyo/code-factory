@@ -85,7 +85,7 @@ def yaml_list(values: tuple[str, ...]) -> str:
 
 
 def yaml_state_profiles(values: tuple[str, ...]) -> str:
-    """Render the starter state-profile mapping that points to one shared prompt."""
+    """Render the starter state-profile mapping for the standard workflow states."""
 
     rendered: list[str] = []
     for value in values:
@@ -95,17 +95,63 @@ def yaml_state_profiles(values: tuple[str, ...]) -> str:
                 f"  {yaml_string(value)}:\n    auto_next_state: In Progress"
             )
             continue
-        lines = [f"  {yaml_string(value)}:", "    prompt: default"]
-        if normalized in {"in progress", "rework"}:
-            lines.extend(
-                [
-                    "    completion:",
-                    "      require_pushed_head: true",
-                    "      require_pr: true",
-                ]
-            )
-        rendered.append("\n".join(lines))
+        rendered.append("\n".join(_state_profile_lines(value, normalized)))
     return "\n".join(rendered)
+
+
+def _state_profile_lines(state_name: str, normalized: str) -> list[str]:
+    lines = [f"  {yaml_string(state_name)}:"]
+    if normalized == "in progress":
+        lines.extend(
+            [
+                "    prompt:",
+                "      - base",
+                "      - execute",
+                "    ai_review: generic",
+                "    allowed_next_states:",
+                f"      - {yaml_string('Human Review')}",
+                "    completion:",
+                "      require_pushed_head: true",
+                "      require_pr: true",
+            ]
+        )
+        return lines
+    if normalized == "rework":
+        lines.extend(
+            [
+                "    prompt:",
+                "      - base",
+                "      - rework",
+                "      - execute",
+                "    ai_review: generic",
+                "    allowed_next_states:",
+                f"      - {yaml_string('Human Review')}",
+                "    completion:",
+                "      require_pushed_head: true",
+                "      require_pr: true",
+            ]
+        )
+        return lines
+    if normalized == "merging":
+        lines.extend(
+            [
+                "    prompt:",
+                "      - base",
+                "      - merge",
+                "    allowed_next_states:",
+                f"      - {yaml_string('Done')}",
+                f"      - {yaml_string('Rework')}",
+            ]
+        )
+        return lines
+    lines.extend(
+        [
+            "    prompt:",
+            "      - base",
+            "      - execute",
+        ]
+    )
+    return lines
 
 
 def yaml_string(value: str) -> str:
