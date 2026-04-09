@@ -38,7 +38,7 @@ The review request sent to Codex will be composed by Code Factory. It will prepe
 5. As a workflow author, I want to trigger review only for meaningful changes, so that tiny changes do not waste time and tokens.
 6. As a workflow author, I want path triggers that express frontend-only, backend-only, and mixed-change review policies, so that reviews stay relevant to the patch.
 7. As a workflow author, I want path trigger names that are easy to understand, so that workflow configuration is readable without memorizing set-theory semantics.
-8. As a workflow author, I want `paths.only`, `paths.include`, and `paths.exclude` semantics, so that I can express practical review routing with minimal confusion.
+8. As a workflow author, I want `paths.only`, `paths.include`, `paths.exclude`, and `paths.require_all` semantics, so that I can express practical review routing with minimal confusion.
 9. As a workflow author, I want review triggers based on current worktree changes, so that the reviewer evaluates the exact patch about to transition.
 10. As a workflow author, I want changed-line thresholds to use added plus deleted lines, so that refactors and deletions are counted realistically.
 11. As an implementing agent, I want review findings returned as one combined repair prompt, so that I can address all accepted findings in one follow-up turn.
@@ -77,7 +77,10 @@ The review request sent to Codex will be composed by Code Factory. It will prepe
   - `only`: every changed file must match one of these globs
   - `include`: at least one changed file must match one of these globs
   - `exclude`: no changed file may match any of these globs
-- Keep line-based triggers as scalar thresholds alongside path rules. `lines_changed` will mean added lines plus deleted lines from the selected review surface diff.
+  - `require_all`: every glob group must be represented by at least one changed file, with OR semantics inside each group
+- Keep scalar diff-size triggers alongside path rules.
+  - `lines_changed` means added lines plus deleted lines from the selected review surface diff
+  - `files_changed` means the count of distinct changed paths on the selected review surface
 - When multiple review types trigger for one state transition, run all of them and merge their filtered findings into one repair prompt.
 - Run AI review only after deterministic readiness and `before_complete` hooks pass, so review sees a cleaner candidate patch and token spend is reduced on obviously invalid work.
 - For `branch` scope, require the worktree to be clean and the default base ref to resolve cleanly. If that surface cannot be represented, feed the failure back through the existing completion loop rather than silently falling back to `worktree`.

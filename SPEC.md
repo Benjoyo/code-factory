@@ -633,9 +633,11 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `ai_review.types.<name>.codex.reasoning_effort`: string or null, optional
 - `ai_review.types.<name>.codex.fast_mode`: boolean or null, optional
 - `ai_review.types.<name>.lines_changed`: non-negative integer or null, optional
+- `ai_review.types.<name>.files_changed`: non-negative integer or null, optional
 - `ai_review.types.<name>.paths.only`: non-empty list of strings, optional
 - `ai_review.types.<name>.paths.include`: non-empty list of strings, optional
 - `ai_review.types.<name>.paths.exclude`: non-empty list of strings, optional
+- `ai_review.types.<name>.paths.require_all`: non-empty list of non-empty glob lists, optional
 - `polling.interval_ms`: integer, default `30000`
 - `workspace.root`: path, default `<system-temp>/code-factory-workspaces`
 - `hooks.after_create`: shell script or null

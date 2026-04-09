@@ -61,7 +61,7 @@ def test_render_default_workflow_replaces_template_tokens() -> None:
     assert 'failure_state: "Human Review"' in rendered
     assert "ai_review:" in rendered
     assert "    generic:" in rendered
-    assert "        reasoning_effort: low" in rendered
+    assert "        reasoning_effort: high" in rendered
     assert '  "Todo":\n    auto_next_state: In Progress' in rendered
     assert (
         '  "In Progress":\n'

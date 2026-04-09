@@ -53,15 +53,23 @@ def review_type(
     name: str,
     *,
     lines_changed: int | None = None,
+    files_changed: int | None = None,
     only: tuple[str, ...] = (),
     include: tuple[str, ...] = (),
     exclude: tuple[str, ...] = (),
+    require_all: tuple[tuple[str, ...], ...] = (),
 ) -> WorkflowReviewType:
     return WorkflowReviewType(
         review_name=name,
         prompt_ref=name.lower(),
         lines_changed=lines_changed,
-        paths=ReviewPathTriggers(only=only, include=include, exclude=exclude),
+        files_changed=files_changed,
+        paths=ReviewPathTriggers(
+            only=only,
+            include=include,
+            exclude=exclude,
+            require_all=require_all,
+        ),
     )
 
 
@@ -104,7 +112,34 @@ def test_review_type_matches_surface_semantics() -> None:
     )
     assert (
         review_type_matches_surface(
+            review_type("Many Files", files_changed=3),
+            mixed_surface,
+        )
+        is False
+    )
+    assert (
+        review_type_matches_surface(
             review_type("Skip Tests", exclude=("ui/**",)),
+            mixed_surface,
+        )
+        is False
+    )
+    assert (
+        review_type_matches_surface(
+            review_type(
+                "Cross Area",
+                require_all=(("src/**",), ("ui/**", "web/**")),
+            ),
+            mixed_surface,
+        )
+        is True
+    )
+    assert (
+        review_type_matches_surface(
+            review_type(
+                "Missing Group",
+                require_all=(("src/**",), ("admin/**",)),
+            ),
             mixed_surface,
         )
         is False
@@ -115,10 +150,20 @@ def test_review_type_matches_surface_semantics() -> None:
             review_type("General"),
             review_type("Frontend", only=("ui/**",)),
             review_type("Security", include=("src/**",), exclude=("tests/**",)),
+            review_type(
+                "Architecture",
+                lines_changed=5,
+                files_changed=2,
+                require_all=(("src/**",), ("ui/**", "web/**")),
+            ),
         ),
         mixed_surface,
     )
-    assert tuple(review.review_name for review in matched) == ("General", "Security")
+    assert tuple(review.review_name for review in matched) == (
+        "General",
+        "Security",
+        "Architecture",
+    )
 
 
 def test_review_surface_helpers_cover_edge_cases(tmp_path: Path) -> None:

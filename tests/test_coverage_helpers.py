@@ -221,6 +221,57 @@ def test_workflow_review_helpers_cover_remaining_paths(tmp_path: Path) -> None:
         )
     with pytest.raises(
         ConfigValidationError,
+        match="paths.require_all must be a list of non-empty glob lists",
+    ):
+        parse_review_types(
+            {
+                "ai_review": {
+                    "types": {
+                        "Security": {
+                            "prompt": "security",
+                            "paths": {"require_all": "src/**"},
+                        }
+                    }
+                }
+            },
+            {"security": "body"},
+        )
+    with pytest.raises(
+        ConfigValidationError,
+        match="paths.require_all\\[0\\] must be a list of strings",
+    ):
+        parse_review_types(
+            {
+                "ai_review": {
+                    "types": {
+                        "Security": {
+                            "prompt": "security",
+                            "paths": {"require_all": [1]},
+                        }
+                    }
+                }
+            },
+            {"security": "body"},
+        )
+    with pytest.raises(
+        ConfigValidationError,
+        match="paths.require_all\\[0\\] must not be empty",
+    ):
+        parse_review_types(
+            {
+                "ai_review": {
+                    "types": {
+                        "Security": {
+                            "prompt": "security",
+                            "paths": {"require_all": [[]]},
+                        }
+                    }
+                }
+            },
+            {"security": "body"},
+        )
+    with pytest.raises(
+        ConfigValidationError,
         match="ai_review.types.Security.prompt must be a string or list of strings",
     ):
         parse_review_types(

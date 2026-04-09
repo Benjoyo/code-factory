@@ -113,6 +113,11 @@ def review_type_matches_surface(
     ):
         return False
     changed_paths = surface.changed_paths
+    if (
+        review_type.files_changed is not None
+        and len(changed_paths) < review_type.files_changed
+    ):
+        return False
     if review_type.paths.only and not all(
         _matches_any(path, review_type.paths.only) for path in changed_paths
     ):
@@ -123,6 +128,11 @@ def review_type_matches_surface(
         return False
     if review_type.paths.exclude and any(
         _matches_any(path, review_type.paths.exclude) for path in changed_paths
+    ):
+        return False
+    if review_type.paths.require_all and not all(
+        any(_matches_any(path, group) for path in changed_paths)
+        for group in review_type.paths.require_all
     ):
         return False
     return True

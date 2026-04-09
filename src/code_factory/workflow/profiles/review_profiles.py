@@ -13,6 +13,7 @@ from ...config.utils import (
     require_mapping,
 )
 from ...errors import ConfigValidationError
+from .review_path_parsing import glob_group_list, glob_list
 
 AI_REVIEW_SCOPE_AUTO = "auto"
 AI_REVIEW_SCOPE_WORKTREE = "worktree"
@@ -31,6 +32,7 @@ class ReviewPathTriggers:
     only: tuple[str, ...] = ()
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
+    require_all: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +48,7 @@ class WorkflowReviewType:
     prompt_ref: str
     codex: ReviewCodexConfig = ReviewCodexConfig()
     lines_changed: int | None = None
+    files_changed: int | None = None
     paths: ReviewPathTriggers = ReviewPathTriggers()
 
 
@@ -88,6 +91,7 @@ def parse_review_types(
             "prompt",
             "codex",
             "lines_changed",
+            "files_changed",
             "paths",
         }
         if unexpected_keys:
@@ -105,6 +109,10 @@ def parse_review_types(
             lines_changed=_optional_non_negative_int(
                 definition.get("lines_changed"),
                 f"{field_name}.lines_changed",
+            ),
+            files_changed=_optional_non_negative_int(
+                definition.get("files_changed"),
+                f"{field_name}.files_changed",
             ),
             paths=_review_paths(definition.get("paths"), field_name),
         )
@@ -229,14 +237,22 @@ def _review_prompt_ref(
 def _review_paths(raw_paths: Any, field_name: str) -> ReviewPathTriggers:
     paths_field = f"{field_name}.paths"
     paths = require_mapping(raw_paths, paths_field)
-    unexpected_keys = set(paths.keys()) - {"only", "include", "exclude"}
+    unexpected_keys = set(paths.keys()) - {
+        "only",
+        "include",
+        "exclude",
+        "require_all",
+    }
     if unexpected_keys:
         names = ", ".join(sorted(map(str, unexpected_keys)))
         raise ConfigValidationError(f"{paths_field} has unsupported keys: {names}")
     return ReviewPathTriggers(
-        only=_glob_list(paths.get("only"), f"{paths_field}.only"),
-        include=_glob_list(paths.get("include"), f"{paths_field}.include"),
-        exclude=_glob_list(paths.get("exclude"), f"{paths_field}.exclude"),
+        only=glob_list(paths.get("only"), f"{paths_field}.only"),
+        include=glob_list(paths.get("include"), f"{paths_field}.include"),
+        exclude=glob_list(paths.get("exclude"), f"{paths_field}.exclude"),
+        require_all=glob_group_list(
+            paths.get("require_all"), f"{paths_field}.require_all"
+        ),
     )
 
 
@@ -254,28 +270,6 @@ def _review_codex_config(raw_codex: Any, field_name: str) -> ReviewCodexConfig:
         ),
         fast_mode=optional_boolean(codex.get("fast_mode"), f"{codex_field}.fast_mode"),
     )
-
-
-def _glob_list(value: Any, field_name: str) -> tuple[str, ...]:
-    if value is None:
-        return ()
-    if not isinstance(value, list):
-        raise ConfigValidationError(f"{field_name} must be a list of strings")
-    globs: list[str] = []
-    seen: set[str] = set()
-    for raw_glob in value:
-        if not isinstance(raw_glob, str):
-            raise ConfigValidationError(f"{field_name} must be a list of strings")
-        glob = raw_glob.strip()
-        if not glob:
-            raise ConfigValidationError(f"{field_name} entries must not be blank")
-        if glob in seen:
-            raise ConfigValidationError(f"{field_name} must not contain duplicates")
-        seen.add(glob)
-        globs.append(glob)
-    if not globs:
-        raise ConfigValidationError(f"{field_name} must not be empty")
-    return tuple(globs)
 
 
 def _optional_non_negative_int(value: Any, field_name: str) -> int | None:

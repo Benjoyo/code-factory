@@ -8,7 +8,8 @@ ai_review:
     generic:
       prompt: generic
       codex:
-        reasoning_effort: low
+        model: gpt-5.4
+        reasoning_effort: high
 terminal_states:
 [[CF_TERMINAL_STATES]]
 states:

@@ -265,9 +265,11 @@ from the top-level `review` section used for operator review worktrees.
 | `ai_review.types.<name>.codex.reasoning_effort` | string or `null` | inherit effective session reasoning | Optional review override. |
 | `ai_review.types.<name>.codex.fast_mode` | boolean or `null` | inherit effective session fast mode | Optional review override. |
 | `ai_review.types.<name>.lines_changed` | non-negative integer or `null` | `null` | Optional changed-line threshold trigger. |
+| `ai_review.types.<name>.files_changed` | non-negative integer or `null` | `null` | Optional changed-file threshold trigger. |
 | `ai_review.types.<name>.paths.only` | non-empty list of strings | `[]` | Require every changed path to match. |
 | `ai_review.types.<name>.paths.include` | non-empty list of strings | `[]` | Require at least one changed path to match. |
 | `ai_review.types.<name>.paths.exclude` | non-empty list of strings | `[]` | Require no changed path to match. |
+| `ai_review.types.<name>.paths.require_all` | non-empty list of non-empty glob lists | `[]` | Require every glob group to be represented by at least one changed path. |
 
 Rules:
 
@@ -277,8 +279,9 @@ Rules:
 - Duplicate normalized review type names are invalid.
 - `ai_review.types.<name>.prompt` must reference an existing `# review:` section.
 - `ai_review.types.<name>.codex` only supports `model`, `reasoning_effort`, and `fast_mode`.
-- `ai_review.types.<name>.paths` only supports `only`, `include`, and `exclude`.
+- `ai_review.types.<name>.paths` only supports `only`, `include`, `exclude`, and `require_all`.
 - Path-glob lists must contain non-blank strings, must not be empty when present, and must not contain duplicates.
+- `paths.require_all` groups are OR-within-group and AND-across-groups.
 
 Minimal example:
 
@@ -291,9 +294,13 @@ ai_review:
         model: gpt-5.4-mini
         reasoning_effort: high
       lines_changed: 25
+      files_changed: 2
       paths:
         include:
           - src/**
+        require_all:
+          - [src/**]
+          - [ui/**, web/**]
 ```
 
 ## `polling`

@@ -27,9 +27,11 @@ def test_workflow_snapshot_loads_ai_review_types_and_sections(tmp_path: Path) ->
                         "reasoning_effort": "high",
                     },
                     "lines_changed": 25,
+                    "files_changed": 2,
                     "paths": {
                         "include": ["src/**"],
                         "exclude": ["tests/**"],
+                        "require_all": [["src/**"], ["ui/**", "web/**"]],
                     },
                 },
                 "Frontend": {
@@ -79,8 +81,10 @@ def test_workflow_snapshot_loads_ai_review_types_and_sections(tmp_path: Path) ->
     assert security_review.codex.model == "gpt-5.4-mini"
     assert security_review.codex.reasoning_effort == "high"
     assert security_review.lines_changed == 25
+    assert security_review.files_changed == 2
     assert security_review.paths.include == ("src/**",)
     assert security_review.paths.exclude == ("tests/**",)
+    assert security_review.paths.require_all == (("src/**",), ("ui/**", "web/**"))
     assert frontend_review.review_name == "Frontend"
     assert frontend_review.paths.only == ("web/**", "ui/**")
     assert snapshot.ai_review_type(" frontend ") == frontend_review
@@ -247,6 +251,24 @@ def test_workflow_snapshot_ai_review_codex_fast_mode_inherits_and_overrides(
             },
             "# prompt: default\nImplement.\n\n# review: security\nCheck security.\n",
             "ai_review.types.Security.paths.include must not be empty",
+        ),
+        (
+            {
+                "ai_review": {
+                    "types": {
+                        "Security": {
+                            "prompt": "security",
+                            "paths": {"require_all": []},
+                        }
+                    }
+                },
+                "states": {
+                    "Todo": {"auto_next_state": "In Progress"},
+                    "In Progress": {"prompt": "default"},
+                },
+            },
+            "# prompt: default\nImplement.\n\n# review: security\nCheck security.\n",
+            "ai_review.types.Security.paths.require_all must not be empty",
         ),
         (
             {
