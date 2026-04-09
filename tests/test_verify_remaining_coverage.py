@@ -54,6 +54,7 @@ from code_factory.workspace.review.review_runner import (
 )
 from code_factory.workspace.review.review_session import run_review_session
 from code_factory.workspace.review.review_shell import ShellResult
+from code_factory.workspace.workpad import workspace_workpad_path
 
 from .conftest import make_issue, make_snapshot, write_workflow_file
 
@@ -337,7 +338,7 @@ async def test_remaining_runtime_and_review_runner_branches(
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    (workspace / "WORKPAD.md").write_text("body", encoding="utf-8")
+    Path(workspace_workpad_path(str(workspace))).write_text("body", encoding="utf-8")
 
     class CommentTracker:
         async def fetch_issue_comments(self, issue_id: str) -> list[IssueComment]:
