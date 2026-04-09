@@ -4,12 +4,12 @@
 
 <p><strong>🏭 Orchestrate coding agents via Kanban — high autonomy, isolated per-issue workspaces, single-file repo-owned workflow contract</strong></p>
 
-<p><a href="#quick-start">Quick Start</a> · <a href="docs/cli.md">CLI</a> · <a href="docs/workflow/README.md">Workflow</a> · <a href="SPEC.md">Specification</a></p>
+<p><a href="#quick-start">Quick Start</a> · <a href="https://github.com/Benjoyo/code-factory/blob/main/docs/cli.md">CLI</a> · <a href="https://github.com/Benjoyo/code-factory/blob/main/docs/workflow/README.md">Workflow</a> · <a href="https://github.com/Benjoyo/code-factory/blob/main/SPEC.md">Specification</a></p>
 
 </div>
 
 <p align="center">
-  <img src="docs/images/code-factory-dashboard.png" alt="Code Factory operator dashboard showing live issue execution, throughput, token usage, and operator links" width="1257" />
+  <img src="https://raw.githubusercontent.com/Benjoyo/code-factory/main/docs/images/code-factory-dashboard.png" alt="Code Factory operator dashboard showing live issue execution, throughput, token usage, and operator links" width="1257" />
 </p>
 
 Code Factory is a Python asyncio implementation and extension of the OpenAI Symphony spec. It
@@ -23,7 +23,7 @@ custom harness around your coding agent.
 
 ## Typical Workflow
 
-![Typical Code Factory workflow showing tracker intake, per-issue workspace creation, coding-agent execution, operator review, and issue state progression](docs/code-factory-typical-workflow.svg)
+![Typical Code Factory workflow showing tracker intake, per-issue workspace creation, coding-agent execution, operator review, and issue state progression](https://raw.githubusercontent.com/Benjoyo/code-factory/main/docs/code-factory-typical-workflow.svg)
 
 ## What You Need
 
@@ -35,10 +35,10 @@ custom harness around your coding agent.
 
 ## Installation
 
-For day-to-day use from a local checkout, install `cf` as a `uv` tool:
+Install `cf` from PyPI as a `uv` tool:
 
 ```bash
-uv tool install --editable .
+uv tool install code-factory-agent
 ```
 
 Then run it directly:
@@ -53,7 +53,13 @@ If you prefer not to install the tool, you can still run it from the repo with
 
 ## Quick Start
 
-### 1. Create a starter workflow in a new project
+### 1. Install from PyPI
+
+```bash
+uv tool install code-factory-agent
+```
+
+### 2. Create a starter workflow in a new project
 
 ```bash
 cf init
@@ -64,7 +70,7 @@ project-specific `WORKFLOW.md`, and copies this repo's bundled skills into
 `./.agents/skills`. Re-run with `--force` if you want to overwrite an existing
 workflow or skills bundle.
 
-### 2. Start the service
+### 3. Start the service
 
 ```bash
 cf serve --no-guardrails
@@ -72,12 +78,12 @@ cf serve --no-guardrails
 
 If you omit the workflow path, the CLI defaults to `./WORKFLOW.md`.
 
-### 3. Create issues and move to Todo
+### 4. Create issues and move to Todo
 
 - Create new issues in Linear Backlog
 - Move ready-for-dev issues to Todo
 
-### 4. Steer agents during execution (optional)
+### 5. Steer agents during execution (optional)
 
 Run:
 
@@ -87,7 +93,7 @@ cf steer ENG-123 "also add integration tests please"
 
 This appends operator guidance to an in-flight issue turn.
 
-### 5. Review PRs
+### 6. Review PRs
 
 Run:
 
@@ -101,7 +107,7 @@ This will:
 - Open the browser automatically, if configured.
 - Let you quickly submit PR comments with any problems you find.
 
-### 6. Move issues to Merging, Todo, or Rework
+### 7. Move issues to Merging, Todo, or Rework
 
 Move reviewed issues to:
 
@@ -120,8 +126,8 @@ The main operator commands are:
 - `cf issue`, `cf comment`, `cf workpad`, and `cf tracker` for tracker-facing
   operator actions
 
-See [docs/cli.md](docs/cli.md) for the general CLI reference and
-[docs/ticket-cli.md](docs/ticket-cli.md) for ticket-oriented commands.
+See [docs/cli.md](https://github.com/Benjoyo/code-factory/blob/main/docs/cli.md) for the general CLI reference and
+[docs/ticket-cli.md](https://github.com/Benjoyo/code-factory/blob/main/docs/ticket-cli.md) for ticket-oriented commands.
 
 ## Ticket Surfaces
 
@@ -155,16 +161,16 @@ hot-reload automation policy alongside application code.
 
 See the workflow docs for the current contract:
 
-- [Workflow docs](docs/workflow/README.md)
-- [Frontmatter reference](docs/workflow/frontmatter.md)
-- [Prompt template reference](docs/workflow/prompt-template.md)
-- [Specification](SPEC.md)
+- [Workflow docs](https://github.com/Benjoyo/code-factory/blob/main/docs/workflow/README.md)
+- [Frontmatter reference](https://github.com/Benjoyo/code-factory/blob/main/docs/workflow/frontmatter.md)
+- [Prompt template reference](https://github.com/Benjoyo/code-factory/blob/main/docs/workflow/prompt-template.md)
+- [Specification](https://github.com/Benjoyo/code-factory/blob/main/SPEC.md)
 
 ## Observability
 
 Code Factory exposes a local observability API and, when stderr is attached to a
 TTY, a live terminal dashboard for operators. See
-[docs/observability.md](docs/observability.md) for endpoints, dashboard
+[docs/observability.md](https://github.com/Benjoyo/code-factory/blob/main/docs/observability.md) for endpoints, dashboard
 behavior, and steering/discovery details.
 
 ## Runtime Notes
@@ -177,10 +183,26 @@ behavior, and steering/discovery details.
 
 ## Development
 
-Install dev dependencies:
+For local development from a checkout:
 
 ```bash
+git clone git@github.com:Benjoyo/code-factory.git
+cd code-factory
 make setup
+```
+
+Run the CLI directly from the repo with `uv run`:
+
+```bash
+uv run cf --help
+uv run cf serve --no-guardrails
+```
+
+If you want the checkout on your PATH during development, install the local
+editable tool:
+
+```bash
+uv tool install --editable .
 ```
 
 Run the full verification suite:
