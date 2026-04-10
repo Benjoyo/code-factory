@@ -1,10 +1,11 @@
-.PHONY: setup lint format-check typecheck test test-coverage coverage-gate coverage-packages fix repair verify-static verify clean
+.PHONY: setup lint format-check typecheck test test-coverage coverage-gate coverage-packages fix repair verify-static verify clean release-check release-patch release-minor release-major
 
 UV := uv run --project . --extra dev --group dev
 SOURCE_DIR := src/code_factory
 COVERAGE_JSON := coverage.json
 LINE_COVERAGE_MIN := 100
 BRANCH_COVERAGE_MIN := 100
+REMOTE ?= origin
 
 setup:
 	uv sync --extra dev --group dev
@@ -92,6 +93,22 @@ repair: fix verify
 verify-static: lint format-check typecheck
 
 verify: verify-static test coverage-gate
+
+release-check:
+	@branch="$$(git branch --show-current)"; \
+	test -n "$$branch" || { echo "Refusing release from detached HEAD." >&2; exit 1; }
+	@git diff --quiet --exit-code || { echo "Refusing release with unstaged tracked changes." >&2; exit 1; }
+	@git diff --cached --quiet --exit-code || { echo "Refusing release with staged changes." >&2; exit 1; }
+	@git remote get-url $(REMOTE) >/dev/null 2>&1 || { echo "Remote '$(REMOTE)' not found." >&2; exit 1; }
+
+release-patch release-minor release-major: release-check verify
+	@bump="$${@#release-}"; \
+	version="$$(uv version --short --bump "$$bump" --frozen)"; \
+	git add pyproject.toml; \
+	git commit -m "Bump version to $$version"; \
+	git tag -a "v$$version" -m "Release v$$version"; \
+	git push $(REMOTE) HEAD --follow-tags; \
+	printf 'Released %s to %s\n' "$$version" "$(REMOTE)"
 
 clean:
 	rm -f .coverage $(COVERAGE_JSON)

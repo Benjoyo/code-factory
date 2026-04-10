@@ -201,31 +201,48 @@ async def test_review_textual_app_handles_warnings_button_paths_and_worker_error
     )
     async with browser_app.run_test() as pilot:
         await pilot.pause()
-        await browser_app.action_open_preview()
         status = browser_app.query_one("#status")
         assert "warned" not in str(status.render())
 
-        browser_app._row_urls = ["http://127.0.0.1:3001"]
-        browser_app.on_data_table_row_selected(cast(Any, SimpleNamespace(cursor_row=0)))
+        entry = RunningReviewServer(
+            target=target,
+            launch=cast(
+                Any,
+                SimpleNamespace(
+                    name="web",
+                    command="run web",
+                    port=3001,
+                    url="http://127.0.0.1:3001",
+                    open_browser=True,
+                ),
+            ),
+            worktree="/tmp/review/eng-1",
+            process=cast(Any, SimpleNamespace(pid=101)),
+            head_sha="abc123",
+        )
+        await browser_app.on_server_started(cast(Any, SimpleNamespace(entry=entry)))
+        await pilot.pause()
+        button = browser_app.query_one("#browser-button-web", Button)
         monkeypatch.setattr(
             "code_factory.workspace.review.review_textual_app.webbrowser.open",
             lambda _url: True,
         )
-        await browser_app.action_open_preview()
+        await browser_app.on_button_pressed(Button.Pressed(button))
         monkeypatch.setattr(
             "code_factory.workspace.review.review_textual_app.webbrowser.open",
             lambda _url: False,
         )
-        button = browser_app.query_one("#preview-button", Button)
         await browser_app.on_button_pressed(Button.Pressed(button))
+        await browser_app._mount_browser_button("web", "http://127.0.0.1:3001")
+        assert len(list(browser_app.query(".browser-button"))) == 1
+        await browser_app.on_button_pressed(
+            Button.Pressed(Button("Missing", id="browser-button-missing"))
+        )
         await pilot.pause()
-        assert "Failed to open preview" in str(
+        assert "Failed to open web in browser" in str(
             browser_app.query_one("#status").render()
         )
         await browser_app.on_button_pressed(Button.Pressed(Button("Other", id="other")))
-
-        browser_app._selected_row = -1
-        assert browser_app._selected_url() is None
         await pilot.press("q")
 
 

@@ -249,3 +249,16 @@ Run the full verification suite:
 ```bash
 make verify
 ```
+
+Create and publish a release in one command:
+
+```bash
+make release-patch
+make release-minor
+make release-major
+```
+
+Each release target runs `make verify`, bumps `project.version`, creates a
+matching annotated `v...` tag, and pushes the current branch plus tag to
+`origin`. Override the remote with `make release-patch REMOTE=<remote>` if
+needed.

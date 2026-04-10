@@ -101,10 +101,16 @@ class ReviewTextualApp(App[None]):
         margin-top: 1;
         align: left middle;
     }
-    #preview-button,
+    #browser-actions {
+        height: auto;
+    }
+    .browser-button,
     #pr-button {
-        width: 18;
         height: 3;
+    }
+    .browser-button {
+        width: auto;
+        margin-right: 1;
     }
     #pr-button {
         margin-left: 1;
@@ -122,7 +128,6 @@ class ReviewTextualApp(App[None]):
     """
     BINDINGS = [
         ("q", "request_close", "Quit"),
-        ("b", "open_preview", "Open Preview"),
         ("p", "open_pr", "Open PR"),
     ]
 
@@ -142,8 +147,7 @@ class ReviewTextualApp(App[None]):
         self._prepare_enabled = prepare_enabled
         self._run_session = run_session
         self._stop_event = asyncio.Event()
-        self._row_urls: list[str | None] = []
-        self._selected_row = 0
+        self._browser_button_urls: dict[str, tuple[str, str]] = {}
         self._comment_enabled = (
             target.kind == "ticket"
             and target.pr_number is not None
@@ -162,7 +166,7 @@ class ReviewTextualApp(App[None]):
                 with TabPane("Overview", id="overview"):
                     yield DataTable(id="overview-table", cursor_type="row")
                     with Horizontal(id="overview-actions"):
-                        yield Button("Open Preview", id="preview-button", disabled=True)
+                        yield Horizontal(id="browser-actions")
                         if self._target.pr_url is not None:
                             yield Button("Open PR", id="pr-button")
                             yield Static(
@@ -208,29 +212,22 @@ class ReviewTextualApp(App[None]):
         self._stop_event.set()
         self._set_status("Stopping review session...")
 
-    async def action_open_preview(self) -> None:
-        url = self._selected_url()
-        if url is None:
-            return
-        opened = await asyncio.to_thread(webbrowser.open, url)
-        if not opened:
-            self._set_status(f"Failed to open preview for {url}")
-
     async def action_open_pr(self) -> None:
         pr_url = self._target.pr_url
         if pr_url is None:
             return
-        opened = await asyncio.to_thread(webbrowser.open, pr_url)
-        if not opened:
-            self._set_status(f"Failed to open pull request for {pr_url}")
+        await self._open_browser_url(pr_url, "pull request")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "preview-button":
-            await self.action_open_preview()
-        if event.button.id == "pr-button":
+        button_id = event.button.id or ""
+        if button_id.startswith("browser-button-"):
+            server = self._browser_button_urls.get(button_id)
+            if server is not None:
+                await self._open_browser_url(server[1], f"{server[0]} in browser")
+        if button_id == "pr-button":
             await self.action_open_pr()
 
-    def on_server_started(self, message: ServerStarted) -> None:
+    async def on_server_started(self, message: ServerStarted) -> None:
         entry = message.entry
         self.query_one("#overview-table", DataTable).add_row(
             entry.target.target,
@@ -242,16 +239,8 @@ class ReviewTextualApp(App[None]):
             entry.target.pr_url or "",
             entry.worktree,
         )
-        self._row_urls.append(entry.launch.url)
-        self._refresh_browser_button()
-
-    def on_data_table_row_highlighted(self, message: DataTable.RowHighlighted) -> None:
-        self._selected_row = message.cursor_row
-        self._refresh_browser_button()
-
-    def on_data_table_row_selected(self, message: DataTable.RowSelected) -> None:
-        self._selected_row = message.cursor_row
-        self._refresh_browser_button()
+        if entry.launch.url is not None:
+            await self._mount_browser_button(entry.launch.name, entry.launch.url)
 
     def on_prepare_line(self, message: PrepareLine) -> None:
         self.query_one("#prepare-log", Log).write_line(
@@ -279,18 +268,23 @@ class ReviewTextualApp(App[None]):
         status.update(message)
         status.display = bool(message)
 
-    def _refresh_browser_button(self) -> None:
-        self.query_one("#preview-button", Button).disabled = (
-            self._selected_url() is None
-        )
-
-    def _selected_url(self) -> str | None:
-        if not self._row_urls:
-            return None
-        row = self._selected_row
-        if not isinstance(row, int) or row < 0 or row >= len(self._row_urls):
-            return None
-        return self._row_urls[row]
-
     def _submission_summary_text(self, bug_count: int, change_count: int) -> str:
         return f"Bugs submitted: {bug_count}  Changes submitted: {change_count}"
+
+    async def _mount_browser_button(self, server_name: str, url: str) -> None:
+        button_id = f"browser-button-{safe_identifier(server_name)}"
+        if button_id in self._browser_button_urls:
+            return
+        self._browser_button_urls[button_id] = (server_name, url)
+        await self.query_one("#browser-actions", Horizontal).mount(
+            Button(
+                f"Open {server_name} in Browser",
+                id=button_id,
+                classes="browser-button",
+            )
+        )
+
+    async def _open_browser_url(self, url: str, destination: str) -> None:
+        opened = await asyncio.to_thread(webbrowser.open, url)
+        if not opened:
+            self._set_status(f"Failed to open {destination} for {url}")

@@ -89,19 +89,17 @@ async def test_review_textual_app_renders_overview_logs_and_prepare_tab() -> Non
     async with app.run_test() as pilot:
         await pilot.pause()
         table = app.query_one("#overview-table", DataTable)
-        preview_button = app.query_one("#preview-button", Button)
+        browser_button = app.query_one("#browser-button-web", Button)
         pr_button = app.query_one("#pr-button", Button)
         summary = app.query_one("#submission-summary", Static)
         prepare_log = app.query_one("#prepare-log", Log)
         assert table.row_count == 2
-        assert preview_button.disabled is False
+        assert browser_button.label == "Open web in Browser"
+        assert list(app.query("#browser-button-api")) == []
         assert pr_button.label == "Open PR"
         assert str(summary.render()) == "Bugs submitted: 0  Changes submitted: 0"
-        assert preview_button.region.y == pr_button.region.y == summary.region.y
+        assert browser_button.region.y == pr_button.region.y == summary.region.y
         assert any("installing" in line for line in prepare_log.lines)
-
-        app.on_data_table_row_selected(cast(Any, SimpleNamespace(cursor_row=1)))
-        assert preview_button.disabled is True
 
         web_log = app.query_one("#log-web", Log)
         api_log = app.query_one("#log-api", Log)
@@ -184,6 +182,7 @@ async def test_review_textual_app_shows_empty_prepare_state() -> None:
             "No review.prepare command configured." in line
             for line in prepare_log.lines
         )
+        assert list(app.query(".browser-button")) == []
         assert list(app.query("#pr-button")) == []
         assert list(app.query("#comment-input")) == []
         await pilot.press("q")
