@@ -101,9 +101,27 @@ release-check:
 	@git diff --cached --quiet --exit-code || { echo "Refusing release with staged changes." >&2; exit 1; }
 	@git remote get-url $(REMOTE) >/dev/null 2>&1 || { echo "Remote '$(REMOTE)' not found." >&2; exit 1; }
 
-release-patch release-minor release-major: release-check verify
-	@bump="$${@#release-}"; \
-	version="$$(uv version --short --bump "$$bump" --frozen)"; \
+release-patch: BUMP=patch
+release-patch: release-check verify
+	@version="$$(uv version --short --bump $(BUMP) --frozen)"; \
+	git add pyproject.toml; \
+	git commit -m "Bump version to $$version"; \
+	git tag -a "v$$version" -m "Release v$$version"; \
+	git push $(REMOTE) HEAD --follow-tags; \
+	printf 'Released %s to %s\n' "$$version" "$(REMOTE)"
+
+release-minor: BUMP=minor
+release-minor: release-check verify
+	@version="$$(uv version --short --bump $(BUMP) --frozen)"; \
+	git add pyproject.toml; \
+	git commit -m "Bump version to $$version"; \
+	git tag -a "v$$version" -m "Release v$$version"; \
+	git push $(REMOTE) HEAD --follow-tags; \
+	printf 'Released %s to %s\n' "$$version" "$(REMOTE)"
+
+release-major: BUMP=major
+release-major: release-check verify
+	@version="$$(uv version --short --bump $(BUMP) --frozen)"; \
 	git add pyproject.toml; \
 	git commit -m "Bump version to $$version"; \
 	git tag -a "v$$version" -m "Release v$$version"; \
