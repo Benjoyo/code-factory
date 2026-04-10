@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-"""Runtime helper for workflow-triggered AI review passes."""
-
 import asyncio
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from ....coding_agents.base import AgentMessageHandler, CodingAgentRuntime
-from ....coding_agents.review_models import ReviewFinding, ReviewOutput
 from ....errors import ReviewError
 from ....issues import Issue
 from ....structured_results import StructuredTurnResult
@@ -16,6 +12,7 @@ from ....workflow.models import WorkflowSnapshot, WorkflowStateProfile
 from ....workflow.profiles.review_profiles import (
     ResolvedAiReviewScope,
     WorkflowReviewType,
+    normalize_review_name,
 )
 from ....workspace.ai_review.ai_review_feedback import (
     accepted_review_findings,
@@ -34,31 +31,7 @@ from ...activity_phase import (
     emit_activity_phase_update,
 )
 from ...messages import AgentWorkerUpdate
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutedAiReview:
-    review_type: WorkflowReviewType
-    review_output: ReviewOutput
-    accepted_findings: tuple[ReviewFinding, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class AiReviewPassResult:
-    selection: WorktreeReviewSelection
-    executed_reviews: tuple[ExecutedAiReview, ...]
-
-    @property
-    def accepted_findings(self) -> tuple[ReviewFinding, ...]:
-        return tuple(
-            finding
-            for review in self.executed_reviews
-            for finding in review.accepted_findings
-        )
-
-    @property
-    def matched_review_types(self) -> tuple[WorkflowReviewType, ...]:
-        return self.selection.matched_types
+from .ai_review_results import AiReviewPassResult, ExecutedAiReview
 
 
 async def run_ai_review_pass(
@@ -67,6 +40,7 @@ async def run_ai_review_pass(
     workflow_snapshot: WorkflowSnapshot,
     workspace_path: str,
     issue: Issue,
+    review_run_counts: dict[str, int],
     on_message: AgentMessageHandler | None = None,
 ) -> AiReviewPassResult:
     """Execute all currently triggered workflow review types in fresh review runs."""
@@ -78,8 +52,18 @@ async def run_ai_review_pass(
         workflow_snapshot.ai_review_types_for_state(issue.state),
         review_scope=review_scope.resolved_ai_review_scope(),
     )
+    capped: list[WorkflowReviewType] = []
     executed: list[ExecutedAiReview] = []
     for review_type in selection.matched_types:
+        review_key = normalize_review_name(review_type.review_name)
+        prior_runs = review_run_counts.get(review_key, 0)
+        if (
+            review_type.max_runs_per_execution is not None
+            and prior_runs >= review_type.max_runs_per_execution
+        ):
+            capped.append(review_type)
+            continue
+        review_run_counts[review_key] = prior_runs + 1
         prompt = render_ai_review_prompt(
             issue,
             review_type,
@@ -108,6 +92,7 @@ async def run_ai_review_pass(
     return AiReviewPassResult(
         selection=selection,
         executed_reviews=tuple(executed),
+        capped_review_types=tuple(capped),
     )
 
 
@@ -122,6 +107,7 @@ async def run_ai_review_gate(
     issue_id: str | None,
     feedback_attempts: int,
     failure_state: str,
+    review_run_counts: dict[str, int],
     on_message: AgentMessageHandler | None,
 ) -> tuple[int, str, StructuredTurnResult | None] | None:
     if not profile.ai_review_refs:
@@ -138,6 +124,7 @@ async def run_ai_review_gate(
             workflow_snapshot=workflow_snapshot,
             workspace_path=workspace_path,
             issue=issue,
+            review_run_counts=review_run_counts,
             on_message=on_message,
         )
     except ReviewError as exc:
@@ -155,7 +142,15 @@ async def run_ai_review_gate(
             "ai_review_skipped",
             payload={
                 "review_scope": ai_review.selection.surface.review_scope,
-                "matched_review_types": [],
+                "matched_review_types": [
+                    review_type.review_name
+                    for review_type in ai_review.selection.matched_types
+                ],
+                "executed_review_types": [],
+                "capped_review_types": [
+                    review_type.review_name
+                    for review_type in ai_review.capped_review_types
+                ],
                 "changed_paths": list(ai_review.selection.surface.changed_paths),
                 "lines_changed": ai_review.selection.surface.lines_changed,
             },
@@ -206,11 +201,7 @@ async def _emit_ai_review_update(
         await queue.put(
             AgentWorkerUpdate(
                 issue_id,
-                {
-                    "event": event,
-                    "timestamp": datetime.now(UTC),
-                    **payload,
-                },
+                {"event": event, "timestamp": datetime.now(UTC), **payload},
             )
         )
 
@@ -219,7 +210,13 @@ def _ai_review_update_payload(ai_review: AiReviewPassResult) -> dict[str, Any]:
     return {
         "review_scope": ai_review.selection.surface.review_scope,
         "matched_review_types": [
+            review_type.review_name for review_type in ai_review.selection.matched_types
+        ],
+        "executed_review_types": [
             review_type.review_name for review_type in ai_review.matched_review_types
+        ],
+        "capped_review_types": [
+            review_type.review_name for review_type in ai_review.capped_review_types
         ],
         "changed_paths": list(ai_review.selection.surface.changed_paths),
         "lines_changed": ai_review.selection.surface.lines_changed,

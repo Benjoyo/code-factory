@@ -1571,6 +1571,168 @@ async def test_issue_worker_ai_review_feedback_loop(
 
 
 @pytest.mark.asyncio
+async def test_issue_worker_ai_review_max_runs_per_execution_skips_later_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "allowed_next_states": ["Done"],
+                    "ai_review": "Architecture",
+                },
+            },
+            ai_review={
+                "types": {
+                    "Architecture": {
+                        "prompt": "architecture",
+                        "max_runs_per_execution": 1,
+                    }
+                }
+            },
+            prompt=(
+                "# prompt: default\nImplement.\n\n"
+                "# review: architecture\nLook for architecture drift and layering violations.\n"
+            ),
+        )
+    )
+
+    class Session:
+        async def stop(self) -> None:
+            return None
+
+    class FakeRuntime:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+            self.review_prompts: list[str] = []
+
+        async def start_session(self, workspace: str) -> Session:
+            return Session()
+
+        async def steer(self, session: Any, message: str) -> str | None:
+            return None
+
+        async def run_turn(
+            self,
+            session: Any,
+            prompt: str,
+            issue: Any,
+            *,
+            on_message=None,
+            output_schema=None,
+        ) -> StructuredTurnResult:
+            self.prompts.append(prompt)
+            return StructuredTurnResult(
+                decision="transition",
+                summary="done",
+                next_state="Done",
+            )
+
+        async def run_review(
+            self,
+            workspace: str,
+            prompt: str,
+            issue: Any,
+            *,
+            on_message=None,
+            model: str | None = None,
+            reasoning_effort: str | None = None,
+            fast_mode: bool | None = None,
+        ) -> Any:
+            from code_factory.coding_agents.review_models import (
+                ReviewCodeLocation,
+                ReviewFinding,
+                ReviewLineRange,
+                ReviewOutput,
+            )
+
+            self.review_prompts.append(prompt)
+            return ReviewOutput(
+                findings=(
+                    ReviewFinding(
+                        title="Cross-layer dependency",
+                        body="The state handler now reaches directly into persistence.",
+                        confidence_score=0.94,
+                        priority=1,
+                        code_location=ReviewCodeLocation(
+                            absolute_file_path="/tmp/workspace/src/app.py",
+                            line_range=ReviewLineRange(start=9, end=12),
+                        ),
+                    ),
+                ),
+                overall_correctness="incorrect",
+                overall_explanation="Architecture still violates the intended boundary.",
+                overall_confidence_score=0.9,
+            )
+
+    async def fake_native(*_args: Any, **_kwargs: Any) -> HookCommandResult | None:
+        return None
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.quality_gates.completion.native_readiness_result",
+        fake_native,
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.quality_gates.ai_review.select_worktree_review_types",
+        lambda *_args, **_kwargs: asyncio.sleep(
+            0,
+            result=WorktreeReviewSelection(
+                surface=WorktreeReviewSurface(
+                    changed_paths=("src/app.py",),
+                    lines_changed=12,
+                ),
+                matched_types=snapshot.ai_review_types_for_state("In Progress"),
+            ),
+        ),
+    )
+
+    tracker = MemoryTracker([make_issue(id="issue-1", identifier="ENG-1")])
+    worker = IssueWorker(
+        issue=make_issue(id="issue-1", identifier="ENG-1"),
+        workflow_snapshot=snapshot,
+        orchestrator_queue=asyncio.Queue(),
+        tracker=tracker,
+    )
+    worker.workspace_path = str(tmp_path / "workspace")
+    worker._agent_runtime = FakeRuntime()  # type: ignore[assignment]
+
+    await worker._run_state(Session())
+    updated_issue = await tracker.fetch_issue_states_by_ids(["issue-1"])
+
+    assert updated_issue[0].state == "Done"
+    assert len(worker._agent_runtime.prompts) == 2  # type: ignore[union-attr]
+    assert "Cross-layer dependency" in worker._agent_runtime.prompts[1]  # type: ignore[union-attr]
+    assert len(worker._agent_runtime.review_prompts) == 1  # type: ignore[union-attr]
+
+    updates: list[AgentWorkerUpdate] = []
+    while not worker.queue.empty():
+        update = await worker.queue.get()
+        assert isinstance(update, AgentWorkerUpdate)
+        updates.append(update)
+
+    completed = [
+        update.update
+        for update in updates
+        if update.update["event"] == "ai_review_completed"
+    ]
+    assert completed[0]["matched_review_types"] == ["Architecture"]
+    assert completed[0]["executed_review_types"] == ["Architecture"]
+    assert completed[0]["capped_review_types"] == []
+
+    skipped = [
+        update.update
+        for update in updates
+        if update.update["event"] == "ai_review_skipped"
+    ]
+    assert skipped[0]["matched_review_types"] == ["Architecture"]
+    assert skipped[0]["executed_review_types"] == []
+    assert skipped[0]["capped_review_types"] == ["Architecture"]
+
+
+@pytest.mark.asyncio
 async def test_issue_worker_ai_review_merges_multiple_review_types(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1863,6 +2025,7 @@ async def test_run_ai_review_gate_resolves_auto_scope_to_branch(
         issue_id="issue-1",
         feedback_attempts=0,
         failure_state="Human Review",
+        review_run_counts={},
         on_message=None,
     )
 
@@ -1923,6 +2086,7 @@ async def test_run_ai_review_gate_turns_branch_scope_failures_into_feedback(
         issue_id="issue-1",
         feedback_attempts=0,
         failure_state="Human Review",
+        review_run_counts={},
         on_message=None,
     )
 
@@ -1981,6 +2145,7 @@ async def test_run_ai_review_gate_blocks_after_exhausted_branch_scope_failures(
         issue_id="issue-1",
         feedback_attempts=profile.hooks.before_complete_max_feedback_loops,
         failure_state="Human Review",
+        review_run_counts={},
         on_message=None,
     )
 

@@ -264,6 +264,7 @@ from the top-level `review` section used for operator review worktrees.
 | `ai_review.types.<name>.codex.model` | string or `null` | inherit effective session model | Optional review override. |
 | `ai_review.types.<name>.codex.reasoning_effort` | string or `null` | inherit effective session reasoning | Optional review override. |
 | `ai_review.types.<name>.codex.fast_mode` | boolean or `null` | inherit effective session fast mode | Optional review override. |
+| `ai_review.types.<name>.max_runs_per_execution` | non-negative integer or `null` | `null` | Optional cap on how many times this review type may run within one execution. |
 | `ai_review.types.<name>.lines_changed` | non-negative integer or `null` | `null` | Optional changed-line threshold trigger. |
 | `ai_review.types.<name>.files_changed` | non-negative integer or `null` | `null` | Optional changed-file threshold trigger. |
 | `ai_review.types.<name>.paths.only` | non-empty list of strings | `[]` | Require every changed path to match. |
@@ -279,6 +280,7 @@ Rules:
 - Duplicate normalized review type names are invalid.
 - `ai_review.types.<name>.prompt` must reference an existing `# review:` section.
 - `ai_review.types.<name>.codex` only supports `model`, `reasoning_effort`, and `fast_mode`.
+- `ai_review.types.<name>.max_runs_per_execution` counts review runs within one execution and does not reset when earlier findings are fixed.
 - `ai_review.types.<name>.paths` only supports `only`, `include`, `exclude`, and `require_all`.
 - Path-glob lists must contain non-blank strings, must not be empty when present, and must not contain duplicates.
 - `paths.require_all` groups are OR-within-group and AND-across-groups.

@@ -632,6 +632,7 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `ai_review.types.<name>.codex.model`: string or null, optional
 - `ai_review.types.<name>.codex.reasoning_effort`: string or null, optional
 - `ai_review.types.<name>.codex.fast_mode`: boolean or null, optional
+- `ai_review.types.<name>.max_runs_per_execution`: non-negative integer or null, optional
 - `ai_review.types.<name>.lines_changed`: non-negative integer or null, optional
 - `ai_review.types.<name>.files_changed`: non-negative integer or null, optional
 - `ai_review.types.<name>.paths.only`: non-empty list of strings, optional
@@ -2096,6 +2097,8 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - `states.<state>.ai_review.scope=branch` requires a committed `HEAD`, a clean worktree, and a
   resolvable default base ref; failures feed back through the existing completion loop rather
   than silently skipping review
+- `ai_review.types.<name>.max_runs_per_execution` caps how many times a specific AI review type
+  may run within one Execution and the cap does not reset when earlier findings are fixed
 - `states.<state>.hooks.before_complete` runs after a transition result and before state
   persistence/tracker transition
 - `states.<state>.hooks.before_complete` exit status `0` accepts completion, status `2` feeds

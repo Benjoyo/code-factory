@@ -26,6 +26,7 @@ def test_workflow_snapshot_loads_ai_review_types_and_sections(tmp_path: Path) ->
                         "model": "gpt-5.4-mini",
                         "reasoning_effort": "high",
                     },
+                    "max_runs_per_execution": 1,
                     "lines_changed": 25,
                     "files_changed": 2,
                     "paths": {
@@ -80,6 +81,7 @@ def test_workflow_snapshot_loads_ai_review_types_and_sections(tmp_path: Path) ->
     assert security_review.prompt_ref == "security"
     assert security_review.codex.model == "gpt-5.4-mini"
     assert security_review.codex.reasoning_effort == "high"
+    assert security_review.max_runs_per_execution == 1
     assert security_review.lines_changed == 25
     assert security_review.files_changed == 2
     assert security_review.paths.include == ("src/**",)
@@ -233,6 +235,24 @@ def test_workflow_snapshot_ai_review_codex_fast_mode_inherits_and_overrides(
             },
             "# prompt: default\nImplement.\n\n# review: security\nCheck security.\n",
             "states.Todo.ai_review is not supported for auto states",
+        ),
+        (
+            {
+                "ai_review": {
+                    "types": {
+                        "Security": {
+                            "prompt": "security",
+                            "max_runs_per_execution": "once",
+                        }
+                    }
+                },
+                "states": {
+                    "Todo": {"auto_next_state": "In Progress"},
+                    "In Progress": {"prompt": "default"},
+                },
+            },
+            "# prompt: default\nImplement.\n\n# review: security\nCheck security.\n",
+            "ai_review.types.Security.max_runs_per_execution must be an integer",
         ),
         (
             {

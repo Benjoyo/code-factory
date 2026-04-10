@@ -669,6 +669,7 @@ async def test_ai_review_gate_and_completion_block_paths(
         issue_id="issue-1",
         feedback_attempts=0,
         failure_state="Failed",
+        review_run_counts={},
         on_message=None,
     )
     assert blocked is not None
@@ -685,6 +686,7 @@ async def test_ai_review_gate_and_completion_block_paths(
         issue_id=None,
         feedback_attempts=0,
         failure_state="Failed",
+        review_run_counts={},
         on_message=None,
     )
     assert skipped is not None
@@ -718,6 +720,7 @@ async def test_ai_review_gate_and_completion_block_paths(
             issue_id=None,
             feedback_attempts=0,
             failure_state="Failed",
+            review_run_counts={},
             on_message=None,
         )
         is None

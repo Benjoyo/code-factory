@@ -47,6 +47,7 @@ class WorkflowReviewType:
     review_name: str
     prompt_ref: str
     codex: ReviewCodexConfig = ReviewCodexConfig()
+    max_runs_per_execution: int | None = None
     lines_changed: int | None = None
     files_changed: int | None = None
     paths: ReviewPathTriggers = ReviewPathTriggers()
@@ -90,6 +91,7 @@ def parse_review_types(
         unexpected_keys = set(definition.keys()) - {
             "prompt",
             "codex",
+            "max_runs_per_execution",
             "lines_changed",
             "files_changed",
             "paths",
@@ -106,6 +108,10 @@ def parse_review_types(
             review_name=review_name,
             prompt_ref=prompt_ref,
             codex=_review_codex_config(definition.get("codex"), field_name),
+            max_runs_per_execution=_optional_non_negative_int(
+                definition.get("max_runs_per_execution"),
+                f"{field_name}.max_runs_per_execution",
+            ),
             lines_changed=_optional_non_negative_int(
                 definition.get("lines_changed"),
                 f"{field_name}.lines_changed",

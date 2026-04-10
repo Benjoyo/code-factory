@@ -17,6 +17,7 @@ This package is a long-running automation service that reads tracker work, creat
 - `tests`: behavior, CLI, integration, and architecture tests; keep new tests close to the layer they protect.
 - `pyproject.toml`: package metadata, lint/type/test tool configuration, and `uv` dependency management.
 - `README.md`: operator-facing usage and API/CLI documentation.
+- `UBIQUITOUS_LANGUAGE.md`: canonical domain terminology and preferred names for core runtime, workflow, and review concepts.
 
 ## 3. Core Behaviors & Patterns
 - The orchestrator owns authoritative runtime state, workers report events back through messages, and concrete integrations stay behind generic boundaries.
@@ -30,6 +31,7 @@ This package is a long-running automation service that reads tracker work, creat
 
 ## 5. Working Agreements
 - Preserve behavior parity with `SPEC.md`, update it carefully before introducing new policy. Make it transparent to the user when a change would require a SPEC update.
+- Use `UBIQUITOUS_LANGUAGE.md` as the default reference for domain terms, and update it when terminology or preferred names change.
 - When changing runtime behavior, follow the existing layer boundaries instead of adding shortcuts across packages or adding root-level implementation modules.
 - Add or update tests with behavior changes, including architecture rules when moving package boundaries or concrete/generic seams.
 - Tests have 100% line and branch coverage with hard gates, add or adjust tests faithfully to keep coverage 100%. Use pragmas only for platform-specific behavior or branches otherwise unreasonable to test. 

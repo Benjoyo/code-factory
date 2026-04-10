@@ -66,6 +66,7 @@ async def run_pre_complete_turns(
 
     prompt = initial_prompt
     feedback_attempts = 0
+    ai_review_run_counts: dict[str, int] = {}
     while True:
         await emit_activity_phase_update(
             queue,
@@ -159,6 +160,7 @@ async def run_pre_complete_turns(
             issue_id=issue_id,
             feedback_attempts=feedback_attempts,
             failure_state=failure_state,
+            review_run_counts=ai_review_run_counts,
             on_message=on_message,
         )
         if ai_review_result is None:
