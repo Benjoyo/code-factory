@@ -486,8 +486,7 @@ async def test_integration_before_complete_timeout_fails_transition_without_retr
             lambda current: (
                 not current["running"]
                 and not any(
-                    entry["issue_id"] == "issue-711"
-                    for entry in current["retrying"]
+                    entry["issue_id"] == "issue-711" for entry in current["retrying"]
                 )
             ),
         )
