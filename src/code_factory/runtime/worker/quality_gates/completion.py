@@ -22,7 +22,6 @@ from .pre_complete_feedback import (
     before_complete_feedback_prompt,
     before_complete_hook_env,
     before_complete_issue_context,
-    before_complete_update,
     emit_before_complete_update,
 )
 from .readiness import native_readiness_result

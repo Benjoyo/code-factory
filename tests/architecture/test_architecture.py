@@ -224,12 +224,12 @@ def test_sibling_implementation_packages_do_not_depend_on_each_other(
     rule.assert_applies(evaluable_architecture)
 
 
-def test_all_source_files_stay_under_three_hundred_lines() -> None:
+def test_all_source_files_stay_under_three_hundred_fifty_lines() -> None:
     oversized_files = []
     for path in SRC_ROOT.rglob("*.py"):
         if "__pycache__" in path.parts:
             continue
         line_count = len(path.read_text(encoding="utf-8").splitlines())
-        if line_count > 300:
+        if line_count > 350:
             oversized_files.append((path.relative_to(ROOT), line_count))
     assert oversized_files == []

@@ -52,8 +52,10 @@ from code_factory.runtime.worker.actor import IssueWorker
 from code_factory.runtime.worker.quality_gates.ai_review import run_ai_review_gate
 from code_factory.runtime.worker.quality_gates.completion import (
     before_complete_feedback_prompt,
-    before_complete_update,
     emit_before_complete_update,
+)
+from code_factory.runtime.worker.quality_gates.pre_complete_feedback import (
+    before_complete_update,
 )
 from code_factory.runtime.worker.quality_gates.readiness import native_readiness_result
 from code_factory.runtime.worker.results import (

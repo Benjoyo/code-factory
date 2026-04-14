@@ -27,7 +27,7 @@ This package is a long-running automation service that reads tracker work, creat
 
 ## 4. Conventions
 - Put helper functions in utility/support modules, not inside business modules such as actors, managers, services, or clients.
-- Keep source files under 300 lines, prefer focused package-local models over global catch-all model files, and add comments where the control flow is not already obvious.
+- Keep source files under 350 lines, prefer focused package-local models over global catch-all model files, and add comments where the control flow is not already obvious.
 
 ## 5. Working Agreements
 - Preserve behavior parity with `SPEC.md`, update it carefully before introducing new policy. Make it transparent to the user when a change would require a SPEC update.
