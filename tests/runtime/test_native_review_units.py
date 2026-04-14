@@ -33,7 +33,10 @@ from code_factory.runtime.worker.quality_gates.ai_review import (
     ExecutedAiReview,
     run_ai_review_gate,
 )
-from code_factory.runtime.worker.quality_gates.completion import run_pre_complete_turns
+from code_factory.runtime.worker.quality_gates.completion import (
+    _before_complete_timeout_ms,
+    run_pre_complete_turns,
+)
 from code_factory.structured_results import StructuredTurnResult
 from code_factory.workspace.ai_review.ai_review_feedback import (
     ai_review_exhausted_summary,
@@ -1172,3 +1175,75 @@ async def test_run_pre_complete_turns_blocks_on_hook_timeout_without_retry_loop(
         "make the quality gate faster."
     )
     assert call_order == ["native", "hook"]
+
+
+@pytest.mark.asyncio
+async def test_run_pre_complete_turns_reraises_non_timeout_workspace_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "allowed_next_states": ["Done"],
+                    "hooks": {
+                        "before_complete": "check",
+                        "before_complete_max_feedback_loops": 3,
+                    },
+                },
+            },
+        )
+    )
+    profile = snapshot.state_profile("In Progress")
+    assert profile is not None
+
+    async def fake_run_turn(_prompt: str) -> StructuredTurnResult:
+        return StructuredTurnResult(
+            decision="transition",
+            summary="done",
+            next_state="Done",
+        )
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.quality_gates.completion.native_readiness_result",
+        lambda *_args, **_kwargs: asyncio.sleep(0, result=None),
+    )
+
+    async def fake_hook(*_args: Any, **_kwargs: Any) -> Any:
+        raise WorkspaceError(("workspace_hook_timeout", "after_transition", 1234))
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.quality_gates.completion.run_before_complete_hook",
+        fake_hook,
+    )
+
+    with pytest.raises(
+        WorkspaceError,
+        match=r"\('workspace_hook_timeout', 'after_transition', 1234\)",
+    ):
+        await run_pre_complete_turns(
+            run_turn=fake_run_turn,
+            settings=snapshot.settings,
+            workspace_path="/tmp/workspace",
+            issue=make_issue(identifier="ENG-1"),
+            profile=profile,
+            queue=asyncio.Queue(),
+            issue_id="issue-1",
+            failure_state="Failed",
+            initial_prompt="prompt",
+            should_stop=lambda: False,
+            workflow_snapshot=snapshot,
+            runtime=cast(Any, object()),
+        )
+
+
+def test_before_complete_timeout_ms_returns_none_for_non_matching_reason() -> None:
+    assert (
+        _before_complete_timeout_ms(
+            WorkspaceError(("workspace_hook_timeout", "after_transition", 1234))
+        )
+        is None
+    )
