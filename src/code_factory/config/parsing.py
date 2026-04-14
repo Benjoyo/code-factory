@@ -114,7 +114,7 @@ def parse_settings(config: Mapping[str, Any]) -> Settings:
                 hooks_raw.get("before_remove"), "hooks.before_remove"
             ),
             timeout_ms=positive_int(
-                hooks_raw.get("timeout_ms"), "hooks.timeout_ms", 60_000
+                hooks_raw.get("timeout_ms"), "hooks.timeout_ms", 900_000
             ),
         ),
         observability=ObservabilitySettings(

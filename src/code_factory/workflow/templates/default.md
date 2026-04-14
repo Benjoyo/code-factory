@@ -181,27 +181,23 @@ Review these upstream ticket summaries before planning:
 
 ## Step 1: Start/continue execution (In Progress or Rework)
 
-1.  The orchestrator hydrates `workpad.md` in the workspace before the run:
+1. The orchestrator hydrates `workpad.md` in the workspace before the run:
     - The orchestrator ensures `workpad.md` is treated as a local-only workspace artifact and not a tracked repo file.
     - If a live tracker workpad exists, `workpad.md` starts with that content.
     - Otherwise `workpad.md` starts with a lightweight starter structure.
     - Treat `workpad.md` as the source of truth for planning, progress, and handoff notes during the run.
     - The orchestrator watches `workpad.md` and syncs tracker updates automatically during the run and again before any state transition.
     - The orchestrator also ensures you start on the issue branch before implementation begins. Treat the checked-out branch as canonical for the run.
-2.  Do not perform tracker state transitions yourself; the orchestrator applies the state move from your structured result.
-3.  Immediately reconcile the workpad before new edits:
+2. Do not perform tracker state transitions yourself; the orchestrator applies the state move from your structured result.
+3. Immediately reconcile the workpad before new edits:
     - Check off items that are already done.
     - Expand/fix the plan so it is comprehensive for current scope.
     - Ensure `Acceptance Criteria`, `Manual Review Steps`, and `Validation` are current and still make sense for the task.
     - If the user has steered the run since the last sync, log the steering
       request and resulting scope change in `workpad.md`, then update the main
       tracker ticket to keep the title/description/acceptance criteria aligned.
-4.  Start work by writing/updating a hierarchical plan in `workpad.md`.
-5.  Ensure the workpad includes a compact environment stamp at the top as a code fence line:
-    - Format: `<host>:<abs-workdir>@<short-sha>`
-    - Example: `devbox-01:/home/dev-user/code/code-factory-workspaces/MT-32@7bdde33bc`
-    - Do not include metadata already inferable from Linear issue fields (`issue ID`, `status`, `branch`, `PR link`).
-6.  Add explicit acceptance criteria and TODOs in checklist form in `workpad.md`.
+4. Start work by writing/updating a hierarchical plan in `workpad.md`.
+5. Add explicit acceptance criteria and TODOs in checklist form in `workpad.md`.
     - If changes are user-facing, include a UI walkthrough acceptance criterion that describes the end-to-end user path to validate.
     - If changes touch app files or app behavior, add explicit app-specific flow checks to `Acceptance Criteria` in the workpad (for example: launch path, changed interaction path, and expected result path).
     - Fill in `Manual Review Steps` for the human reviewer who will validate the work after handoff.
@@ -209,9 +205,9 @@ Review these upstream ticket summaries before planning:
     - Keep `Manual Review Steps` non-checkable: do not use checkboxes there. Checkboxes belong in `Plan`, `Acceptance Criteria`, and `Validation`.
     - Put the agent's own executed verification evidence in `Validation`, not in `Manual Review Steps`.
     - If the ticket description/comment context includes `Validation`, `Test Plan`, or `Testing` sections, copy those requirements into the workpad `Acceptance Criteria` and `Validation` sections as required checkboxes (no optional downgrade).
-7.  Run a principal-style self-review of the plan and refine it in `workpad.md`.
-8.  Before implementing, capture a concrete reproduction signal and record it in the workpad `Notes` section (command/output, screenshot, or deterministic UI behavior).
-9.  Run the `pull` skill to sync with the latest remote default base branch before any code edits, then record the pull/sync result in the workpad `Notes`.
+6. Run a principal-style self-review of the plan and refine it in `workpad.md`.
+7. Before implementing, capture a concrete reproduction signal and record it in the workpad `Notes` section (command/output, screenshot, or deterministic UI behavior).
+8. Run the `pull` skill to sync with the latest remote default base branch before any code edits, then record the pull/sync result in the workpad `Notes`.
     - Include a `pull skill evidence` note with:
       - merge source(s),
       - result (`clean` or `conflicts resolved`),

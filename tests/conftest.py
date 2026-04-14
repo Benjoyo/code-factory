@@ -64,7 +64,7 @@ def default_workflow_config() -> dict[str, Any]:
             "read_timeout_ms": 5_000,
             "stall_timeout_ms": 300_000,
         },
-        "hooks": {"timeout_ms": 60_000},
+        "hooks": {"timeout_ms": 900_000},
         "observability": {
             "dashboard_enabled": True,
             "refresh_ms": 1_000,

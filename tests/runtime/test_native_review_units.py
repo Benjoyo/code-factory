@@ -26,7 +26,7 @@ from code_factory.coding_agents.review_models import (
     ReviewOutput,
     normalize_review_output,
 )
-from code_factory.errors import AppServerError
+from code_factory.errors import AppServerError, WorkspaceError
 from code_factory.prompts.review_assets import review_output_schema
 from code_factory.runtime.worker.quality_gates.ai_review import (
     AiReviewPassResult,
@@ -1089,5 +1089,86 @@ async def test_run_pre_complete_turns_blocks_on_hook_without_feedback_budget(
         result.summary
         == "Code Factory exhausted before_complete repair loops after 0 attempt(s). "
         "Last error: fix lint"
+    )
+    assert call_order == ["native", "hook"]
+
+
+@pytest.mark.asyncio
+async def test_run_pre_complete_turns_blocks_on_hook_timeout_without_retry_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = make_snapshot(
+        write_workflow_file(
+            tmp_path / "WORKFLOW.md",
+            states={
+                "Todo": {"auto_next_state": "In Progress"},
+                "In Progress": {
+                    "prompt": "default",
+                    "allowed_next_states": ["Done"],
+                    "hooks": {
+                        "before_complete": "check",
+                        "before_complete_max_feedback_loops": 3,
+                    },
+                },
+            },
+        )
+    )
+    profile = snapshot.state_profile("In Progress")
+    assert profile is not None
+    call_order: list[str] = []
+
+    async def fake_run_turn(_prompt: str) -> StructuredTurnResult:
+        return StructuredTurnResult(
+            decision="transition",
+            summary="done",
+            next_state="Done",
+        )
+
+    async def fake_native(*_args: Any, **_kwargs: Any) -> None:
+        call_order.append("native")
+        return None
+
+    async def fake_hook(*_args: Any, **_kwargs: Any) -> Any:
+        call_order.append("hook")
+        raise WorkspaceError(("workspace_hook_timeout", "before_complete", 1234))
+
+    async def fake_ai_review_gate(**_kwargs: Any) -> None:
+        call_order.append("ai_review")
+        return None
+
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.quality_gates.completion.native_readiness_result",
+        fake_native,
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.quality_gates.completion.run_before_complete_hook",
+        fake_hook,
+    )
+    monkeypatch.setattr(
+        "code_factory.runtime.worker.quality_gates.completion.run_ai_review_gate",
+        fake_ai_review_gate,
+    )
+
+    result = await run_pre_complete_turns(
+        run_turn=fake_run_turn,
+        settings=snapshot.settings,
+        workspace_path="/tmp/workspace",
+        issue=make_issue(identifier="ENG-1"),
+        profile=profile,
+        queue=asyncio.Queue(),
+        issue_id="issue-1",
+        failure_state="Failed",
+        initial_prompt="prompt",
+        should_stop=lambda: False,
+        workflow_snapshot=snapshot,
+        runtime=cast(Any, object()),
+    )
+
+    assert result.decision == "blocked"
+    assert result.next_state == "Failed"
+    assert (
+        result.summary
+        == "before_complete timed out after 1234ms. Increase hooks.timeout_ms or "
+        "make the quality gate faster."
     )
     assert call_order == ["native", "hook"]

@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 
 from ....coding_agents.base import AgentMessageHandler, CodingAgentRuntime
 from ....config.models import Settings
+from ....errors import WorkspaceError
 from ....issues import Issue
 from ....structured_results import StructuredTurnResult
 from ....workflow.models import WorkflowSnapshot, WorkflowStateProfile
@@ -116,13 +117,35 @@ async def run_pre_complete_turns(
                 event="quality_gates_started",
                 activity_phase=QUALITY_GATES_PHASE,
             )
-            hook_result = await run_before_complete_hook(
-                settings,
-                hook,
-                workspace_path,
-                issue,
-                result,
-            )
+            try:
+                hook_result = await run_before_complete_hook(
+                    settings,
+                    hook,
+                    workspace_path,
+                    issue,
+                    result,
+                )
+            except WorkspaceError as exc:
+                timeout_ms = _before_complete_timeout_ms(exc)
+                if timeout_ms is None:
+                    raise
+                message = (
+                    f"before_complete timed out after {timeout_ms}ms. "
+                    "Increase hooks.timeout_ms or make the quality gate faster."
+                )
+                await emit_before_complete_update(
+                    queue,
+                    issue_id,
+                    "before_complete_blocked",
+                    HookCommandResult(status=2, stdout="", stderr=message),
+                    gate_source="hook",
+                    gate_name="before_complete",
+                )
+                return StructuredTurnResult(
+                    decision="blocked",
+                    summary=message,
+                    next_state=failure_state,
+                )
             if hook_result.status != 0:
                 warned = await _handle_nonzero_hook_result(
                     result=result,
@@ -270,3 +293,16 @@ async def _handle_nonzero_hook_result(
         max_feedback_loops=max_feedback_loops,
         failure_state=failure_state,
     )
+
+
+def _before_complete_timeout_ms(exc: WorkspaceError) -> int | None:
+    reason = exc.reason
+    if (
+        isinstance(reason, tuple)
+        and len(reason) == 3
+        and reason[0] == "workspace_hook_timeout"
+        and reason[1] == "before_complete"
+        and isinstance(reason[2], int)
+    ):
+        return reason[2]
+    return None

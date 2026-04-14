@@ -454,6 +454,48 @@ async def test_integration_before_run_timeout_aborts_attempt_and_still_runs_afte
 
 
 @pytest.mark.asyncio
+async def test_integration_before_complete_timeout_fails_transition_without_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    issue = make_issue(id="issue-711", identifier="ENG-711", state="Todo")
+
+    async with IntegrationHarness(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        issues=[issue],
+        workflow_overrides={
+            "terminal_states": ["Done", "Canceled"],
+            "failure_state": "Human Review",
+            "states": {
+                "Todo": {
+                    "prompt": "default",
+                    "allowed_next_states": ["Done"],
+                    "hooks": {"before_complete": "sleep 0.2"},
+                }
+            },
+            "hooks": {"timeout_ms": 30},
+        },
+        plans_by_identifier={"ENG-711": [TurnPlan(result=transition_result("Done"))]},
+    ) as harness:
+        await harness.refresh()
+        await harness.wait_until(
+            lambda: issue_state(harness, "issue-711") == "Human Review"
+        )
+        snapshot = await wait_for_snapshot(
+            harness,
+            lambda current: (
+                not current["running"]
+                and not any(
+                    entry["issue_id"] == "issue-711"
+                    for entry in current["retrying"]
+                )
+            ),
+        )
+        assert snapshot["retrying"] == []
+        assert len(harness.controller.prompt_log["ENG-711"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_integration_workflow_reload_applies_new_config_and_invalid_reload_keeps_last_good(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

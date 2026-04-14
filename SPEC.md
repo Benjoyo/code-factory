@@ -420,7 +420,7 @@ Fields:
   - Runs before workspace deletion if the directory exists.
   - Failure is logged but ignored; cleanup still proceeds.
 - `timeout_ms` (integer, optional)
-  - Default: `60000`
+  - Default: `900000`
   - Applies to all workspace hooks.
   - Non-positive values are invalid and fail validation.
   - Changes should be re-applied at runtime for future hook executions.
@@ -645,7 +645,7 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `hooks.before_run`: shell script or null
 - `hooks.after_run`: shell script or null
 - `hooks.before_remove`: shell script or null
-- `hooks.timeout_ms`: integer, default `60000`
+- `hooks.timeout_ms`: integer, default `900000`
 - `agent.max_concurrent_agents`: integer, default `10`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
 - `agent.max_worker_retries`: integer, default `3`
@@ -937,7 +937,7 @@ Execution contract:
   `cwd`.
 - On POSIX systems, `sh -lc <script>` (or a stricter equivalent such as `bash -lc <script>`) is a
   conforming default.
-- Hook timeout uses `hooks.timeout_ms`; default: `60000 ms`.
+- Hook timeout uses `hooks.timeout_ms`; default: `900000 ms`.
 - Log hook start, failures, and timeouts.
 
 Failure semantics:
@@ -2104,6 +2104,9 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - `states.<state>.hooks.before_complete` exit status `0` accepts completion, status `2` feeds
   `stderr` back to the same session for another turn up to the configured loop cap, and other
   non-zero statuses log a warning but allow completion
+- `states.<state>.hooks.before_complete` timeout blocks the transition immediately, moves the issue
+  to the configured failure state for that workflow state, and does not schedule an orchestrator
+  retry
 - Workspace path sanitization and root containment invariants are enforced before agent launch
 - Agent launch uses the per-issue workspace path as cwd and rejects out-of-root paths
 
@@ -2219,7 +2222,7 @@ Use the same validation profiles as Section 17:
 - Issue tracker client with candidate fetch + state refresh + terminal fetch
 - Workspace manager with sanitized per-issue workspaces
 - Workspace lifecycle hooks (`after_create`, `before_run`, `after_run`, `before_remove`)
-- Hook timeout config (`hooks.timeout_ms`, default `60000`)
+- Hook timeout config (`hooks.timeout_ms`, default `900000`)
 - Coding-agent app-server subprocess client with JSON line protocol
 - Codex launch command config (`codex.command`, `codex.model`, `codex.reasoning_effort`, `codex.fast_mode`)
 - Strict prompt rendering with `issue` and `attempt` variables

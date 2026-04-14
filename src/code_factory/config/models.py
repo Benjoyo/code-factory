@@ -77,7 +77,7 @@ class HooksSettings:
     before_run: str | None = None
     after_run: str | None = None
     before_remove: str | None = None
-    timeout_ms: int = 60_000
+    timeout_ms: int = 900_000
 
 
 @dataclass(frozen=True, slots=True)
