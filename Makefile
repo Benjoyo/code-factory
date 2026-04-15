@@ -1,6 +1,23 @@
 .PHONY: setup lint format-check typecheck test test-coverage coverage-gate coverage-packages fix repair verify-static verify clean release-check release-patch release-minor release-major
 
-UV := uv run --project . --extra dev --group dev
+VENV_BIN := .venv/bin
+UV_BIN := $(strip $(shell command -v uv 2>/dev/null))
+
+ifneq ($(UV_BIN),)
+RUN := $(UV_BIN) run --project . --extra dev --group dev
+PYTHON := $(RUN) python
+RUFF := $(RUN) ruff
+PYRIGHT := $(RUN) pyright
+PYTEST := $(PYTHON) -m pytest
+else ifneq ($(wildcard $(VENV_BIN)/python),)
+PYTHON := $(VENV_BIN)/python
+RUFF := $(VENV_BIN)/ruff
+PYRIGHT := $(VENV_BIN)/pyright
+PYTEST := $(PYTHON) -m pytest
+else
+$(error Neither 'uv' nor '$(VENV_BIN)/python' is available. Install uv or create the repo virtualenv.)
+endif
+
 SOURCE_DIR := src/code_factory
 COVERAGE_JSON := coverage.json
 LINE_COVERAGE_MIN := 100
@@ -8,23 +25,27 @@ BRANCH_COVERAGE_MIN := 100
 REMOTE ?= origin
 
 setup:
-	uv sync --extra dev --group dev
+ifneq ($(UV_BIN),)
+	$(UV_BIN) sync --extra dev --group dev
+else
+	@printf '%s\n' "Skipping 'uv sync': using existing $(VENV_BIN) because 'uv' is unavailable."
+endif
 
 lint:
-	@$(UV) ruff check --output-format concise .
+	@$(RUFF) check --output-format concise .
 
 format-check:
-	@$(UV) ruff format --check .
+	@$(RUFF) format --check .
 
 typecheck:
-	@$(UV) pyright
+	@$(PYRIGHT)
 
 test:
-	@$(UV) python -m pytest -q
+	@$(PYTEST) -q
 
 test-coverage:
-	@$(UV) python -m pytest -q --cov=$(SOURCE_DIR) --cov-branch --cov-report= --cov-report=json:$(COVERAGE_JSON)
-	@$(UV) python -c '\
+	@$(PYTEST) -q --cov=$(SOURCE_DIR) --cov-branch --cov-report= --cov-report=json:$(COVERAGE_JSON)
+	@$(PYTHON) -c '\
 import json; \
 from pathlib import Path; \
 totals = json.loads(Path("$(COVERAGE_JSON)").read_text())["totals"]; \
@@ -38,7 +59,7 @@ print(f"Coverage: lines {line_display}% ({line_actual:.2f}%), branches {branch_d
 '
 
 coverage-gate: test-coverage
-	@$(UV) python -c '\
+	@$(PYTHON) -c '\
 import json; \
 from pathlib import Path; \
 line_minimum = float("$(LINE_COVERAGE_MIN)"); \
@@ -82,11 +103,11 @@ coverage-packages: test-coverage
 	'    total_branches = acc[package]["num_branches"]' \
 	'    branches_percent = 100.0 if total_branches == 0 else (covered_branches / total_branches * 100)' \
 	'    print(f"{package}\tlines {lines_percent:.2f}% ({covered_lines}/{total_lines})\tbranches {branches_percent:.2f}% ({covered_branches}/{total_branches})")' \
-	| $(UV) python -
+	| $(PYTHON) -
 
 fix:
-	@$(UV) ruff check . --fix
-	@$(UV) ruff format .
+	@$(RUFF) check . --fix
+	@$(RUFF) format .
 
 repair: fix verify
 
@@ -103,7 +124,8 @@ release-check:
 
 release-patch: BUMP=patch
 release-patch: release-check verify
-	@version="$$(uv version --short --bump $(BUMP) --frozen)"; \
+	@test -n "$(UV_BIN)" || { echo "Release targets require 'uv' on PATH." >&2; exit 1; }; \
+	version="$$($(UV_BIN) version --short --bump $(BUMP) --frozen)"; \
 	git add pyproject.toml; \
 	git commit -m "Bump version to $$version"; \
 	git tag -a "v$$version" -m "Release v$$version"; \
@@ -112,7 +134,8 @@ release-patch: release-check verify
 
 release-minor: BUMP=minor
 release-minor: release-check verify
-	@version="$$(uv version --short --bump $(BUMP) --frozen)"; \
+	@test -n "$(UV_BIN)" || { echo "Release targets require 'uv' on PATH." >&2; exit 1; }; \
+	version="$$($(UV_BIN) version --short --bump $(BUMP) --frozen)"; \
 	git add pyproject.toml; \
 	git commit -m "Bump version to $$version"; \
 	git tag -a "v$$version" -m "Release v$$version"; \
@@ -121,7 +144,8 @@ release-minor: release-check verify
 
 release-major: BUMP=major
 release-major: release-check verify
-	@version="$$(uv version --short --bump $(BUMP) --frozen)"; \
+	@test -n "$(UV_BIN)" || { echo "Release targets require 'uv' on PATH." >&2; exit 1; }; \
+	version="$$($(UV_BIN) version --short --bump $(BUMP) --frozen)"; \
 	git add pyproject.toml; \
 	git commit -m "Bump version to $$version"; \
 	git tag -a "v$$version" -m "Release v$$version"; \

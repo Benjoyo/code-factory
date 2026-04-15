@@ -229,7 +229,7 @@ def _ai_review_update_payload(
     *,
     repair_attempts: int | None = None,
 ) -> dict[str, Any]:
-    payload = {
+    payload: dict[str, Any] = {
         "review_scope": ai_review.selection.surface.review_scope,
         "matched_review_types": [
             review_type.review_name for review_type in ai_review.selection.matched_types
@@ -278,7 +278,7 @@ def _ai_review_scope_failure_update_payload(
     repair_attempts: int,
     max_feedback_loops: int,
 ) -> dict[str, Any]:
-    payload = {
+    payload: dict[str, Any] = {
         "review_scope": review_scope,
         "reason": reason,
     }
