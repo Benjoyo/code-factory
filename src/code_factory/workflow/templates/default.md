@@ -40,6 +40,8 @@ codex:
     type: dangerFullAccess
 observability:
   dashboard_enabled: true
+  file_logging:
+    root: .
 ---
 
 # prompt: base

@@ -11,7 +11,9 @@ Runs the long-lived automation service for a workflow.
 
 - `WORKFLOW` defaults to `./WORKFLOW.md` when omitted.
 - `--no-guardrails` is required.
-- `--logs-root <path>` enables a rotating log file at
+- Rotating file logs are enabled by default at `./log/code-factory.log` beside
+  `WORKFLOW.md`.
+- `--logs-root <path>` overrides the rotating log file root at
   `<path>/log/code-factory.log`.
 - `--port <port>` overrides the workflow's configured observability port for the
   current run. `0` is allowed when you want the OS to choose an ephemeral port.

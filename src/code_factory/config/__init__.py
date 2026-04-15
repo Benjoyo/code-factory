@@ -2,6 +2,7 @@ from .defaults import DEFAULT_PROMPT_TEMPLATE, DEFAULT_WORKSPACE_ROOT
 from .models import (
     AgentSettings,
     CodingAgentSettings,
+    FileLoggingSettings,
     HooksSettings,
     ObservabilitySettings,
     PollingSettings,
@@ -20,6 +21,7 @@ __all__ = [
     "CodingAgentSettings",
     "DEFAULT_PROMPT_TEMPLATE",
     "DEFAULT_WORKSPACE_ROOT",
+    "FileLoggingSettings",
     "HooksSettings",
     "ObservabilitySettings",
     "PollingSettings",

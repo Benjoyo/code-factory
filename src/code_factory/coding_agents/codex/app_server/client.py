@@ -3,6 +3,7 @@ from __future__ import annotations
 """Manages App Server processes and shields the rest of the codebase from IPC details."""
 
 import asyncio
+import logging
 from typing import Any
 
 from ....config.models import CodingAgentSettings, WorkspaceSettings
@@ -14,6 +15,7 @@ from ....structured_results import StructuredTurnResult
 from ...review_models import ReviewOutput
 from ..config import build_launch_command
 from ..tools import DynamicToolExecutor
+from .error_details import format_error_details
 from .messages import default_on_message, emit_message
 from .policies import (
     resolve_turn_sandbox_policy,
@@ -31,6 +33,8 @@ from .routing import route_stdout
 from .session import AppServerSession
 from .streams import stderr_reader, stdout_reader, wait_for_exit
 from .turns import await_turn_completion
+
+LOGGER = logging.getLogger(__name__)
 
 
 class AppServerClient:
@@ -158,6 +162,16 @@ class AppServerClient:
                 {"session_id": session_id, "reason": repr(exc)},
                 {"runtime_pid": session.runtime_pid},
             )
+            LOGGER.exception(
+                "Codex turn failed session_id=%s thread_id=%s turn_id=%s runtime_pid=%s workspace=%s issue_identifier=%s details=%s",
+                session_id,
+                session.thread_id,
+                turn_id,
+                session.runtime_pid,
+                session.workspace,
+                issue.identifier or "n/a",
+                format_error_details(exc),
+            )
             raise
 
     async def run_session_review(
@@ -204,6 +218,15 @@ class AppServerClient:
                 "review_ended_with_error",
                 {"review_thread_id": review_thread_id, "reason": repr(exc)},
                 {"runtime_pid": session.runtime_pid},
+            )
+            LOGGER.exception(
+                "Codex review failed thread_id=%s turn_id=%s runtime_pid=%s workspace=%s issue_identifier=%s details=%s",
+                session.thread_id,
+                turn_id,
+                session.runtime_pid,
+                session.workspace,
+                issue.identifier or "n/a",
+                format_error_details(exc),
             )
             raise
 

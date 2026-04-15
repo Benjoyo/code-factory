@@ -474,13 +474,15 @@ Notes:
 
 ## `observability`
 
-Implementation-specific settings for the live dashboard.
+Implementation-specific settings for the live dashboard and rotating file logs.
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `observability.dashboard_enabled` | boolean | `true` | Only takes effect when stderr is a TTY. |
 | `observability.refresh_ms` | positive integer | `1000` | The dashboard currently clamps this to the range `250..1000` ms. |
 | `observability.render_interval_ms` | positive integer | `16` | Parsed and stored; currently not used by the live dashboard refresh loop. |
+| `observability.file_logging.enabled` | boolean | `true` | Set to `false` to disable rotating file logs for this workflow. |
+| `observability.file_logging.root` | string | workflow directory | Root directory for `log/code-factory.log`. Relative paths resolve from the workflow directory. |
 
 ## `server`
 
@@ -588,6 +590,8 @@ observability:
   dashboard_enabled: true
   refresh_ms: 1000
   render_interval_ms: 16
+  file_logging:
+    root: .
 
 server:
   host: 127.0.0.1

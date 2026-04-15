@@ -4,6 +4,19 @@ Code Factory exposes two operator-facing observability surfaces:
 
 - a local HTTP API
 - a live terminal dashboard when stderr is attached to a TTY
+- a rotating file log at `log/code-factory.log` beside the active workflow by
+  default
+
+## File Logs
+
+Rotating file logging is enabled by default for workflow runs.
+
+- The default path is `<workflow-dir>/log/code-factory.log`.
+- `observability.file_logging.enabled: false` disables file logs for that
+  workflow.
+- `observability.file_logging.root` changes the root directory; relative paths
+  resolve from the workflow directory.
+- `cf serve --logs-root` overrides the workflow setting for the current run.
 
 ## HTTP API
 

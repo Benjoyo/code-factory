@@ -81,12 +81,21 @@ class HooksSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class FileLoggingSettings:
+    """Controls persistent runtime log files for operator debugging."""
+
+    enabled: bool = True
+    root: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ObservabilitySettings:
     """Settings that keep the dashboard and refresh cadence configurable."""
 
     dashboard_enabled: bool = True
     refresh_ms: int = 1_000
     render_interval_ms: int = 16
+    file_logging: FileLoggingSettings = field(default_factory=FileLoggingSettings)
 
 
 @dataclass(frozen=True, slots=True)

@@ -103,7 +103,7 @@ def serve_command(
         Path | None,
         typer.Option(
             "--logs-root",
-            help="Enable rotating file logs at `<path>/log/code-factory.log`.",
+            help="Override the rotating file log root at `<path>/log/code-factory.log`.",
         ),
     ] = None,
     port: Annotated[

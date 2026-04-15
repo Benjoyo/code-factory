@@ -17,8 +17,9 @@ description:
 ## Log Sources
 
 - Primary runtime log: `log/code-factory.log`
-  - Default comes from `code_factory.application.logging.configure_logging()`
-    when `logs_root` is configured.
+  - Default location is `<workflow-dir>/log/code-factory.log`.
+  - `observability.file_logging.root` changes the root directory; `cf serve
+    --logs-root` overrides it for one run.
   - Includes orchestrator, agent runner, and Codex app-server lifecycle logs.
 - Rotated runtime logs: `log/code-factory.log*`
   - Check these when the relevant run is older.

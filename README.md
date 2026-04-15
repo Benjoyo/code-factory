@@ -116,6 +116,9 @@ cf serve --no-guardrails
 ```
 
 If you omit the workflow path, the CLI defaults to `./WORKFLOW.md`.
+By default, rotating file logs are written to `./log/code-factory.log` beside
+the workflow. Override the root for one run with `--logs-root`, or change/disable
+it in `observability.file_logging`.
 
 ### 4. Create issues and move to Todo
 
@@ -210,7 +213,7 @@ See the workflow docs for the current contract:
 Code Factory exposes a local observability API and, when stderr is attached to a
 TTY, a live terminal dashboard for operators. See
 [docs/observability.md](https://github.com/Benjoyo/code-factory/blob/main/docs/observability.md) for endpoints, dashboard
-behavior, and steering/discovery details.
+behavior, rotating file logs, and steering/discovery details.
 
 ## Runtime Notes
 

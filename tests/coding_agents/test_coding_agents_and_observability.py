@@ -17,6 +17,9 @@ from code_factory.coding_agents.base import (
     validate_coding_agent_settings,
 )
 from code_factory.coding_agents.codex.app_server.client import AppServerClient
+from code_factory.coding_agents.codex.app_server.error_details import (
+    format_error_details,
+)
 from code_factory.coding_agents.codex.app_server.messages import (
     NON_INTERACTIVE_TOOL_INPUT_ANSWER,
     approval_option_label,
@@ -181,9 +184,19 @@ def make_session() -> AppServerSession:
     )
 
 
+def test_format_error_details_uses_repr_for_blank_exceptions() -> None:
+    class SilentError(Exception):
+        def __str__(self) -> str:
+            return ""
+
+    assert format_error_details(SilentError()) == "SilentError()"
+
+
 @pytest.mark.asyncio
 async def test_coding_agent_base_wrappers_and_codex_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     settings = make_settings(tmp_path)
     tracker = MemoryTracker([])
@@ -851,7 +864,9 @@ async def test_turn_helpers() -> None:
 
 @pytest.mark.asyncio
 async def test_client_runtime_and_observability_behaviors(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     settings = make_settings(
         tmp_path, overrides={"workspace": {"root": str(tmp_path / "workspaces")}}
@@ -922,9 +937,13 @@ async def test_client_runtime_and_observability_behaviors(
         "code_factory.coding_agents.codex.app_server.client.await_turn_completion",
         lambda session, handler, executor: (_ for _ in ()).throw(RuntimeError("boom")),
     )
-    with pytest.raises(RuntimeError, match="boom"):
-        await client.run_turn(session, "prompt", issue, on_message=on_message)
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(RuntimeError, match="boom"):
+            await client.run_turn(session, "prompt", issue, on_message=on_message)
     assert emitted[-1] == "turn_ended_with_error"
+    assert "Codex turn failed" in caplog.text
+    assert "session_id=thread-1-turn-1" in caplog.text
+    assert "details=RuntimeError(boom)" in caplog.text
 
     class FakeOps:
         async def read_issue(self, issue: str, **kwargs: Any) -> dict[str, Any]:

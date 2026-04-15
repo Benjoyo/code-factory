@@ -60,6 +60,8 @@ def test_config_defaults_and_env_resolution(
     assert settings.agent.max_retry_backoff_ms == 5_000
     assert settings.agent.max_worker_retries == 3
     assert settings.failure_state == "Human Review"
+    assert settings.observability.file_logging.enabled is True
+    assert settings.observability.file_logging.root is None
 
     workflow = write_workflow_file(
         tmp_path / "BAD_WORKFLOW.md", polling={"interval_ms": "invalid"}
@@ -71,6 +73,16 @@ def test_config_defaults_and_env_resolution(
         tmp_path / "DEPRECATED_AGENT_KEY.md", agent={"max_turns": 5}
     )
     with pytest.raises(ConfigValidationError, match="agent has unsupported keys"):
+        parse_settings(load_workflow(str(workflow)).config)
+
+    workflow = write_workflow_file(
+        tmp_path / "BAD_FILE_LOGGING_KEY.md",
+        observability={"file_logging": {"mode": "always"}},
+    )
+    with pytest.raises(
+        ConfigValidationError,
+        match="observability.file_logging has unsupported keys: mode",
+    ):
         parse_settings(load_workflow(str(workflow)).config)
 
     workflow = tmp_path / "MISSING_FAILURE_STATE.md"

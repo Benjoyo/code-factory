@@ -2189,6 +2189,8 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 
 - Validation failures are operator-visible
 - Structured logging includes issue/session context fields
+- Rotating file logging is enabled by default to a workflow-local path unless the
+  workflow explicitly disables it, and implementations may allow a path override
 - Logging sink failures do not crash orchestration
 - Token/rate-limit aggregation remains correct across repeated agent updates
 - If a human-readable status surface is implemented, it is driven from orchestrator state and does
@@ -2255,8 +2257,6 @@ Use the same validation profiles as Section 17:
 - Optional tracker tool extension exposes structured tracker reads and writes through the app-server
   session using configured Symphony auth.
 - TODO: Persist retry queue and session metadata across process restarts.
-- TODO: Make observability settings configurable in workflow front matter without prescribing UI
-  implementation details.
 - TODO: Add pluggable issue tracker adapters beyond Linear.
 
 ### 18.3 Operational Validation Before Production (Recommended)

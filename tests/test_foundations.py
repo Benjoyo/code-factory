@@ -20,6 +20,7 @@ from code_factory.application.dashboard.dashboard_diagnostics import (
     DashboardDiagnostics,
     DashboardDiagnosticsHandler,
 )
+from code_factory.application.log_paths import resolve_logs_root
 from code_factory.application.logging import configure_logging
 from code_factory.cli import (
     ACK_FLAG,
@@ -603,6 +604,7 @@ def test_service_dashboard_helpers_and_logging_fallbacks(
     workflow = write_workflow_file(tmp_path / "WORKFLOW.md", server={"port": 4321})
     snapshot = make_snapshot(workflow)
     service = CodeFactoryService(str(workflow))
+    expected_logs_root = str(workflow.parent.resolve())
 
     monkeypatch.setattr(
         "code_factory.application.service.LiveStatusDashboard.enabled",
@@ -630,7 +632,7 @@ def test_service_dashboard_helpers_and_logging_fallbacks(
         "code_factory.application.service.configure_logging", fake_configure_logging
     )
     assert service._configure_logging(True) is None
-    assert calls == [(None, False)]
+    assert calls == [(expected_logs_root, False)]
 
     monkeypatch.setattr(
         "code_factory.application.service.configure_logging",
@@ -705,6 +707,57 @@ def test_service_dashboard_helpers_and_logging_fallbacks(
 
     monkeypatch.setattr("code_factory.application.service.sys.stdin", object())
     assert service._dashboard_input_supported() is False
+
+
+def test_service_resolves_logs_root_from_workflow_settings(tmp_path: Path) -> None:
+    workflow = write_workflow_file(tmp_path / "WORKFLOW.md")
+    service = CodeFactoryService(str(workflow))
+    assert service._resolved_logs_root(None) == str(workflow.parent.resolve())
+
+    disabled_workflow = write_workflow_file(
+        tmp_path / "DISABLED_WORKFLOW.md",
+        observability={"file_logging": {"enabled": False}},
+    )
+    disabled_service = CodeFactoryService(str(disabled_workflow))
+    assert (
+        disabled_service._resolved_logs_root(make_snapshot(disabled_workflow).settings)
+        is None
+    )
+
+    configured_workflow = write_workflow_file(
+        tmp_path / "CONFIGURED_WORKFLOW.md",
+        observability={"file_logging": {"root": "ops-logs"}},
+    )
+    configured_service = CodeFactoryService(str(configured_workflow))
+    assert configured_service._resolved_logs_root(
+        make_snapshot(configured_workflow).settings
+    ) == str((configured_workflow.parent / "ops-logs").resolve())
+
+    override_root = str((tmp_path / "cli-logs").resolve())
+    override_service = CodeFactoryService(
+        str(configured_workflow), logs_root=override_root
+    )
+    assert (
+        override_service._resolved_logs_root(
+            make_snapshot(configured_workflow).settings
+        )
+        == override_root
+    )
+
+
+def test_resolve_logs_root_handles_absolute_configured_root(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "WORKFLOW.md"
+    absolute_root = str((tmp_path / "ops-logs").resolve())
+
+    assert (
+        resolve_logs_root(
+            str(workflow_path),
+            override=None,
+            file_logging_enabled=True,
+            configured_root=absolute_root,
+        )
+        == absolute_root
+    )
 
 
 @pytest.mark.asyncio
@@ -1672,7 +1725,9 @@ async def test_service_run_forever_reraises_unexpected_orchestrator_typeerror(
     )
     monkeypatch.setattr(service, "_install_signal_handlers", lambda stop_event: None)
     monkeypatch.setattr(
-        service, "_configure_logging", lambda dashboard_enabled, diagnostics=None: None
+        service,
+        "_configure_logging",
+        lambda dashboard_enabled, diagnostics=None, settings=None: None,
     )
 
     with pytest.raises(TypeError, match="boom"):
@@ -1736,7 +1791,9 @@ async def test_service_run_forever_starts_dashboard_and_input_monitor(
     )
     monkeypatch.setattr(service, "_install_signal_handlers", lambda stop_event: None)
     monkeypatch.setattr(
-        service, "_configure_logging", lambda dashboard_enabled, diagnostics=None: None
+        service,
+        "_configure_logging",
+        lambda dashboard_enabled, diagnostics=None, settings=None: None,
     )
     monkeypatch.setattr(service, "_build_http_server", lambda *args: None)
     monkeypatch.setattr(

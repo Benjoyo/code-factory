@@ -19,6 +19,7 @@ from code_factory.config.utils import (
     string_list,
 )
 from code_factory.errors import (
+    AppServerError,
     ConfigValidationError,
     TrackerClientError,
     WorkspaceError,
@@ -35,6 +36,7 @@ from code_factory.runtime.orchestration.actor import OrchestratorActor
 from code_factory.runtime.orchestration.models import RetryEntry, RunningEntry
 from code_factory.runtime.subprocess.process_tree import ProcessTree
 from code_factory.runtime.worker.actor import IssueWorker
+from code_factory.runtime.worker.error_details import format_worker_failure
 from code_factory.runtime.worker.quality_gates.readiness import native_readiness_result
 from code_factory.trackers.linear.client import (
     LinearClient,
@@ -708,6 +710,7 @@ async def test_config_utils_linear_graphql_client_and_worker_edge_paths(
     assert failed_exit.normal is False
     assert "boom" in (failed_exit.reason or "")
     assert "Issue worker failed" in caplog.text
+    assert "details=RuntimeError(boom)" in caplog.text
 
     class StoppedFailingManager:
         async def create_for_issue(self, issue: Any) -> Any:
@@ -740,6 +743,18 @@ async def test_config_utils_linear_graphql_client_and_worker_edge_paths(
     with caplog.at_level(logging.DEBUG):
         log_non_json_stream_line("   ", "stderr")
     assert not caplog.records
+
+
+def test_format_worker_failure_uses_repr_for_blank_exceptions() -> None:
+    class SilentError(Exception):
+        def __str__(self) -> str:
+            return ""
+
+    assert format_worker_failure(SilentError()) == "SilentError()"
+    assert (
+        format_worker_failure(AppServerError(("turn_failed", {"code": "boom"})))
+        == "AppServerError(reason=('turn_failed', {'code': 'boom'}))"
+    )
 
 
 @pytest.mark.asyncio

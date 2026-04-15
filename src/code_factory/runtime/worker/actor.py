@@ -19,6 +19,7 @@ from ...workspace.repository import prepare_workspace_repository
 from ...workspace.workpad import workpad_content_hash
 from ..messages import AgentWorkerUpdate, WorkerExited, WorkpadHydrated
 from ..support import maybe_aclose
+from .error_details import format_worker_failure
 from .quality_gates.completion import (
     run_pre_complete_turns,
 )
@@ -110,10 +111,11 @@ class IssueWorker:
             reason = "stopped" if normal else repr(exc)
             if not normal:
                 LOGGER.exception(
-                    "Issue worker failed issue_id=%s identifier=%s workspace=%s",
+                    "Issue worker failed issue_id=%s identifier=%s workspace=%s details=%s",
                     self.issue.id or "n/a",
                     self.issue.identifier or "n/a",
                     self.workspace_path or "n/a",
+                    format_worker_failure(exc),
                 )
         finally:
             if self.workspace_path is not None:

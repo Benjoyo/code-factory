@@ -16,6 +16,7 @@ from .defaults import (
 )
 from .models import (
     AgentSettings,
+    FileLoggingSettings,
     HooksSettings,
     ObservabilitySettings,
     PollingSettings,
@@ -47,7 +48,15 @@ def parse_settings(config: Mapping[str, Any]) -> Settings:
     agent_raw = require_mapping(config.get("agent"), "agent")
     hooks_raw = require_mapping(config.get("hooks"), "hooks")
     observability_raw = require_mapping(config.get("observability"), "observability")
+    file_logging_raw = require_mapping(
+        observability_raw.get("file_logging"), "observability.file_logging"
+    )
     server_raw = require_mapping(config.get("server"), "server")
+    _reject_unsupported_keys(
+        file_logging_raw,
+        "observability.file_logging",
+        {"enabled", "root"},
+    )
     _reject_unsupported_keys(
         agent_raw,
         "agent",
@@ -130,6 +139,17 @@ def parse_settings(config: Mapping[str, Any]) -> Settings:
                 observability_raw.get("render_interval_ms"),
                 "observability.render_interval_ms",
                 16,
+            ),
+            file_logging=FileLoggingSettings(
+                enabled=boolean(
+                    file_logging_raw.get("enabled"),
+                    "observability.file_logging.enabled",
+                    True,
+                ),
+                root=optional_non_blank_string(
+                    file_logging_raw.get("root"),
+                    "observability.file_logging.root",
+                ),
             ),
         ),
         server=ServerSettings(

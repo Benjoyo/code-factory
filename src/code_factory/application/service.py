@@ -19,6 +19,7 @@ from .dashboard import (
 )
 from .dashboard.dashboard_diagnostics import DashboardDiagnostics
 from .dashboard.dashboard_workflow import dashboard_url
+from .log_paths import resolve_logs_root
 from .logging import configure_logging
 from .project_links import resolve_project_url
 
@@ -53,7 +54,11 @@ class CodeFactoryService:
         validate_dispatch_settings(initial_snapshot.settings)
         dashboard_supported = LiveStatusDashboard.stream_supported(sys.stderr)
         diagnostics = DashboardDiagnostics() if dashboard_supported else None
-        log_path = self._configure_logging(dashboard_supported, diagnostics)
+        log_path = self._configure_logging(
+            dashboard_supported,
+            diagnostics,
+            settings=initial_snapshot.settings,
+        )
         self._log_startup(initial_snapshot, log_path=log_path)
 
         reload_workflow_if_changed = getattr(workflow_store, "reload_if_changed", None)
@@ -215,28 +220,41 @@ class CodeFactoryService:
         self,
         dashboard_enabled: bool,
         diagnostics: DashboardDiagnostics | None = None,
+        *,
+        settings=None,
     ) -> Path | None:
         """Call the shared logging helper, falling back for dashboards that rewire handlers."""
 
+        logs_root = self._resolved_logs_root(settings)
         try:
             return configure_logging(
-                self.logs_root,
+                logs_root,
                 console=not dashboard_enabled,
                 diagnostics=diagnostics,
             )
         except TypeError as exc:
             if "unexpected keyword argument 'diagnostics'" in str(exc):
                 try:
-                    return configure_logging(
-                        self.logs_root, console=not dashboard_enabled
-                    )
+                    return configure_logging(logs_root, console=not dashboard_enabled)
                 except TypeError as inner:
                     if "unexpected keyword argument 'console'" not in str(inner):
                         raise
-                    return configure_logging(self.logs_root)
+                    return configure_logging(logs_root)
             if "unexpected keyword argument 'console'" not in str(exc):
                 raise
-            return configure_logging(self.logs_root)
+            return configure_logging(logs_root)
+
+    def _resolved_logs_root(self, settings) -> str | None:
+        """Resolve the effective file-log root from CLI override and workflow config."""
+
+        observability = getattr(settings, "observability", None)
+        file_logging = getattr(observability, "file_logging", None)
+        return resolve_logs_root(
+            self.workflow_path,
+            override=self.logs_root,
+            file_logging_enabled=getattr(file_logging, "enabled", True),
+            configured_root=getattr(file_logging, "root", None),
+        )
 
     def _effective_port(self, initial_snapshot) -> int | None:
         """Compute the port used by dashboards or API, preferring the CLI override."""
