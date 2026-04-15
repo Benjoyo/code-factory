@@ -864,23 +864,26 @@ def test_native_merge_feedback_helpers_cover_edge_paths() -> None:
 def test_native_merge_feedback_helpers_cover_remaining_branches() -> None:
     review_requested_at = datetime.fromisoformat("2024-01-01T00:00:00+00:00")
 
-    assert feedback_module._filter_codex_comments(
-        [
-            {
-                "id": 1,
-                "body": "plain bot before request",
-                "user": {"login": "github-actions[bot]", "type": "Bot"},
-                "created_at": "2023-12-31T23:59:00Z",
-                "updated_at": "2023-12-31T23:59:00Z",
-            },
-            {
-                "id": 2,
-                "body": "plain bot without timestamp",
-                "user": {"login": "github-actions[bot]", "type": "Bot"},
-            },
-        ],
-        review_requested_at,
-    ) == []
+    assert (
+        feedback_module._filter_codex_comments(
+            [
+                {
+                    "id": 1,
+                    "body": "plain bot before request",
+                    "user": {"login": "github-actions[bot]", "type": "Bot"},
+                    "created_at": "2023-12-31T23:59:00Z",
+                    "updated_at": "2023-12-31T23:59:00Z",
+                },
+                {
+                    "id": 2,
+                    "body": "plain bot without timestamp",
+                    "user": {"login": "github-actions[bot]", "type": "Bot"},
+                },
+            ],
+            review_requested_at,
+        )
+        == []
+    )
 
     threaded_comment = {
         "id": 3,
@@ -941,6 +944,4 @@ def test_native_merge_feedback_helpers_cover_remaining_branches() -> None:
             },
         ]
     )
-    assert latest_replies == {
-        20: datetime.fromisoformat("2024-01-01T00:02:00+00:00")
-    }
+    assert latest_replies == {20: datetime.fromisoformat("2024-01-01T00:02:00+00:00")}

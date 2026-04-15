@@ -223,9 +223,7 @@ async def _handle_gate_result(
         gate_result,
         gate_source=gate_source,
         gate_name=gate_name,
-        repair_attempts=(
-            next_attempt if next_attempt <= max_feedback_loops else None
-        ),
+        repair_attempts=(next_attempt if next_attempt <= max_feedback_loops else None),
     )
     if next_attempt > max_feedback_loops:
         return (
