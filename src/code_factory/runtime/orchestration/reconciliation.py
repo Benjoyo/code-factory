@@ -186,6 +186,8 @@ class ReconciliationMixin:
             entry.thread_id = update["thread_id"]
         if isinstance(update.get("turn_id"), str):
             entry.turn_id = update["turn_id"]
+        if isinstance(update.get("repair_attempts"), int):
+            entry.repair_attempts = max(0, update["repair_attempts"])
         entry.last_agent_event = update.get("event")
         if isinstance(update.get("activity_phase"), str):
             entry.activity_phase = update["activity_phase"]

@@ -205,6 +205,7 @@ async def _handle_gate_result(
     max_feedback_loops: int,
     failure_state: str,
 ) -> tuple[int, str, StructuredTurnResult | None] | None:
+    next_attempt = feedback_attempts + 1
     if gate_result.status == 0:
         await emit_before_complete_update(
             queue,
@@ -222,8 +223,10 @@ async def _handle_gate_result(
         gate_result,
         gate_source=gate_source,
         gate_name=gate_name,
+        repair_attempts=(
+            next_attempt if next_attempt <= max_feedback_loops else None
+        ),
     )
-    next_attempt = feedback_attempts + 1
     if next_attempt > max_feedback_loops:
         return (
             next_attempt,

@@ -79,6 +79,7 @@ def before_complete_update(
     *,
     gate_source: str | None = None,
     gate_name: str | None = None,
+    repair_attempts: int | None = None,
 ) -> dict[str, Any]:
     payload = {
         "event": event,
@@ -91,6 +92,8 @@ def before_complete_update(
         payload["gate_source"] = gate_source
     if gate_name is not None:
         payload["gate_name"] = gate_name
+    if repair_attempts is not None:
+        payload["repair_attempts"] = repair_attempts
     return payload
 
 
@@ -102,6 +105,7 @@ async def emit_before_complete_update(
     *,
     gate_source: str | None = None,
     gate_name: str | None = None,
+    repair_attempts: int | None = None,
 ) -> None:
     if issue_id:
         await queue.put(
@@ -112,6 +116,7 @@ async def emit_before_complete_update(
                     hook_result,
                     gate_source=gate_source,
                     gate_name=gate_name,
+                    repair_attempts=repair_attempts,
                 ),
             )
         )

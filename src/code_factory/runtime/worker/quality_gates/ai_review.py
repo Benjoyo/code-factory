@@ -128,6 +128,17 @@ async def run_ai_review_gate(
             on_message=on_message,
         )
     except ReviewError as exc:
+        await _emit_ai_review_update(
+            queue,
+            issue_id,
+            "ai_review_blocked",
+            payload=_ai_review_scope_failure_update_payload(
+                reason=str(exc),
+                review_scope=profile.resolved_ai_review_scope(),
+                repair_attempts=feedback_attempts + 1,
+                max_feedback_loops=profile.hooks.before_complete_max_feedback_loops,
+            ),
+        )
         return _ai_review_scope_failure_result(
             reason=str(exc),
             review_scope=profile.resolved_ai_review_scope(),
@@ -160,7 +171,14 @@ async def run_ai_review_gate(
         queue,
         issue_id,
         "ai_review_completed",
-        payload=_ai_review_update_payload(ai_review),
+        payload=_ai_review_update_payload(
+            ai_review,
+            repair_attempts=feedback_attempts + 1
+            if ai_review.accepted_findings
+            and feedback_attempts + 1
+            <= profile.hooks.before_complete_max_feedback_loops
+            else None,
+        ),
     )
     if not ai_review.accepted_findings:
         return None
@@ -206,8 +224,12 @@ async def _emit_ai_review_update(
         )
 
 
-def _ai_review_update_payload(ai_review: AiReviewPassResult) -> dict[str, Any]:
-    return {
+def _ai_review_update_payload(
+    ai_review: AiReviewPassResult,
+    *,
+    repair_attempts: int | None = None,
+) -> dict[str, Any]:
+    payload = {
         "review_scope": ai_review.selection.surface.review_scope,
         "matched_review_types": [
             review_type.review_name for review_type in ai_review.selection.matched_types
@@ -244,6 +266,25 @@ def _ai_review_update_payload(ai_review: AiReviewPassResult) -> dict[str, Any]:
             for review in ai_review.executed_reviews
         ],
     }
+    if repair_attempts is not None:
+        payload["repair_attempts"] = repair_attempts
+    return payload
+
+
+def _ai_review_scope_failure_update_payload(
+    *,
+    reason: str,
+    review_scope: ResolvedAiReviewScope,
+    repair_attempts: int,
+    max_feedback_loops: int,
+) -> dict[str, Any]:
+    payload = {
+        "review_scope": review_scope,
+        "reason": reason,
+    }
+    if repair_attempts <= max_feedback_loops:
+        payload["repair_attempts"] = repair_attempts
+    return payload
 
 
 def _ai_review_scope_failure_result(

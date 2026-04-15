@@ -48,14 +48,17 @@ def issue_payload(
         return None
     current = running if running is not None else retry
     assert current is not None
+    worker_retries = current_worker_retries(running, retry)
     return {
         "issue_identifier": issue_identifier,
         "issue_id": current["issue_id"],
         "status": "running" if running is not None else "retrying",
         "workspace": {"path": current.get("workspace_path")},
         "attempts": {
-            "restart_count": max((retry or {}).get("attempt", 0) - 1, 0),
-            "current_retry_attempt": (retry or {}).get("attempt", 0),
+            "restart_count": max(worker_retries - 1, 0),
+            "current_retry_attempt": worker_retries,
+            "worker_retries": worker_retries,
+            "repair_attempts": current_repair_attempts(running),
         },
         "running": running_issue_payload(running) if running else None,
         "retry": retry_issue_payload(retry) if retry else None,
@@ -77,6 +80,8 @@ def running_entry_payload(entry: dict[str, Any]) -> dict[str, Any]:
         "thread_id": entry.get("thread_id"),
         "turn_id": entry.get("turn_id"),
         "turn_count": entry["turn_count"],
+        "worker_retries": entry.get("worker_retries", 0),
+        "repair_attempts": entry.get("repair_attempts", 0),
         "last_event": entry["last_agent_event"],
         "last_message": humanize_agent_message(entry["last_agent_message"]),
         "started_at": iso8601(entry["started_at"]),
@@ -113,6 +118,8 @@ def running_issue_payload(entry: dict[str, Any]) -> dict[str, Any]:
         "thread_id": entry.get("thread_id"),
         "turn_id": entry.get("turn_id"),
         "turn_count": entry["turn_count"],
+        "worker_retries": entry.get("worker_retries", 0),
+        "repair_attempts": entry.get("repair_attempts", 0),
         "state": entry["state"],
         "started_at": iso8601(entry["started_at"]),
         "last_event": entry["last_agent_event"],
@@ -149,6 +156,22 @@ def recent_events_payload(entry: dict[str, Any]) -> list[dict[str, Any]]:
             "message": humanize_agent_message(entry["last_agent_message"]),
         }
     ]
+
+
+def current_worker_retries(
+    running: dict[str, Any] | None, retry: dict[str, Any] | None
+) -> int:
+    """Prefer live worker metadata and fall back to the queued retry attempt."""
+
+    if running is not None:
+        return int(running.get("worker_retries", 0) or 0)
+    return int((retry or {}).get("attempt", 0) or 0)
+
+
+def current_repair_attempts(running: dict[str, Any] | None) -> int:
+    """Repair attempts exist only while a worker is actively looping."""
+
+    return int((running or {}).get("repair_attempts", 0) or 0)
 
 
 def humanize_agent_message(message: Any) -> Any:

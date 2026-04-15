@@ -73,6 +73,8 @@ def test_render_status_dashboard_includes_summary_running_and_backoff_sections()
                 "runtime_pid": "12345",
                 "runtime_seconds": 126,
                 "turn_count": 3,
+                "worker_retries": 2,
+                "repair_attempts": 5,
                 "total_tokens": 9876,
                 "session_id": "abcd1234-turn-42",
                 "last_agent_event": "turn_completed",
@@ -123,6 +125,7 @@ def test_render_status_dashboard_includes_summary_running_and_backoff_sections()
     assert "Next refresh:" in rendered and "3s" in rendered
     assert "Running" in rendered and "ENG-1" in rendered
     assert "PHASE" in rendered and "Execution" in rendered
+    assert "RETRY" in rendered and "REPAIR" in rendered
     assert "Backoff queue" in rendered and "ENG-2" in rendered
 
 
@@ -324,6 +327,8 @@ def test_dashboard_tables_use_stable_column_widths() -> None:
                     "runtime_pid": "12345",
                     "runtime_seconds": 126,
                     "turn_count": 3,
+                    "worker_retries": 1,
+                    "repair_attempts": 2,
                     "total_tokens": 9876,
                     "session_id": "abcd1234-turn-42",
                     "last_agent_event": "turn_completed",
@@ -341,6 +346,8 @@ def test_dashboard_tables_use_stable_column_widths() -> None:
         14,
         8,
         12,
+        5,
+        6,
         10,
         13,
     ]
@@ -378,6 +385,8 @@ def test_running_renderable_shows_activity_phase_values() -> None:
                     "activity_phase": "Execution",
                     "runtime_seconds": 1,
                     "turn_count": 1,
+                    "worker_retries": 0,
+                    "repair_attempts": 0,
                     "total_tokens": 1,
                 },
                 {
@@ -386,6 +395,8 @@ def test_running_renderable_shows_activity_phase_values() -> None:
                     "activity_phase": "Quality Gates",
                     "runtime_seconds": 1,
                     "turn_count": 1,
+                    "worker_retries": 1,
+                    "repair_attempts": 2,
                     "total_tokens": 1,
                 },
                 {
@@ -394,6 +405,8 @@ def test_running_renderable_shows_activity_phase_values() -> None:
                     "activity_phase": "AI Review",
                     "runtime_seconds": 1,
                     "turn_count": 1,
+                    "worker_retries": 3,
+                    "repair_attempts": 4,
                     "total_tokens": 1,
                 },
             ]
@@ -403,6 +416,8 @@ def test_running_renderable_shows_activity_phase_values() -> None:
     assert "Execution" in rendered
     assert "Quality Gates" in rendered
     assert "AI Review" in rendered
+    assert "RETRY" in rendered
+    assert "REPAIR" in rendered
 
 
 def test_dashboard_format_helpers_cover_remaining_branches() -> None:

@@ -1509,6 +1509,8 @@ Minimum endpoints:
           "state": "In Progress",
           "session_id": "thread-1-turn-1",
           "turn_count": 7,
+          "worker_retries": 1,
+          "repair_attempts": 2,
           "last_event": "turn_completed",
           "last_message": "",
           "started_at": "2026-02-24T20:10:12Z",
@@ -1554,11 +1556,15 @@ Minimum endpoints:
       },
       "attempts": {
         "restart_count": 1,
-        "current_retry_attempt": 2
+        "current_retry_attempt": 2,
+        "worker_retries": 2,
+        "repair_attempts": 3
       },
       "running": {
         "session_id": "thread-1-turn-1",
         "turn_count": 7,
+        "worker_retries": 2,
+        "repair_attempts": 3,
         "state": "In Progress",
         "started_at": "2026-02-24T20:10:12Z",
         "last_event": "notification",

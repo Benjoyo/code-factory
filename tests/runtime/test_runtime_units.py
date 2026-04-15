@@ -1299,6 +1299,7 @@ async def test_issue_worker_native_readiness_paths(
     assert updates[2].update["event"] == "before_complete_blocked"
     assert updates[2].update["gate_source"] == "native"
     assert updates[2].update["gate_name"] == "transition_readiness"
+    assert updates[2].update["repair_attempts"] == 1
     assert any(
         update.update["event"] == "execution_started"
         and update.update.get("activity_phase") == "Execution"
@@ -1569,6 +1570,7 @@ async def test_issue_worker_ai_review_feedback_loop(
     )
     assert completed["review_scope"] == "worktree"
     assert completed["accepted_finding_count"] == 1
+    assert completed["repair_attempts"] == 1
     assert completed["reviews"][0]["findings"][0]["title"] == "Missing branch guard"
 
 
@@ -2078,13 +2080,14 @@ async def test_run_ai_review_gate_turns_branch_scope_failures_into_feedback(
         fake_select,
     )
 
+    queue: asyncio.Queue[Any] = asyncio.Queue()
     result = await run_ai_review_gate(
         runtime=cast(Any, object()),
         workflow_snapshot=snapshot,
         workspace_path=str(tmp_path / "workspace"),
         issue=make_issue(state="In Progress"),
         profile=profile,
-        queue=asyncio.Queue(),
+        queue=queue,
         issue_id="issue-1",
         feedback_attempts=0,
         failure_state="Human Review",
@@ -2100,6 +2103,14 @@ async def test_run_ai_review_gate_turns_branch_scope_failures_into_feedback(
     assert "requires a clean worktree" in prompt
     assert " M src/app.py" in prompt
     assert "?? coverage.json" in prompt
+    phase_update = await queue.get()
+    assert isinstance(phase_update, AgentWorkerUpdate)
+    assert phase_update.update["event"] == "ai_review_started"
+    blocked_update = await queue.get()
+    assert isinstance(blocked_update, AgentWorkerUpdate)
+    assert blocked_update.update["event"] == "ai_review_blocked"
+    assert blocked_update.update["review_scope"] == "branch"
+    assert blocked_update.update["repair_attempts"] == 1
 
 
 @pytest.mark.asyncio
@@ -2137,13 +2148,14 @@ async def test_run_ai_review_gate_blocks_after_exhausted_branch_scope_failures(
         fake_select,
     )
 
+    queue: asyncio.Queue[Any] = asyncio.Queue()
     result = await run_ai_review_gate(
         runtime=cast(Any, object()),
         workflow_snapshot=snapshot,
         workspace_path=str(tmp_path / "workspace"),
         issue=make_issue(state="In Progress"),
         profile=profile,
-        queue=asyncio.Queue(),
+        queue=queue,
         issue_id="issue-1",
         feedback_attempts=profile.hooks.before_complete_max_feedback_loops,
         failure_state="Human Review",
@@ -2160,6 +2172,11 @@ async def test_run_ai_review_gate_blocks_after_exhausted_branch_scope_failures(
         "Code Factory exhausted AI review repair loops after"
     )
     assert "requires a clean worktree" in blocked.summary
+    await queue.get()
+    blocked_update = await queue.get()
+    assert isinstance(blocked_update, AgentWorkerUpdate)
+    assert blocked_update.update["event"] == "ai_review_blocked"
+    assert "repair_attempts" not in blocked_update.update
 
 
 @pytest.mark.asyncio
@@ -2410,9 +2427,11 @@ async def test_before_complete_helper_edge_paths() -> None:
     update = before_complete_update(
         "before_complete_passed",
         HookCommandResult(status=0, stdout="ok", stderr=""),
+        repair_attempts=2,
     )
     assert "gate_source" not in update
     assert "gate_name" not in update
+    assert update["repair_attempts"] == 2
 
     queue: asyncio.Queue[Any] = asyncio.Queue()
     await emit_before_complete_update(
@@ -2524,11 +2543,13 @@ async def test_orchestrator_dispatch_and_reconciliation_paths(
             "timestamp": datetime.now(UTC),
             "session_id": "thread-2",
             "runtime_pid": "222",
+            "repair_attempts": 2,
             "token_usage": {"inputTokens": 2, "outputTokens": 3, "totalTokens": 5},
             "rate_limits": {"primary": {}},
         },
     )
     assert actor.running["issue-2"].turn_count == 1
+    assert actor.running["issue-2"].repair_attempts == 2
     assert actor.agent_rate_limits == {"primary": {}}
     assert actor.agent_totals["total_tokens"] == 5
     actor._record_session_completion_totals(entry)

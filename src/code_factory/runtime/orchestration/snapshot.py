@@ -103,6 +103,8 @@ def running_entry_payload(
         "output_tokens": entry.agent_output_tokens,
         "total_tokens": entry.agent_total_tokens,
         "turn_count": entry.turn_count,
+        "worker_retries": entry.retry_attempt,
+        "repair_attempts": entry.repair_attempts,
         "activity_phase": entry.activity_phase,
         "started_at": entry.started_at,
         "last_agent_timestamp": entry.last_agent_timestamp,

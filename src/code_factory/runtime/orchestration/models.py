@@ -37,6 +37,7 @@ class RunningEntry:
     worker: Any
     started_at: datetime
     retry_attempt: int = 0
+    repair_attempts: int = 0
     session_id: str | None = None
     thread_id: str | None = None
     turn_id: str | None = None
