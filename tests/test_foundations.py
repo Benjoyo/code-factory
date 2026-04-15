@@ -1261,6 +1261,78 @@ def test_multi_state_workflow_helper_validation_paths() -> None:
             {"default": "Body"},
             "states.Todo.completion is not supported for auto states",
         ),
+        (
+            {
+                "states": {
+                    "Todo": {
+                        "prompt": "default",
+                        "merge": {"extra": True},
+                    }
+                }
+            },
+            {"default": "Body"},
+            "states.Todo.merge has unsupported keys: extra",
+        ),
+        (
+            {
+                "states": {
+                    "Todo": {
+                        "prompt": "default",
+                        "merge": {"mode": 1},
+                    }
+                }
+            },
+            {"default": "Body"},
+            "states.Todo.merge.mode must be a string",
+        ),
+        (
+            {
+                "states": {
+                    "Todo": {
+                        "prompt": "default",
+                        "merge": {"mode": "   "},
+                    }
+                }
+            },
+            {"default": "Body"},
+            "states.Todo.merge.mode must not be blank",
+        ),
+        (
+            {
+                "states": {
+                    "Todo": {
+                        "prompt": "default",
+                        "merge": {"mode": "bogus"},
+                    }
+                }
+            },
+            {"default": "Body"},
+            "states.Todo.merge.mode must be one of: agent_only, native_then_agent",
+        ),
+        (
+            {
+                "states": {
+                    "Todo": {
+                        "auto_next_state": "In Progress",
+                        "merge": {"mode": "native_then_agent"},
+                    }
+                }
+            },
+            {"default": "Body"},
+            "states.Todo.merge is not supported for auto states",
+        ),
+        (
+            {
+                "states": {
+                    "Todo": {
+                        "prompt": "default",
+                        "merge": {"mode": "native_then_agent"},
+                    }
+                }
+            },
+            {"default": "Body"},
+            "states.Todo.merge.mode=native_then_agent requires states.Todo.allowed_next_states to include `Done`",
+        ),
     ],
 )
 def test_parse_state_profiles_validation_paths(
@@ -1295,7 +1367,11 @@ def test_state_profiles_and_result_helpers_cover_edge_paths(tmp_path: Path) -> N
                         "before_complete_max_feedback_loops": 0,
                     },
                 },
-                "Merging": {"prompt": "default"},
+                "Merging": {
+                    "prompt": "default",
+                    "allowed_next_states": ["Done", "Rework"],
+                    "merge": {"mode": "native_then_agent"},
+                },
             }
         },
         {"default": "Body"},
@@ -1319,6 +1395,7 @@ def test_state_profiles_and_result_helpers_cover_edge_paths(tmp_path: Path) -> N
     assert profiles["merging"].completion.require_pr is False
     assert profiles["merging"].hooks.before_complete is None
     assert profiles["merging"].hooks.before_complete_max_feedback_loops == 10
+    assert profiles["merging"].merge.mode == "native_then_agent"
     assert structured_turn_output_schema(("Done", "Review"))["required"] == [
         "decision",
         "summary",

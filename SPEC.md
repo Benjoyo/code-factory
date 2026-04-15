@@ -627,6 +627,9 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `states.<state>.hooks.before_complete`: shell script or null, optional for agent-run states
 - `states.<state>.hooks.before_complete_max_feedback_loops`: integer, default `10`, optional for
   agent-run states
+- `states.<state>.merge.mode`: string, optional for agent-run states only; one of `agent_only`
+  (default) or `native_then_agent` to try a native PR merge fast path before spawning the merge
+  agent
 - `ai_review.types`: object mapping reusable AI review type names to definitions, optional
 - `ai_review.types.<name>.prompt`: string referencing a `# review:` section id
 - `ai_review.types.<name>.codex.model`: string or null, optional
@@ -2087,6 +2090,8 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
   matches upstream `HEAD`
 - `states.<state>.completion.require_pr` implies `require_pushed_head` and additionally blocks
   completion until exactly one open PR exists for the current branch at local `HEAD`
+- `states.<state>.merge.mode=native_then_agent` is allowed only on agent-run states whose
+  `allowed_next_states` include `Done`
 - Native completion readiness checks run before any configured `before_complete` hook
 - `states.<state>.ai_review.scope=auto` resolves to `branch` when native completion readiness
   is enabled for that state and `worktree` otherwise
@@ -2138,6 +2143,9 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - Retry queue entries include attempt, due time, identifier, and error
 - Stall detection kills stalled sessions and schedules retry
 - Slot exhaustion requeues retries with explicit error reason
+- `states.<state>.merge.mode=native_then_agent` attempts a native PR landing flow from the
+  workflow repo root before worker startup; a clean ready PR merges directly to `Done`, while any
+  readiness or merge issue falls back to the configured merge-state agent run
 - If a snapshot API is implemented, it returns running rows, retry rows, token totals, and rate
   limits
 - If a snapshot API is implemented, timeout/unavailable cases are surfaced

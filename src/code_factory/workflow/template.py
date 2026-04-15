@@ -138,6 +138,8 @@ def _state_profile_lines(state_name: str, normalized: str) -> list[str]:
                 "    prompt:",
                 "      - base",
                 "      - merge",
+                "    merge:",
+                "      mode: native_then_agent",
                 "    allowed_next_states:",
                 f"      - {yaml_string('Done')}",
                 f"      - {yaml_string('Rework')}",

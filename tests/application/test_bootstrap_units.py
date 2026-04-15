@@ -124,6 +124,8 @@ def test_render_default_workflow_uses_state_specific_prompts_for_merge_and_rewor
         "    prompt:\n"
         "      - base\n"
         "      - merge\n"
+        "    merge:\n"
+        "      mode: native_then_agent\n"
         "    allowed_next_states:\n"
         '      - "Done"\n'
         '      - "Rework"'

@@ -132,6 +132,9 @@ def test_multi_state_workflow_parses_sections_and_derives_active_states(
     assert snapshot.settings_for_state("Merging").coding_agent.repo_skill_allowlist == (
         "land",
     )
+    merging_profile = snapshot.state_profile("Merging")
+    assert merging_profile is not None
+    assert merging_profile.merge.mode == "agent_only"
     prompt = build_prompt(make_issue(state="Merging"), snapshot)
     assert "Shared instructions for Merging." in prompt
     assert "Merge-only instructions." in prompt

@@ -22,6 +22,11 @@ from .state_controls import (
     parse_state_completion,
     parse_state_hooks,
 )
+from .state_merge import (
+    MERGE_MODE_AGENT_ONLY,
+    StateMergeOverride,
+    parse_state_merge,
+)
 from .state_values import (
     optional_state_name,
     skill_name_list,
@@ -50,6 +55,7 @@ class WorkflowStateProfile:
     codex: StateCodexOverride = StateCodexOverride()
     completion: StateCompletionOverride = StateCompletionOverride()
     hooks: StateHooksOverride = StateHooksOverride()
+    merge: StateMergeOverride = StateMergeOverride()
     allowed_next_states: tuple[str, ...] = ()
     failure_state: str | None = None
     auto_next_state: str | None = None
@@ -126,6 +132,7 @@ def parse_state_profiles(
             "codex",
             "completion",
             "hooks",
+            "merge",
             "allowed_next_states",
             "failure_state",
             "auto_next_state",
@@ -159,6 +166,7 @@ def parse_state_profiles(
             field_name,
             allow_feedback_loops_without_hook=completion.enabled,
         )
+        merge = parse_state_merge(profile.get("merge"), field_name)
         if prompt_refs and auto_next_state is not None:
             raise ConfigValidationError(
                 f"{field_name} cannot define both prompt and auto_next_state"
@@ -188,6 +196,17 @@ def parse_state_profiles(
             raise ConfigValidationError(
                 f"{field_name}.completion is not supported for auto states"
             )
+        if auto_next_state is not None and merge.mode != MERGE_MODE_AGENT_ONLY:
+            raise ConfigValidationError(
+                f"{field_name}.merge is not supported for auto states"
+            )
+        if merge.mode != MERGE_MODE_AGENT_ONLY and not any(
+            normalize_issue_state(allowed) == "done" for allowed in allowed_next_states
+        ):
+            raise ConfigValidationError(
+                f"{field_name}.merge.mode={merge.mode} requires "
+                f"{field_name}.allowed_next_states to include `Done`"
+            )
         if (
             failure_state is not None
             and normalize_issue_state(failure_state) == normalized_state
@@ -203,6 +222,7 @@ def parse_state_profiles(
             codex=codex,
             completion=completion,
             hooks=hooks,
+            merge=merge,
             allowed_next_states=allowed_next_states,
             failure_state=failure_state,
             auto_next_state=auto_next_state,

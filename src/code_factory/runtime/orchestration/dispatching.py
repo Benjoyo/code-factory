@@ -16,6 +16,7 @@ from .failure_policy import (
     transition_issue_to_failure_state,
 )
 from .models import RunningEntry
+from .native_merge import attempt_native_merge
 from .policy import (
     available_slots,
     candidate_issue,
@@ -84,6 +85,31 @@ class DispatchingMixin:
         if profile is not None and profile.is_auto:
             await self._dispatch_auto_issue(refreshed_issue, attempt)
             return
+        if profile is not None and profile.merge.mode == "native_then_agent":
+            self._logger.info(
+                "Attempting native merge fast path issue_id=%s identifier=%s state=%s",
+                refreshed_issue.id or "n/a",
+                refreshed_issue.identifier or "n/a",
+                refreshed_issue.state or "n/a",
+            )
+            native_result = await attempt_native_merge(
+                refreshed_issue,
+                self.workflow_snapshot,
+                self.tracker,
+            )
+            if native_result.merged:
+                self._logger.info(
+                    "Native merge fast path succeeded issue_id=%s identifier=%s",
+                    refreshed_issue.id or "n/a",
+                    refreshed_issue.identifier or "n/a",
+                )
+                return
+            self._logger.info(
+                "Native merge fast path skipped issue_id=%s identifier=%s reason=%s",
+                refreshed_issue.id or "n/a",
+                refreshed_issue.identifier or "n/a",
+                native_result.skip_reason or "unknown",
+            )
         manager = WorkspaceManager(self.workflow_snapshot.settings)
         final_workspace_path = workspace_path or manager.workspace_path_for_issue(
             manager.safe_identifier(refreshed_issue.identifier)

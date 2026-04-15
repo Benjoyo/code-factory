@@ -201,7 +201,7 @@ Review these upstream ticket summaries before planning:
     - If changes are user-facing, include a UI walkthrough acceptance criterion that describes the end-to-end user path to validate.
     - If changes touch app files or app behavior, add explicit app-specific flow checks to `Acceptance Criteria` in the workpad (for example: launch path, changed interaction path, and expected result path).
     - Fill in `Manual Review Steps` for the human reviewer who will validate the work after handoff.
-    - Write `Manual Review Steps` as actionable black-box instructions using observable actions and expected results.
+    - Write `Manual Review Steps` as a numbered list of actionable black-box instructions using observable actions and expected results.
     - Keep `Manual Review Steps` non-checkable: do not use checkboxes there. Checkboxes belong in `Plan`, `Acceptance Criteria`, and `Validation`.
     - Put the agent's own executed verification evidence in `Validation`, not in `Manual Review Steps`.
     - If the ticket description/comment context includes `Validation`, `Test Plan`, or `Testing` sections, copy those requirements into the workpad `Acceptance Criteria` and `Validation` sections as required checkboxes (no optional downgrade).
@@ -273,6 +273,7 @@ Use this only when completion is blocked by missing required tools or missing au
     - Review the screenshots/recordings yourself before handoff.
 6.  Re-check all acceptance criteria and close any gaps.
 7.  Before every `git push` attempt, run the required validation for your scope and confirm it passes; if it fails, address issues and rerun until green, then commit and push changes.
+    - When creating or updating the PR, ensure the PR title starts with `{{ issue.identifier }}:` and the rest of the title accurately describes the shipped change.
 8.  Attach PR URL to the issue (prefer attachment; use the synced workpad only if attachment is unavailable).
     - Ensure the GitHub PR has label `code-factory` (add it if missing).
 9.  Merge the latest remote default base branch into the issue branch, resolve conflicts, and rerun checks.

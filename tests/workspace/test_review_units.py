@@ -71,7 +71,13 @@ def test_review_config_parses_and_validates(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_review_resolution_prefers_pr_head() -> None:
+async def test_review_resolution_prefers_pr_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "code_factory.workspace.review.review_resolution.shutil.which",
+        lambda command: "/usr/bin/gh" if command == "gh" else None,
+    )
     tracker = MemoryTracker(
         [make_issue(identifier="ENG-12", branch_name="codex/eng-12")]
     )
