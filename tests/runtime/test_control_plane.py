@@ -124,13 +124,14 @@ async def test_steer_turn_validates_active_turn(
         assert params["expectedTurnId"] == "turn-1"
         assert params["input"][0]["text"] == "focus"
         assert timeout_ms == session.read_timeout_ms
-        return {"turnId": "turn-1"}
+        return {"turnId": "turn-2"}
 
     monkeypatch.setattr(
         "code_factory.coding_agents.codex.app_server.protocol.session_request",
         fake_session_request,
     )
-    assert await steer_turn(session, "focus") == "turn-1"
+    assert await steer_turn(session, "focus") == "turn-2"
+    assert session.current_turn_id == "turn-2"
 
     async def invalid_session_request(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         return {"turnId": None}

@@ -9,6 +9,7 @@ from typing import Any
 from ....errors import AppServerError
 from ...review_models import ReviewOutput, normalize_review_output
 from ..tools.results import ToolExecutionOutcome
+from .correlation import ambiguous_turn_routing_reason, correlate_message
 from .messages import emit_message
 from .structured_output import message_item, parse_json_string
 from .turns import handle_turn_message
@@ -22,6 +23,7 @@ async def await_review_completion(
     """Read normal turn events until a review turn produces structured output."""
 
     timeout = session.turn_timeout_ms / 1000
+    foreign_turn_seen = False
     review_output: ReviewOutput | None = None
     while True:
         kind, payload = await asyncio.wait_for(session.event_queue.get(), timeout)
@@ -39,7 +41,21 @@ async def await_review_completion(
                 {"runtime_pid": session.runtime_pid},
             )
             continue
-        candidate = extract_review_output(message)
+        correlation = correlate_message(session, message)
+        if correlation.scope == "foreign":
+            foreign_turn_seen = True
+        if (
+            correlation.scope == "unattributable"
+            and foreign_turn_seen
+            and review_output_candidate_present(message)
+        ):
+            raise AppServerError(ambiguous_turn_routing_reason(session, message))
+        candidate = (
+            extract_review_output(message)
+            if correlation.scope == "current"
+            or (correlation.scope == "unattributable" and not foreign_turn_seen)
+            else None
+        )
         if candidate is not None:
             review_output = candidate
         if (
@@ -49,6 +65,8 @@ async def await_review_completion(
                 tool_executor,
                 message,
                 payload,
+                turn_scope=correlation.scope,
+                foreign_turn_seen=foreign_turn_seen,
             )
             == "turn_completed"
         ):
@@ -67,6 +85,12 @@ def extract_review_output(message: dict[str, Any]) -> ReviewOutput | None:
     if not isinstance(text, str):
         return None
     return normalize_review_output(parse_json_string(text))
+
+
+def review_output_candidate_present(message: dict[str, Any]) -> bool:
+    """Return whether this message could satisfy the review output contract."""
+
+    return extract_review_output(message) is not None
 
 
 class DisabledDynamicToolExecutor:

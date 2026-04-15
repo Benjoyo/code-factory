@@ -401,11 +401,13 @@ async def test_await_review_completion_edge_paths(
 
     messages: list[dict[str, Any]] = []
     session = make_session()
+    session.current_turn_id = "turn-review-1"
     await session.event_queue.put(("exit", 9))
     with pytest.raises(AppServerError, match="port_exit"):
         await await_review_completion(session, collect, cast(Any, object()))
 
     session = make_session()
+    session.current_turn_id = "turn-review-1"
     valid_item = {
         "method": "item/completed",
         "params": {
@@ -489,11 +491,13 @@ async def test_await_review_completion_edge_paths(
         ),
     ]:
         session = make_session()
+        session.current_turn_id = "turn-review-1"
         await session.event_queue.put(("line", json.dumps(payload)))
         with pytest.raises(AppServerError, match=expected):
             await await_review_completion(session, collect, cast(Any, object()))
 
     session = make_session()
+    session.current_turn_id = "turn-review-1"
     handled: list[str] = []
 
     async def fake_handle_turn_message(
@@ -502,6 +506,7 @@ async def test_await_review_completion_edge_paths(
         _tool_executor: Any,
         message: dict[str, Any],
         _raw: str,
+        **_kwargs: Any,
     ) -> str:
         handled.append("handled")
         if message.get("method") == "turn/completed":
@@ -513,6 +518,7 @@ async def test_await_review_completion_edge_paths(
         fake_handle_turn_message,
     )
     session = make_session()
+    session.current_turn_id = "turn-review-1"
     await session.event_queue.put(
         ("line", json.dumps({"method": "item/tool/call", "params": {}}))
     )
@@ -532,6 +538,7 @@ async def test_await_review_completion_edge_paths(
     assert handled == ["handled", "handled", "handled"]
 
     session = make_session()
+    session.current_turn_id = "turn-review-1"
     await session.event_queue.put(("line", json.dumps({"unexpected": True})))
     await session.event_queue.put(("line", json.dumps(valid_item)))
     await session.event_queue.put(
@@ -547,6 +554,177 @@ async def test_await_review_completion_edge_paths(
     )
     await await_review_completion(session, collect, cast(Any, object()))
     assert handled[-3:] == ["handled", "handled", "handled"]
+
+
+@pytest.mark.asyncio
+async def test_review_completion_uses_turn_correlation_and_fails_closed_when_ambiguous() -> (
+    None
+):
+    session = make_session()
+    session.current_turn_id = "turn-review-1"
+    events: list[str] = []
+
+    async def collect(message: dict[str, Any]) -> None:
+        events.append(message["event"])
+
+    for payload in (
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-child",
+                "item": {
+                    "type": "agentMessage",
+                    "text": json.dumps(
+                        {
+                            "findings": [],
+                            "overall_correctness": "patch is incorrect",
+                            "overall_explanation": "child result",
+                            "overall_confidence_score": 0.1,
+                        }
+                    ),
+                },
+            },
+        },
+        {
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "id": "turn-child",
+                    "threadId": "thread-1",
+                    "status": "completed",
+                }
+            },
+        },
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-review-1",
+                "item": {
+                    "type": "agentMessage",
+                    "text": json.dumps(
+                        {
+                            "findings": [],
+                            "overall_correctness": "patch is correct",
+                            "overall_explanation": "parent result",
+                            "overall_confidence_score": 0.9,
+                        }
+                    ),
+                },
+            },
+        },
+        {
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "id": "turn-review-1",
+                    "threadId": "thread-1",
+                    "status": "completed",
+                }
+            },
+        },
+    ):
+        await session.event_queue.put(("line", json.dumps(payload)))
+
+    output = await await_review_completion(session, collect, cast(Any, object()))
+    assert output.overall_correctness == "patch is correct"
+    assert events.count("turn_completed") == 1
+    assert events.count("notification") == 3
+
+    session = make_session()
+    session.current_turn_id = "turn-review-1"
+    await session.event_queue.put(
+        (
+            "line",
+            json.dumps(
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "threadId": "thread-1",
+                        "turnId": "turn-child",
+                        "item": {
+                            "type": "agentMessage",
+                            "text": json.dumps(
+                                {
+                                    "findings": [],
+                                    "overall_correctness": "patch is incorrect",
+                                    "overall_explanation": "child result",
+                                    "overall_confidence_score": 0.2,
+                                }
+                            ),
+                        },
+                    },
+                }
+            ),
+        )
+    )
+    await session.event_queue.put(
+        (
+            "line",
+            json.dumps(
+                {
+                    "method": "turn/completed",
+                    "params": {"turn": {"status": "completed"}},
+                }
+            ),
+        )
+    )
+    with pytest.raises(AppServerError, match="ambiguous_turn_routing"):
+        await await_review_completion(session, collect, cast(Any, object()))
+
+    session = make_session()
+    session.current_turn_id = "turn-review-1"
+    await session.event_queue.put(
+        (
+            "line",
+            json.dumps(
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "threadId": "thread-1",
+                        "turnId": "turn-child",
+                        "item": {
+                            "type": "agentMessage",
+                            "text": json.dumps(
+                                {
+                                    "findings": [],
+                                    "overall_correctness": "patch is incorrect",
+                                    "overall_explanation": "child result",
+                                    "overall_confidence_score": 0.2,
+                                }
+                            ),
+                        },
+                    },
+                }
+            ),
+        )
+    )
+    await session.event_queue.put(
+        (
+            "line",
+            json.dumps(
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "type": "agentMessage",
+                            "text": json.dumps(
+                                {
+                                    "findings": [],
+                                    "overall_correctness": "patch is correct",
+                                    "overall_explanation": "missing IDs",
+                                    "overall_confidence_score": 0.8,
+                                }
+                            ),
+                        }
+                    },
+                }
+            ),
+        )
+    )
+    with pytest.raises(AppServerError, match="ambiguous_turn_routing"):
+        await await_review_completion(session, collect, cast(Any, object()))
 
 
 def test_extract_review_output_reads_only_normal_agent_messages() -> None:

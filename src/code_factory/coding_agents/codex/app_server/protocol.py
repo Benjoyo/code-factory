@@ -134,6 +134,7 @@ async def steer_turn(session: AppServerSession, message: str) -> str:
     turn_id = result.get("turnId")
     if not isinstance(turn_id, str):
         raise AppServerError(("invalid_turn_steer_payload", result))
+    session.current_turn_id = turn_id
     return turn_id
 
 

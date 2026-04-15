@@ -1056,7 +1056,17 @@ Session identifiers:
 
 - Read `thread_id` from `thread/start` result `result.thread.id`
 - Read `turn_id` from each `turn/start` result `result.turn.id`
+- Read `turn_id` from each `turn/steer` result `result.turnId` and replace the active turn ID used
+  for subsequent stream correlation
 - Emit `session_id = "<thread_id>-<turn_id>"`
+
+Streaming correlation identifiers:
+
+- When streamed `turn/*` or `item/*` notifications can include descendant turns, multiplexed
+  thread traffic, or other non-parent activity, the app-server should include correlation IDs on
+  those notifications.
+- Compatible payload shapes include flat `params.threadId` / `params.turnId` and nested
+  `params.turn.threadId` / `params.turn.id`.
 
 ### 10.3 Streaming Turn Processing
 
@@ -1079,6 +1089,21 @@ Line handling requirements:
   - ignore it or log it as diagnostics
   - do not attempt protocol JSON parsing on stderr
 
+Turn-correlation requirements:
+
+- The client must correlate streamed lifecycle and structured-output-bearing item events against the
+  active parent turn before they can affect parent control flow.
+- Matching events for the active parent turn drive the parent completion state.
+- Foreign events from a different turn or thread are non-terminal to the parent turn. They may be
+  surfaced as diagnostics or notifications, but they must not complete, fail, cancel, or satisfy
+  the structured-output contract for the parent turn.
+- Unattributable terminal or structured-output-bearing events may be accepted only in legacy
+  single-turn conditions where no foreign-turn traffic has been observed while waiting on the
+  active turn.
+- If foreign-turn traffic has already been observed and a later terminal or structured-output
+  candidate cannot be attributed to the active turn, the client must fail closed with an explicit
+  protocol error rather than guessing.
+
 ### 10.4 Emitted Runtime Events (Upstream to Orchestrator)
 
 The app-server client emits structured events to the orchestrator callback. Each event should
@@ -1087,6 +1112,8 @@ include:
 - `event` (enum/string)
 - `timestamp` (UTC timestamp)
 - `codex_app_server_pid` (if available)
+- optional extracted `thread_id`
+- optional extracted `turn_id`
 - optional `usage` map (token counts)
 - payload fields as needed
 

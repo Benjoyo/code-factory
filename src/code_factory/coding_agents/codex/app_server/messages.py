@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ...base import AgentMessageHandler
+from .correlation import extract_message_thread_id, extract_message_turn_id
 from .session import AppServerSession
 
 NON_INTERACTIVE_TOOL_INPUT_ANSWER = (
@@ -35,6 +36,12 @@ def metadata_from_message(
     metadata: dict[str, Any] = {}
     if session.runtime_pid is not None:
         metadata["runtime_pid"] = session.runtime_pid
+    thread_id = extract_message_thread_id(payload)
+    turn_id = extract_message_turn_id(payload)
+    if isinstance(thread_id, str):
+        metadata["thread_id"] = thread_id
+    if isinstance(turn_id, str):
+        metadata["turn_id"] = turn_id
     token_usage = extract_token_usage(payload)
     if token_usage:
         metadata["token_usage"] = token_usage

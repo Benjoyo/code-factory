@@ -805,6 +805,7 @@ async def test_review_turn_protocol_helpers() -> None:
 @pytest.mark.asyncio
 async def test_review_completion_extracts_structured_output() -> None:
     session = make_session()
+    session.current_turn_id = "turn-review-1"
     payload = {
         "method": "item/completed",
         "params": {

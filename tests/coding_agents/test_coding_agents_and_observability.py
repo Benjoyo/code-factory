@@ -17,6 +17,11 @@ from code_factory.coding_agents.base import (
     validate_coding_agent_settings,
 )
 from code_factory.coding_agents.codex.app_server.client import AppServerClient
+from code_factory.coding_agents.codex.app_server.correlation import (
+    correlate_message,
+    extract_message_thread_id,
+    extract_message_turn_id,
+)
 from code_factory.coding_agents.codex.app_server.error_details import (
     format_error_details,
 )
@@ -455,6 +460,26 @@ async def test_messages_helpers_and_metadata() -> None:
     assert metadata["token_usage"] == {"inputTokens": 2}
     assert metadata["rate_limits"] == {"limit_id": "rl", "primary": {}}
     assert metadata["message_summary"] == "turn/completed"
+    assert (
+        metadata_from_message(
+            session,
+            {
+                "method": "item/completed",
+                "params": {"threadId": "thread-1", "turnId": "turn-1"},
+            },
+        )["thread_id"]
+        == "thread-1"
+    )
+    assert (
+        metadata_from_message(
+            session,
+            {
+                "method": "item/completed",
+                "params": {"threadId": "thread-1", "turnId": "turn-1"},
+            },
+        )["turn_id"]
+        == "turn-1"
+    )
 
     assert message_params({"params": {"x": 1}}) == {"x": 1}
     assert message_params({}) == {}
@@ -498,6 +523,53 @@ async def test_messages_helpers_and_metadata() -> None:
     assert integer_like(-1) is None
     assert message_summary({"params": {"question": " What now? "}}) == "What now?"
     assert message_summary(" hello ") == "hello"
+
+
+@pytest.mark.asyncio
+async def test_message_correlation_extracts_supported_payload_shapes() -> None:
+    session = make_session()
+    session.current_turn_id = "turn-parent"
+    assert extract_message_thread_id({"params": {"threadId": "thread-1"}}) == "thread-1"
+    assert extract_message_thread_id({"threadId": "thread-2"}) == "thread-2"
+    assert (
+        extract_message_thread_id({"params": {"turn": {"threadId": "thread-3"}}})
+        == "thread-3"
+    )
+    assert (
+        extract_message_turn_id({"params": {"turnId": "turn-parent"}}) == "turn-parent"
+    )
+    assert extract_message_turn_id({"turnId": "turn-top-level"}) == "turn-top-level"
+    assert extract_message_turn_id({"params": {"turn": {"id": "turn-nested"}}}) == (
+        "turn-nested"
+    )
+    assert (
+        correlate_message(
+            session,
+            {"method": "item/completed", "params": {"turnId": "turn-parent"}},
+        ).scope
+        == "current"
+    )
+    assert (
+        correlate_message(
+            session,
+            {"method": "item/completed", "params": {"turnId": "turn-child"}},
+        ).scope
+        == "foreign"
+    )
+    assert (
+        correlate_message(
+            session,
+            {"method": "item/completed", "params": {"threadId": "thread-2"}},
+        ).scope
+        == "foreign"
+    )
+    assert (
+        correlate_message(
+            session,
+            {"method": "item/completed", "params": {"item": {"type": "note"}}},
+        ).scope
+        == "unattributable"
+    )
 
 
 @pytest.mark.asyncio
@@ -1440,4 +1512,240 @@ async def test_turn_completion_reports_missing_and_terminal_status_failures() ->
             executor,
             {"method": "turn/completed", "params": {"turn": {"status": "interrupted"}}},
             "{}",
+        )
+
+
+@pytest.mark.asyncio
+async def test_turn_completion_uses_turn_correlation_and_ignores_foreign_child_events() -> (
+    None
+):
+    session = make_session()
+    session.current_turn_id = "turn-parent"
+    executor = DynamicToolExecutor(
+        lambda query, variables: asyncio.sleep(0, result={"ok": True})
+    )
+    events: list[str] = []
+
+    async def on_message(message: dict[str, Any]) -> None:
+        events.append(message["event"])
+
+    for payload in (
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-child",
+                "item": {
+                    "type": "agentMessage",
+                    "text": json.dumps(
+                        {
+                            "decision": "blocked",
+                            "summary": "child result",
+                            "next_state": "Human Review",
+                        }
+                    ),
+                },
+            },
+        },
+        {
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "id": "turn-child",
+                    "threadId": "thread-1",
+                    "status": "completed",
+                }
+            },
+        },
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-parent",
+                "item": {
+                    "type": "agentMessage",
+                    "text": json.dumps(
+                        {
+                            "decision": "transition",
+                            "summary": "parent result",
+                            "next_state": "Done",
+                        }
+                    ),
+                },
+            },
+        },
+        {
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "id": "turn-parent",
+                    "threadId": "thread-1",
+                    "status": "completed",
+                }
+            },
+        },
+    ):
+        session.event_queue.put_nowait(("line", json.dumps(payload)))
+
+    result = await await_turn_completion(session, on_message, executor)
+    assert result == StructuredTurnResult(
+        decision="transition",
+        summary="parent result",
+        next_state="Done",
+    )
+    assert events.count("turn_completed") == 1
+    assert events.count("notification") == 3
+    assert session.current_turn_id is None
+
+
+@pytest.mark.asyncio
+async def test_turn_completion_fails_closed_on_ambiguous_terminal_after_foreign_turn() -> (
+    None
+):
+    session = make_session()
+    session.current_turn_id = "turn-parent"
+    executor = DynamicToolExecutor(
+        lambda query, variables: asyncio.sleep(0, result={"ok": True})
+    )
+
+    async def on_message(_message: dict[str, Any]) -> None:
+        return None
+
+    session.event_queue.put_nowait(
+        (
+            "line",
+            json.dumps(
+                {
+                    "method": "item/updated",
+                    "params": {"threadId": "thread-1", "turnId": "turn-child"},
+                }
+            ),
+        )
+    )
+    session.event_queue.put_nowait(
+        (
+            "line",
+            json.dumps(
+                {
+                    "method": "turn/completed",
+                    "params": {"turn": {"status": "completed"}},
+                }
+            ),
+        )
+    )
+
+    with pytest.raises(AppServerError, match="ambiguous_turn_routing"):
+        await await_turn_completion(session, on_message, executor)
+
+
+@pytest.mark.asyncio
+async def test_turn_completion_fails_closed_on_ambiguous_structured_output_after_foreign_turn() -> (
+    None
+):
+    session = make_session()
+    session.current_turn_id = "turn-parent"
+    executor = DynamicToolExecutor(
+        lambda query, variables: asyncio.sleep(0, result={"ok": True})
+    )
+
+    async def on_message(_message: dict[str, Any]) -> None:
+        return None
+
+    session.event_queue.put_nowait(
+        (
+            "line",
+            json.dumps(
+                {
+                    "method": "item/updated",
+                    "params": {"threadId": "thread-1", "turnId": "turn-child"},
+                }
+            ),
+        )
+    )
+    session.event_queue.put_nowait(
+        (
+            "line",
+            json.dumps(
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "type": "agentMessage",
+                            "text": json.dumps(
+                                {
+                                    "decision": "transition",
+                                    "summary": "missing IDs",
+                                    "next_state": "Done",
+                                }
+                            ),
+                        }
+                    },
+                }
+            ),
+        )
+    )
+
+    with pytest.raises(AppServerError, match="ambiguous_turn_routing"):
+        await await_turn_completion(session, on_message, executor)
+
+
+@pytest.mark.asyncio
+async def test_handle_turn_message_rejects_ambiguous_terminal_failures_and_cancellations() -> (
+    None
+):
+    session = make_session()
+    executor = DynamicToolExecutor(
+        lambda query, variables: asyncio.sleep(0, result={"ok": True})
+    )
+    events: list[str] = []
+
+    async def on_message(message: dict[str, Any]) -> None:
+        events.append(message["event"])
+
+    assert (
+        await handle_turn_message(
+            session,
+            on_message,
+            executor,
+            {"method": "turn/failed", "params": {"reason": "child failure"}},
+            "{}",
+            turn_scope="foreign",
+        )
+        == "continue"
+    )
+    assert events[-1] == "notification"
+
+    with pytest.raises(AppServerError, match="ambiguous_turn_routing"):
+        await handle_turn_message(
+            session,
+            on_message,
+            executor,
+            {"method": "turn/failed", "params": {"reason": "unknown failure"}},
+            "{}",
+            turn_scope="unattributable",
+            foreign_turn_seen=True,
+        )
+
+    assert (
+        await handle_turn_message(
+            session,
+            on_message,
+            executor,
+            {"method": "turn/cancelled", "params": {"reason": "child cancelled"}},
+            "{}",
+            turn_scope="foreign",
+        )
+        == "continue"
+    )
+    assert events[-1] == "notification"
+
+    with pytest.raises(AppServerError, match="ambiguous_turn_routing"):
+        await handle_turn_message(
+            session,
+            on_message,
+            executor,
+            {"method": "turn/cancelled", "params": {"reason": "unknown cancel"}},
+            "{}",
+            turn_scope="unattributable",
+            foreign_turn_seen=True,
         )

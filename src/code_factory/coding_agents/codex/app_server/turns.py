@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import Literal
 
 from ....errors import AppServerError
 from ....structured_results import StructuredTurnResult
 from ..tools import DynamicToolExecutor
+from .correlation import ambiguous_turn_routing_reason, correlate_message
 from .messages import (
     emit_message,
     message_params,
@@ -29,6 +31,7 @@ async def await_turn_completion(
     """Read app-server events until the current turn completes or fails."""
 
     timeout = session.turn_timeout_ms / 1000
+    foreign_turn_seen = False
     structured_result: StructuredTurnResult | None = None
     while True:
         kind, payload = await asyncio.wait_for(session.event_queue.get(), timeout)
@@ -47,11 +50,31 @@ async def await_turn_completion(
                 {"runtime_pid": session.runtime_pid},
             )
             continue
-        candidate = extract_structured_turn_result(message)
+        correlation = correlate_message(session, message)
+        if correlation.scope == "foreign":
+            foreign_turn_seen = True
+        if (
+            correlation.scope == "unattributable"
+            and foreign_turn_seen
+            and structured_result_candidates_present(message)
+        ):
+            raise AppServerError(ambiguous_turn_routing_reason(session, message))
+        candidate = (
+            extract_structured_turn_result(message)
+            if correlation.scope == "current"
+            or (correlation.scope == "unattributable" and not foreign_turn_seen)
+            else None
+        )
         if candidate is not None:
             structured_result = candidate
         outcome = await handle_turn_message(
-            session, on_message, tool_executor, message, payload
+            session,
+            on_message,
+            tool_executor,
+            message,
+            payload,
+            turn_scope=correlation.scope,
+            foreign_turn_seen=foreign_turn_seen,
         )
         if outcome == "turn_completed":
             if structured_result is None:
@@ -65,12 +88,22 @@ async def handle_turn_message(
     tool_executor: DynamicToolExecutor,
     message: dict,
     raw: str,
+    *,
+    turn_scope: Literal["current", "foreign", "unattributable"] = "unattributable",
+    foreign_turn_seen: bool = False,
 ) -> str:
     """Handle one decoded app-server message and return the next turn state."""
 
     method = message.get("method")
     metadata = metadata_from_message(session, message)
     if method == "turn/completed":
+        if turn_scope == "foreign":
+            await emit_message(
+                on_message, "notification", {"payload": message, "raw": raw}, metadata
+            )
+            return "continue"
+        if turn_scope == "unattributable" and foreign_turn_seen:
+            raise AppServerError(ambiguous_turn_routing_reason(session, message))
         turn = turn_payload(message)
         status = turn.get("status")
         session.current_turn_id = None
@@ -100,6 +133,13 @@ async def handle_turn_message(
         )
         return "turn_completed"
     if method == "turn/failed":
+        if turn_scope == "foreign":
+            await emit_message(
+                on_message, "notification", {"payload": message, "raw": raw}, metadata
+            )
+            return "continue"
+        if turn_scope == "unattributable" and foreign_turn_seen:
+            raise AppServerError(ambiguous_turn_routing_reason(session, message))
         session.current_turn_id = None
         await emit_message(
             on_message,
@@ -109,6 +149,13 @@ async def handle_turn_message(
         )
         raise AppServerError(("turn_failed", message.get("params")))
     if method == "turn/cancelled":
+        if turn_scope == "foreign":
+            await emit_message(
+                on_message, "notification", {"payload": message, "raw": raw}, metadata
+            )
+            return "continue"
+        if turn_scope == "unattributable" and foreign_turn_seen:
+            raise AppServerError(ambiguous_turn_routing_reason(session, message))
         session.current_turn_id = None
         await emit_message(
             on_message,
@@ -125,6 +172,12 @@ async def handle_turn_message(
         on_message, "other_message", {"payload": message, "raw": raw}, metadata
     )
     return "continue"
+
+
+def structured_result_candidates_present(message: dict) -> bool:
+    """Return whether this message could satisfy the structured-output contract."""
+
+    return extract_structured_turn_result(message) is not None
 
 
 async def handle_turn_method(

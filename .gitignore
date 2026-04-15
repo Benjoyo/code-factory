@@ -2,6 +2,7 @@
 .pytest_cache/
 .idea/
 __pycache__/
+.DS_Store
 *.py[cod]
 .coverage
 coverage.json
