@@ -75,6 +75,14 @@ def _json_result(payload: Any) -> ShellResult:
     return ShellResult(status=0, stdout=json.dumps(payload), stderr="")
 
 
+def _not_found_result() -> ShellResult:
+    return ShellResult(
+        status=1,
+        stdout="",
+        stderr='{\n  "message": "Not Found",\n  "status": "404"\n}gh: Not Found (HTTP 404)',
+    )
+
+
 def _success_responses(
     *,
     issue_comments: list[dict[str, Any]] | None = None,
@@ -548,6 +556,24 @@ async def test_native_merge_internal_helpers_cover_edge_paths() -> None:
                 [],
             ),
         )
+    assert await native_merge_module._fetch_pr_head(
+        "/tmp",
+        12,
+        shell_capture=_shell_capture_factory(
+            [
+                (
+                    "gh api repos/{owner}/{repo}/pulls/12",
+                    _json_result(
+                        {
+                            "head": {"sha": "abc123", "repo": {}},
+                            "base": {"repo": {"full_name": "base-owner/base-repo"}},
+                        }
+                    ),
+                )
+            ],
+            [],
+        ),
+    ) == ("abc123", ("base-owner/base-repo",))
     with pytest.raises(ReviewError, match="head.repo.full_name"):
         await native_merge_module._fetch_pr_head(
             "/tmp",
@@ -556,7 +582,12 @@ async def test_native_merge_internal_helpers_cover_edge_paths() -> None:
                 [
                     (
                         "gh api repos/{owner}/{repo}/pulls/12",
-                        _json_result({"head": {"sha": "abc123", "repo": {}}}),
+                        _json_result(
+                            {
+                                "head": {"sha": "abc123", "repo": {}},
+                                "base": {"repo": {}},
+                            }
+                        ),
                     )
                 ],
                 [],
@@ -565,7 +596,7 @@ async def test_native_merge_internal_helpers_cover_edge_paths() -> None:
 
     check_runs = await native_merge_module._get_check_runs(
         "/tmp",
-        "fork-owner/fork-repo",
+        ("fork-owner/fork-repo",),
         "abc123",
         shell_capture=_shell_capture_factory(
             [
@@ -582,7 +613,7 @@ async def test_native_merge_internal_helpers_cover_edge_paths() -> None:
     assert (
         await native_merge_module._get_check_runs(
             "/tmp",
-            "fork-owner/fork-repo",
+            ("fork-owner/fork-repo",),
             "abc123",
             shell_capture=_shell_capture_factory(
                 [("-f page=1", _json_result({"check_runs": []}))],
@@ -591,6 +622,64 @@ async def test_native_merge_internal_helpers_cover_edge_paths() -> None:
         )
         == []
     )
+    assert await native_merge_module._get_check_runs(
+        "/tmp",
+        ("fork-owner/fork-repo", "base-owner/base-repo"),
+        "abc123",
+        shell_capture=_shell_capture_factory(
+            [
+                (
+                    "repos/fork-owner/fork-repo/commits/abc123/check-runs",
+                    _not_found_result(),
+                ),
+                (
+                    "repos/base-owner/base-repo/commits/abc123/check-runs -f per_page=100 -f page=1",
+                    _json_result({"check_runs": [{"name": "ci"}]}),
+                ),
+                (
+                    "repos/base-owner/base-repo/commits/abc123/check-runs -f per_page=100 -f page=2",
+                    _json_result({"check_runs": []}),
+                ),
+            ],
+            [],
+        ),
+    ) == [{"name": "ci"}]
+    assert (
+        await native_merge_module._get_check_runs(
+            "/tmp",
+            ("fork-owner/fork-repo", "base-owner/base-repo"),
+            "abc123",
+            shell_capture=_shell_capture_factory(
+                [
+                    (
+                        "repos/fork-owner/fork-repo/commits/abc123/check-runs",
+                        _not_found_result(),
+                    ),
+                    (
+                        "repos/base-owner/base-repo/commits/abc123/check-runs",
+                        _not_found_result(),
+                    ),
+                ],
+                [],
+            ),
+        )
+        == []
+    )
+    with pytest.raises(ReviewError, match="boom"):
+        await native_merge_module._get_check_runs(
+            "/tmp",
+            ("fork-owner/fork-repo", "base-owner/base-repo"),
+            "abc123",
+            shell_capture=_shell_capture_factory(
+                [
+                    (
+                        "repos/fork-owner/fork-repo/commits/abc123/check-runs",
+                        ShellResult(status=1, stdout="", stderr="boom"),
+                    ),
+                ],
+                [],
+            ),
+        )
     assert native_merge_module._merge_command(
         native_merge_module.MergePullRequest(
             number=7,
@@ -649,7 +738,7 @@ async def test_native_merge_readiness_edge_paths(
     )
 
     async def _head(*_args, **_kwargs):
-        return "sha", "fork-owner/fork-repo"
+        return "sha", ("fork-owner/fork-repo",)
 
     async def _checks(*_args, **_kwargs):
         return []
@@ -678,6 +767,49 @@ async def test_native_merge_readiness_edge_paths(
         )
         == "no check runs reported for the PR head"
     )
+
+
+@pytest.mark.asyncio
+async def test_attempt_native_merge_skips_when_readiness_probe_raises_review_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workflow = _merging_workflow(tmp_path)
+    snapshot = make_snapshot(workflow)
+    issue = make_issue(id="issue-14", state="Merging", branch_name="codex/eng-14")
+    tracker = MemoryTracker([issue])
+
+    async def _git_repo(*_args: Any, **_kwargs: Any) -> bool:
+        return True
+
+    async def _github_ready(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    async def _pr(*_args: Any, **_kwargs: Any):
+        return native_merge_module.MergePullRequest(
+            number=14,
+            url="u",
+            head_sha="sha",
+            branch_name="branch",
+            title="title",
+            body="body",
+            mergeable="MERGEABLE",
+            merge_state="CLEAN",
+        )
+
+    async def _readiness(*_args: Any, **_kwargs: Any) -> str | None:
+        raise ReviewError("gh: Not Found (HTTP 404)")
+
+    monkeypatch.setattr(native_merge_module, "_is_git_repository", _git_repo)
+    monkeypatch.setattr(native_merge_module, "ensure_github_ready", _github_ready)
+    monkeypatch.setattr(native_merge_module, "_fetch_pull_request", _pr)
+    monkeypatch.setattr(
+        native_merge_module, "_native_merge_readiness_error", _readiness
+    )
+
+    result = await attempt_native_merge(issue, snapshot, tracker)
+
+    assert result.merged is False
+    assert result.skip_reason == "gh: Not Found (HTTP 404)"
 
 
 def test_native_merge_feedback_helpers_cover_edge_paths() -> None:

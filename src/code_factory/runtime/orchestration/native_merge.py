@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import shlex
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -17,6 +16,14 @@ from ...workspace.review.review_resolution import ReviewError, ensure_github_rea
 from ...workspace.review.review_shell import capture_shell
 from ..worker.results import persist_state_result
 from .native_merge_feedback import blocking_feedback_error
+from .native_merge_support import capture_json as _capture_json
+from .native_merge_support import is_not_found_error
+from .native_merge_support import optional_str as _optional_str
+from .native_merge_support import (
+    pull_request_check_run_repositories as _pull_request_check_run_repositories,
+)
+from .native_merge_support import require_int as _require_int
+from .native_merge_support import require_str as _require_str
 
 _CHECK_SUCCESS_CONCLUSIONS = {"success", "skipped", "neutral"}
 _MERGEABLE_READY = {"MERGEABLE"}
@@ -69,11 +76,14 @@ async def attempt_native_merge(
         )
     except ReviewError as exc:
         return NativeMergeAttemptResult(skip_reason=str(exc))
-    readiness_error = await _native_merge_readiness_error(
-        repo_root,
-        pr,
-        shell_capture=shell_capture,
-    )
+    try:
+        readiness_error = await _native_merge_readiness_error(
+            repo_root,
+            pr,
+            shell_capture=shell_capture,
+        )
+    except ReviewError as exc:
+        return NativeMergeAttemptResult(skip_reason=str(exc))
     if readiness_error is not None:
         return NativeMergeAttemptResult(skip_reason=readiness_error)
     merge_result = await shell_capture(
@@ -108,7 +118,7 @@ async def _native_merge_readiness_error(
         return f"PR mergeability is {pr.mergeable or 'unknown'}"
     if pr.merge_state in _MERGE_STATE_BLOCKERS or pr.merge_state is None:
         return f"PR merge state is {pr.merge_state or 'unknown'}"
-    branch_head_sha, branch_head_repo = await _fetch_pr_head(
+    branch_head_sha, check_run_repositories = await _fetch_pr_head(
         repo_root,
         pr.number,
         shell_capture=shell_capture,
@@ -117,7 +127,7 @@ async def _native_merge_readiness_error(
         return "PR head does not match the latest branch head on GitHub"
     check_runs = await _get_check_runs(
         repo_root,
-        branch_head_repo,
+        check_run_repositories,
         branch_head_sha,
         shell_capture=shell_capture,
     )
@@ -186,7 +196,7 @@ async def _fetch_pr_head(
     pr_number: int,
     *,
     shell_capture,
-) -> tuple[str, str]:
+) -> tuple[str, tuple[str, ...]]:
     payload = await _capture_json(
         f"gh api repos/{{owner}}/{{repo}}/pulls/{pr_number}",
         cwd=repo_root,
@@ -197,11 +207,10 @@ async def _fetch_pr_head(
     sha = head.get("sha") if isinstance(head, dict) else None
     if not isinstance(sha, str) or not sha.strip():
         raise ReviewError("GitHub CLI PR payload is missing `head.sha`.")
-    repo = head.get("repo") if isinstance(head, dict) else None
-    repository_path = repo.get("full_name") if isinstance(repo, dict) else None
-    if not isinstance(repository_path, str) or not repository_path.strip():
+    repository_paths = _pull_request_check_run_repositories(payload)
+    if not repository_paths:
         raise ReviewError("GitHub CLI PR payload is missing `head.repo.full_name`.")
-    return sha, repository_path
+    return sha, repository_paths
 
 
 async def _blocking_feedback_error(
@@ -229,6 +238,27 @@ async def _blocking_feedback_error(
 
 
 async def _get_check_runs(
+    repo_root: str,
+    repository_paths: tuple[str, ...],
+    head_sha: str,
+    *,
+    shell_capture,
+) -> list[dict[str, Any]]:
+    for repository_path in repository_paths:
+        try:
+            return await _get_check_runs_for_repository(
+                repo_root,
+                repository_path,
+                head_sha,
+                shell_capture=shell_capture,
+            )
+        except ReviewError as exc:
+            if not is_not_found_error(exc):
+                raise
+    return []
+
+
+async def _get_check_runs_for_repository(
     repo_root: str,
     repository_path: str,
     head_sha: str,
@@ -278,18 +308,6 @@ async def _is_git_repository(repo_root: str, *, shell_capture) -> bool:
     return result.status == 0 and result.stdout.strip() == "true"
 
 
-async def _capture_json(
-    command: str, *, cwd: str, shell_capture, error_prefix: str
-) -> Any:
-    result = await shell_capture(command, cwd=cwd)
-    if result.status != 0:
-        raise ReviewError(result.output or error_prefix)
-    try:
-        return json.loads(result.stdout or "null")
-    except json.JSONDecodeError as exc:
-        raise ReviewError(f"{error_prefix}: invalid JSON") from exc
-
-
 def _merge_command(pr: MergePullRequest) -> str:
     return (
         "gh pr merge "
@@ -298,25 +316,6 @@ def _merge_command(pr: MergePullRequest) -> str:
         f"--subject {shlex.quote(pr.title)} "
         f"--body {shlex.quote(pr.body)}"
     )
-
-
-def _require_int(payload: dict[str, Any], key: str) -> int:
-    value = payload.get(key)
-    if isinstance(value, int):
-        return value
-    raise ReviewError(f"GitHub CLI PR payload is missing `{key}`.")
-
-
-def _require_str(payload: dict[str, Any], key: str) -> str:
-    value = payload.get(key)
-    if isinstance(value, str):
-        return value
-    raise ReviewError(f"GitHub CLI PR payload is missing `{key}`.")
-
-
-def _optional_str(payload: dict[str, Any], key: str) -> str | None:
-    value = payload.get(key)
-    return value if isinstance(value, str) else None
 
 
 def _summarize_checks(check_runs: list[dict[str, Any]]) -> tuple[bool, bool, list[str]]:
