@@ -1,6 +1,6 @@
 [project]
 name = "code-factory-agent"
-version = "0.5.0"
+version = "0.6.0"
 description = "Extended Python asyncio port of the OpenAI Symphony spec"
 readme = "README.md"
 license = { file = "LICENSE" }
