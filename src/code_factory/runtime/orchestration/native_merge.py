@@ -108,15 +108,18 @@ async def _native_merge_readiness_error(
         return f"PR mergeability is {pr.mergeable or 'unknown'}"
     if pr.merge_state in _MERGE_STATE_BLOCKERS or pr.merge_state is None:
         return f"PR merge state is {pr.merge_state or 'unknown'}"
-    branch_head = await _fetch_pr_branch_head(
+    branch_head_sha, branch_head_repo = await _fetch_pr_head(
         repo_root,
         pr.number,
         shell_capture=shell_capture,
     )
-    if branch_head != pr.head_sha:
+    if branch_head_sha != pr.head_sha:
         return "PR head does not match the latest branch head on GitHub"
     check_runs = await _get_check_runs(
-        repo_root, pr.head_sha, shell_capture=shell_capture
+        repo_root,
+        branch_head_repo,
+        branch_head_sha,
+        shell_capture=shell_capture,
     )
     if not check_runs:
         return "no check runs reported for the PR head"
@@ -178,12 +181,12 @@ async def _fetch_pull_request(
     )
 
 
-async def _fetch_pr_branch_head(
+async def _fetch_pr_head(
     repo_root: str,
     pr_number: int,
     *,
     shell_capture,
-) -> str:
+) -> tuple[str, str]:
     payload = await _capture_json(
         f"gh api repos/{{owner}}/{{repo}}/pulls/{pr_number}",
         cwd=repo_root,
@@ -194,7 +197,11 @@ async def _fetch_pr_branch_head(
     sha = head.get("sha") if isinstance(head, dict) else None
     if not isinstance(sha, str) or not sha.strip():
         raise ReviewError("GitHub CLI PR payload is missing `head.sha`.")
-    return sha
+    repo = head.get("repo") if isinstance(head, dict) else None
+    repository_path = repo.get("full_name") if isinstance(repo, dict) else None
+    if not isinstance(repository_path, str) or not repository_path.strip():
+        raise ReviewError("GitHub CLI PR payload is missing `head.repo.full_name`.")
+    return sha, repository_path
 
 
 async def _blocking_feedback_error(
@@ -222,16 +229,18 @@ async def _blocking_feedback_error(
 
 
 async def _get_check_runs(
-    repo_root: str, head_sha: str, *, shell_capture
+    repo_root: str,
+    repository_path: str,
+    head_sha: str,
+    *,
+    shell_capture,
 ) -> list[dict[str, Any]]:
     runs: list[dict[str, Any]] = []
     page = 1
+    endpoint = shlex.quote(f"repos/{repository_path}/commits/{head_sha}/check-runs")
     while True:
         payload = await _capture_json(
-            (
-                f"gh api repos/{{owner}}/{{repo}}/commits/{head_sha}/check-runs "
-                f"-f per_page=100 -f page={page}"
-            ),
+            (f"gh api {endpoint} -f per_page=100 -f page={page}"),
             cwd=repo_root,
             shell_capture=shell_capture,
             error_prefix=f"Failed to query check runs for {head_sha}",
@@ -337,9 +346,5 @@ def _check_timestamp(check: dict[str, Any]) -> datetime:
     for key in ("completed_at", "started_at", "run_started_at", "created_at"):
         value = check.get(key)
         if isinstance(value, str):
-            return _parse_time(value)
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
     return _MIN_TIME
-
-
-def _parse_time(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))

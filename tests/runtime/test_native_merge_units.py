@@ -84,6 +84,7 @@ def _success_responses(
     pr_list: list[dict[str, Any]] | None = None,
     pr_view: dict[str, Any] | None = None,
     pr_head_sha: str = "abc123",
+    pr_head_repo: str = "fork-owner/fork-repo",
     merge_result: ShellResult | None = None,
 ) -> list[tuple[str, ShellResult]]:
     return [
@@ -112,10 +113,12 @@ def _success_responses(
         ),
         (
             "gh api repos/{owner}/{repo}/pulls/12",
-            _json_result({"head": {"sha": pr_head_sha}}),
+            _json_result(
+                {"head": {"sha": pr_head_sha, "repo": {"full_name": pr_head_repo}}}
+            ),
         ),
         (
-            "gh api repos/{owner}/{repo}/commits/abc123/check-runs -f per_page=100 -f page=1",
+            f"gh api repos/{pr_head_repo}/commits/abc123/check-runs -f per_page=100 -f page=1",
             _json_result(
                 {
                     "total_count": len(
@@ -134,7 +137,7 @@ def _success_responses(
             ),
         ),
         (
-            "gh api repos/{owner}/{repo}/commits/abc123/check-runs -f per_page=100 -f page=2",
+            f"gh api repos/{pr_head_repo}/commits/abc123/check-runs -f per_page=100 -f page=2",
             _json_result(
                 {
                     "total_count": len(
@@ -205,6 +208,10 @@ async def test_attempt_native_merge_succeeds_and_persists_state_result(
     )
 
     assert result.merged is True
+    assert any(
+        "gh api repos/fork-owner/fork-repo/commits/abc123/check-runs" in call
+        for call in calls
+    )
     assert any("gh pr merge 12 --squash --delete-branch" in call for call in calls)
     assert (await tracker.fetch_issue_states_by_ids(["issue-1"]))[0].state == "Done"
     comments = await tracker.fetch_issue_comments("issue-1")
@@ -533,7 +540,7 @@ async def test_native_merge_internal_helpers_cover_edge_paths() -> None:
             ),
         )
     with pytest.raises(ReviewError, match="head.sha"):
-        await native_merge_module._fetch_pr_branch_head(
+        await native_merge_module._fetch_pr_head(
             "/tmp",
             12,
             shell_capture=_shell_capture_factory(
@@ -541,9 +548,24 @@ async def test_native_merge_internal_helpers_cover_edge_paths() -> None:
                 [],
             ),
         )
+    with pytest.raises(ReviewError, match="head.repo.full_name"):
+        await native_merge_module._fetch_pr_head(
+            "/tmp",
+            12,
+            shell_capture=_shell_capture_factory(
+                [
+                    (
+                        "gh api repos/{owner}/{repo}/pulls/12",
+                        _json_result({"head": {"sha": "abc123", "repo": {}}}),
+                    )
+                ],
+                [],
+            ),
+        )
 
     check_runs = await native_merge_module._get_check_runs(
         "/tmp",
+        "fork-owner/fork-repo",
         "abc123",
         shell_capture=_shell_capture_factory(
             [
@@ -560,6 +582,7 @@ async def test_native_merge_internal_helpers_cover_edge_paths() -> None:
     assert (
         await native_merge_module._get_check_runs(
             "/tmp",
+            "fork-owner/fork-repo",
             "abc123",
             shell_capture=_shell_capture_factory(
                 [("-f page=1", _json_result({"check_runs": []}))],
@@ -626,7 +649,7 @@ async def test_native_merge_readiness_edge_paths(
     )
 
     async def _head(*_args, **_kwargs):
-        return "sha"
+        return "sha", "fork-owner/fork-repo"
 
     async def _checks(*_args, **_kwargs):
         return []
@@ -634,7 +657,7 @@ async def test_native_merge_readiness_edge_paths(
     async def _feedback(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr(native_merge_module, "_fetch_pr_branch_head", _head)
+    monkeypatch.setattr(native_merge_module, "_fetch_pr_head", _head)
     monkeypatch.setattr(native_merge_module, "_get_check_runs", _checks)
     monkeypatch.setattr(native_merge_module, "_blocking_feedback_error", _feedback)
 

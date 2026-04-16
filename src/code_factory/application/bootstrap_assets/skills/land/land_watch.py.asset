@@ -24,6 +24,7 @@ class PrInfo:
     number: int
     url: str
     head_sha: str
+    head_repo_path: str
     mergeable: str | None
     merge_state: str | None
 
@@ -70,10 +71,25 @@ async def get_pr_info() -> PrInfo:
         "number,url,headRefOid,mergeable,mergeStateStatus",
     )
     parsed = json.loads(data)
+    pull_data = await run_gh(
+        "api",
+        "--method",
+        "GET",
+        f"repos/{{owner}}/{{repo}}/pulls/{parsed['number']}",
+    )
+    pull = json.loads(pull_data)
+    head = pull.get("head", {})
+    head_sha = head.get("sha")
+    head_repo_path = (head.get("repo") or {}).get("full_name")
+    if not isinstance(head_sha, str) or not head_sha:
+        raise RuntimeError("PR payload is missing head.sha")
+    if not isinstance(head_repo_path, str) or not head_repo_path:
+        raise RuntimeError("PR payload is missing head.repo.full_name")
     return PrInfo(
         number=parsed["number"],
         url=parsed["url"],
-        head_sha=parsed["headRefOid"],
+        head_sha=head_sha,
+        head_repo_path=head_repo_path,
         mergeable=parsed.get("mergeable"),
         merge_state=parsed.get("mergeStateStatus"),
     )
@@ -135,7 +151,7 @@ async def get_reviews(pr_number: int) -> list[dict[str, Any]]:
     return reviews
 
 
-async def get_check_runs(head_sha: str) -> list[dict[str, Any]]:
+async def get_check_runs(head_repo_path: str, head_sha: str) -> list[dict[str, Any]]:
     page = 1
     check_runs: list[dict[str, Any]] = []
     while True:
@@ -143,7 +159,7 @@ async def get_check_runs(head_sha: str) -> list[dict[str, Any]]:
             "api",
             "--method",
             "GET",
-            f"repos/{{owner}}/{{repo}}/commits/{head_sha}/check-runs",
+            f"repos/{head_repo_path}/commits/{head_sha}/check-runs",
             "-f",
             "per_page=100",
             "-f",
@@ -544,11 +560,13 @@ async def wait_for_codex(pr_number: int, checks_done: asyncio.Event) -> None:
         await asyncio.sleep(POLL_SECONDS)
 
 
-async def wait_for_checks(head_sha: str, checks_done: asyncio.Event) -> None:
+async def wait_for_checks(
+    head_repo_path: str, head_sha: str, checks_done: asyncio.Event
+) -> None:
     print("Waiting for CI checks...", flush=True)
     empty_seconds = 0
     while True:
-        check_runs = await get_check_runs(head_sha)
+        check_runs = await get_check_runs(head_repo_path, head_sha)
         if not check_runs:
             empty_seconds += POLL_SECONDS
             if empty_seconds >= CHECKS_APPEAR_TIMEOUT_SECONDS:
@@ -583,7 +601,9 @@ async def watch_pr() -> None:
     head_sha = pr.head_sha
     checks_done = asyncio.Event()
     codex_task = asyncio.create_task(wait_for_codex(pr.number, checks_done))
-    checks_task = asyncio.create_task(wait_for_checks(head_sha, checks_done))
+    checks_task = asyncio.create_task(
+        wait_for_checks(pr.head_repo_path, head_sha, checks_done)
+    )
 
     async def head_monitor() -> None:
         while True:
